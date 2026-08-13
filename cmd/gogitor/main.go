@@ -19,6 +19,7 @@ import (
 
 const Version = "0.9.0.2"
 
+
 func main() {
     cfg, err := config.Load()
     if err != nil {
