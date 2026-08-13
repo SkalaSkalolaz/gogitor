@@ -245,6 +245,7 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 	inReplace := false
 	var searchLines []string
 	var replaceLines []string
+    var patchSymbol string
 
 	flushPatch := func() {
 		if !inPatch || current == nil {
@@ -258,6 +259,7 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 		p := domain.Patch{
 			Search:  trimPatch(strings.Join(searchLines, "\n")),
 			Replace: trimPatch(strings.Join(replaceLines, "\n")),
+            Symbol:  patchSymbol,
 		}
 		if strings.TrimSpace(p.Search) != "" || strings.TrimSpace(p.Replace) != "" {
 			current.Patches = append(current.Patches, p)
@@ -267,6 +269,7 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 		inReplace = false
 		searchLines = nil
 		replaceLines = nil
+		patchSymbol = ""
 	}
 
 	flushFile := func() {
@@ -298,6 +301,11 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 			}
 			continue
 		}
+
+        if symbol := extractPatchSymbol(trimmed); symbol != "" {
+        	patchSymbol = symbol
+        	continue
+        }
 
 		if path := extractMarker(trimmed, "--- File:"); path != "" {
 			flushPatch()
@@ -362,6 +370,33 @@ func extractMarker(line, prefix string) string {
 		return ""
 	}
 	return path
+}
+
+func extractPatchSymbol(line string) string {
+	const prefix = "--- Symbol:"
+
+	trimmed := strings.TrimSpace(line)
+	idx := strings.Index(trimmed, prefix)
+	if idx == -1 {
+		return ""
+	}
+
+	rest := strings.TrimSpace(
+		trimmed[idx+len(prefix):],
+	)
+
+	if strings.HasSuffix(rest, "---") {
+		rest = strings.TrimSpace(
+			strings.TrimSuffix(rest, "---"),
+		)
+	}
+
+	if rest == "" ||
+		strings.ContainsAny(rest, "\r\n\x00") {
+		return ""
+	}
+
+	return rest
 }
 
 func trimPatch(s string) string {

@@ -220,3 +220,154 @@ func TestFindClosestBlock(t *testing.T) {
 		t.Errorf("expected start at line 2, got %d", match.StartLine)
 	}
 }
+
+func TestApplyOnePatch_StrictRejectsFuzzy(t *testing.T) {
+	content := "package main\n\n// This is a helper function\nfunc helper() {\n\treturn\n}\n"
+
+	p := domain.Patch{
+		Search:  "// This is a helper\nfunc helper() {\n\treturn\n}",
+		Replace: "// Updated helper\nfunc helper() {\n\treturn\n}",
+	}
+
+	_, err := applyOnePatchWithPolicy(
+		content,
+		p,
+		PatchPolicyStrict,
+		0,
+	)
+
+	if err == nil {
+		t.Fatal("strict policy must reject fuzzy-only patch")
+	}
+}
+
+func TestApplyOnePatch_SymbolAnchor(t *testing.T) {
+	content := `package main
+
+func first() {
+	fmt.Println("same")
+}
+
+func second() {
+	fmt.Println("same")
+}
+`
+
+	p := domain.Patch{
+		Symbol:  "second",
+		Search:  `fmt.Println("same")`,
+		Replace: `fmt.Println("changed")`,
+	}
+
+	result, err := applyOnePatchWithPolicy(
+		content,
+		p,
+		PatchPolicyStrict,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("symbol patch failed: %v", err)
+	}
+
+	if !strings.Contains(result, `func first() {
+	fmt.Println("same")
+}`) {
+		t.Fatal("first function was unexpectedly changed")
+	}
+
+	if !strings.Contains(result, `func second() {
+	fmt.Println("changed")
+}`) {
+		t.Fatal("second function was not changed")
+	}
+}
+
+func TestPatchPolicyForModel(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		want     PatchPolicy
+	}{
+		{
+			provider: "ollama",
+			model:    "qwen3-coder:8b",
+			want:     PatchPolicyStrict,
+		},
+		{
+			provider: "ollama",
+			model:    "qwen3-coder:14b",
+			want:     PatchPolicyStrict,
+		},
+		{
+			provider: "ollama",
+			model:    "qwen3-coder:30b",
+			want:     PatchPolicyBalanced,
+		},
+		{
+			provider: "openai-compatible+http://localhost:8000/v1",
+			model:    "local-model",
+			want:     PatchPolicyAdvanced,
+		},
+		{
+			provider: "ollama",
+			model:    "gemma4:31b-cloud",
+			want:     PatchPolicyAdvanced,
+		},
+	}
+
+	for _, tt := range tests {
+		got := PatchPolicyForModel(
+			tt.provider,
+			tt.model,
+		)
+
+		if got != tt.want {
+			t.Errorf(
+				"PatchPolicyForModel(%q, %q) = %v, want %v",
+				tt.provider,
+				tt.model,
+				got,
+				tt.want,
+			)
+		}
+	}
+}
+
+func TestFuzzyMarginRejectsAmbiguousMatch(t *testing.T) {
+	orig := []string{
+		"func a() {",
+		"\treturn value",
+		"}",
+		"",
+		"func b() {",
+		"\treturn value",
+		"}",
+	}
+
+	search := []string{
+		"func x() {",
+		"\treturn value",
+		"}",
+	}
+
+	match := findClosestBlockWithMargin(
+		orig,
+		search,
+		0.80,
+	)
+
+	if match == nil {
+		t.Fatal("expected candidate")
+	}
+
+	if match.SecondBest <= 0 {
+		t.Fatal("expected second-best candidate")
+	}
+
+	if match.Similarity-match.SecondBest >= 0.08 {
+		t.Fatalf(
+			"expected ambiguous margin, got %.2f",
+			match.Similarity-match.SecondBest,
+		)
+	}
+}

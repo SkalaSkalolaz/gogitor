@@ -187,6 +187,7 @@ type Intent struct {
 type Patch struct {
 	Search  string `json:"search"`
 	Replace string `json:"replace"`
+	Symbol  string `json:"symbol,omitempty"`
 }
 
 type FileChange struct {

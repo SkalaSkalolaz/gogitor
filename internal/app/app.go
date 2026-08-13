@@ -930,6 +930,10 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	if maxIterations <= 0 {
 		maxIterations = 3
 	}
+    patchPolicy := workspace.PatchPolicyForModel(
+    	s.Cfg.Provider,
+    	s.Cfg.Model,
+    )
 	targetFiles := extractTargetFiles(query)
 	cc := s.buildCodeContext(query, targetFiles)
 	originalContext := cc.Context
@@ -938,18 +942,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	var lastChanges []domain.FileChange
 
 	// ─── Новые переменные для управления patch-режимом ──────────────
-	// forceFull включает полный режим файлов после неудачной попытки patch.
 	forceFull := false
-	// patchAttempted означает, что программа уже пробовала patch-режим.
 	patchAttempted := false
-	// patchFixAttempts — сколько раз мы просили LLM исправить патч.
 	patchFixAttempts := 0
-	// maxPatchFixAttempts — максимум попыток исправления патча до перехода в full-file.
 	const maxPatchFixAttempts = 2
-	// lastPatchContent — содержимое последнего патча для передачи в CodeFixPatch.
 	var lastPatchContent string
-	// patchAppliedSuccessfully — патч был применён (SEARCH найден), но build/test упал.
 	patchAppliedSuccessfully := false
+	patchRepairPending := false
 
 	for i := 1; i <= maxIterations; i++ {
 		result.Iterations = i
@@ -982,7 +981,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
 				if !forceFull {
 					sendEvent(emit, domain.EventLog, "Using patch mode for existing project files")
-					prompt = prompts.CodeModifyDiff(query, originalContext)
+                    prompt = prompts.CodeModifyDiffForModel(
+                    	query,
+                    	originalContext,
+                    	patchPolicy.String(),
+                    )
 					usePatchPrompt = true
 				} else {
 					sendEvent(emit, domain.EventLog, "Using modification mode based on existing project files")
@@ -996,7 +999,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				prompt = prompts.CodeCreate(query, "")
 				allowFallback = true
 			}
-		} else if patchAppliedSuccessfully && !forceFull && patchFixAttempts < maxPatchFixAttempts {
+        } else if (patchAppliedSuccessfully || patchRepairPending) &&
+        	!forceFull &&
+        	patchFixAttempts < maxPatchFixAttempts {
 			// ─── НОВОЕ: исправление патча вместо полного файла ─────
 			patchFixAttempts++
 			sendEvent(emit, domain.EventLog,
@@ -1004,7 +1009,8 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					patchFixAttempts, maxPatchFixAttempts))
 			prompt = prompts.CodeFixPatch(query, originalContext, lastPatchContent, strings.Join(lastErrors, "\n"))
 			usePatchPrompt = true
-			patchAppliedSuccessfully = false // сбрасываем для следующего цикла
+            patchRepairPending = false
+            patchAppliedSuccessfully = false
 		} else {
 			contextForFix := originalContext
 			if !forceFull && !patchAttempted && len(lastChanges) > 0 {
@@ -1149,15 +1155,31 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 			continue
 		}
-
-		if err := s.WS.ApplyChangesSmart(sandbox, changes); err != nil {
-			_ = os.RemoveAll(sandbox)
-			lastErrors = []string{err.Error()}
-			if patchModeChanges || usePatchPrompt {
-				forceFull = true
-			}
-			continue
-		}
+        if err := s.WS.ApplyChangesSmartWithPolicy(
+        	sandbox,
+        	changes,
+        	patchPolicy,
+        	s.Cfg.FuzzyMinConfidence,
+        ); err != nil {
+        	_ = os.RemoveAll(sandbox)
+        	lastErrors = []string{err.Error()}
+        
+        	if patchModeChanges || usePatchPrompt {
+        		if patchFixAttempts < maxPatchFixAttempts {
+        			patchRepairPending = true
+        
+        			sendEvent(
+        				emit,
+        				domain.EventWarn,
+        				"Patch rejected before validation. Will request a corrected patch.",
+        			)
+        		} else {
+        			forceFull = true
+        		}
+        	}
+        
+        	continue
+        }
 
 		s.Runner.DepsLog = func(msg string) {
 			sendEvent(emit, domain.EventLog, msg)
@@ -1333,13 +1355,19 @@ func formatPatchContent(changes []domain.FileChange) string {
 			continue
 		}
 		b.WriteString("--- Patch: " + ch.Path + " ---\n")
-		for _, p := range ch.Patches {
-			b.WriteString("<<<<<<< SEARCH\n")
-			b.WriteString(p.Search)
-			b.WriteString("\n=======\n")
-			b.WriteString(p.Replace)
-			b.WriteString("\n>>>>>>> REPLACE\n")
-		}
+        for _, p := range ch.Patches {
+        	if p.Symbol != "" {
+        		b.WriteString("--- Symbol: ")
+        		b.WriteString(p.Symbol)
+        		b.WriteString(" ---\n")
+        	}
+        
+        	b.WriteString("<<<<<<< SEARCH\n")
+        	b.WriteString(p.Search)
+        	b.WriteString("\n=======\n")
+        	b.WriteString(p.Replace)
+        	b.WriteString("\n>>>>>>> REPLACE\n")
+        }
 	}
 	return b.String()
 }

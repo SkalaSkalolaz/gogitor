@@ -309,75 +309,119 @@ Subtask 2: ...
 }
 
 func CodeModifyDiff(task, projectContext string) string {
+	// Совместимый wrapper для старых вызовов.
+	return CodeModifyDiffForModel(
+		task,
+		projectContext,
+		"balanced",
+	)
+}
+
+func CodeModifyDiffForModel(
+	task,
+	projectContext,
+	patchPolicy string,
+) string {
 	var b strings.Builder
+
 	b.WriteString(`You are a senior Go engineer modifying an existing project using minimal patches.
 
 TASK:
 `)
 	b.WriteString(task)
 	b.WriteString("\n")
+
 	b.WriteString("EXISTING PROJECT FILES:\n")
 	b.WriteString(projectContext)
 	b.WriteString("\n")
+
 	b.WriteString(`CRITICAL RULES:
 1. The existing project files above are the source of truth.
 2. Do NOT rewrite code arbitrarily.
 3. Do NOT invent new behavior unless the task explicitly asks for it.
 4. Preserve existing logic, names, types, constants, imports, and behavior unless they must change.
-5. For modifying an existing file, use ONLY this patch format:
+5. Return ONLY changes required by the task.
+6. Do not return unchanged files.
+7. Do not include explanations.
+8. Do not use placeholders.
+9. If a new file is required, return it as a full file.
+10. If an existing file is modified, prefer a minimal patch.
+
+PATCH FORMAT:
 
 --- Patch: path/to/file.go ---
 <<<<<<< SEARCH
-exact existing code that must be replaced
+exact existing code
 =======
 new replacement code
 >>>>>>> REPLACE
 
-6. You may use multiple SEARCH/REPLACE blocks for one file.
-7. SEARCH MUST be copied EXACTLY from the file shown above, character by character, including all indentation and whitespace. Do NOT reformat, re-indent, or paraphrase the SEARCH block.
-8. Include 3-5 lines of surrounding context ABOVE and BELOW the actual change in the SEARCH block. This anchors the block and ensures uniqueness. Copy these context lines EXACTLY from the file.
-9. If a new file must be created, return it as a full file block:
---- File: path/to/new.go ---
-<full file content>
-10. Do not return unchanged files.
-11. Do not include explanations.
-12. Do not use placeholders.
-13. If the change cannot be expressed safely as a small patch, return the complete updated file using:
---- File: path/to/file.go ---
-<full file content>
-14. The final code must compile with standard Go tooling.
+OPTIONAL SYMBOL ANCHOR:
 
-COMMON MISTAKES TO AVOID:
-- Changing indentation in SEARCH (e.g. converting tabs to spaces or vice versa)
-- Adding or removing blank lines in SEARCH
-- Omitting lines that are present in the original file
-- Adding extra lines that are not in the original file
-- Paraphrasing comments or string literals in SEARCH
-- Using fewer than 2 lines of context when the changed line alone is not unique
+--- Symbol: FunctionName ---
 
-CORRECT EXAMPLE:
-If the file contains:
-    func add(a, b int) int {
-        return a + b
-    }
+or:
 
-And you want to change the return to a - b, write:
+--- Symbol: ReceiverType.MethodName ---
 
-<<<<<<< SEARCH
-func add(a, b int) int {
-    return a + b
-}
-=======
-func add(a, b int) int {
-    return a - b
-}
->>>>>>> REPLACE
+The Symbol line is optional.
+If you know the exact function or method being changed, include it.
+Do not invent a Symbol that does not exist in the supplied source.
 
-Note: the SEARCH block preserves the EXACT indentation from the file.
+RULES FOR SEARCH:
+- SEARCH must come from the existing source.
+- Do not invent missing source code.
+- Keep SEARCH focused on the smallest safe logical block.
+- Do not modify indentation inside SEARCH.
+- Do not include unrelated code.
+- Use one logical modification per SEARCH/REPLACE block.
 `)
+
+	switch strings.ToLower(strings.TrimSpace(patchPolicy)) {
+	case "strict":
+		b.WriteString(`
+PATCH POLICY: STRICT
+
+- Target 8B–14B class models.
+- Prefer EXACT or whitespace-tolerant matches.
+- Keep SEARCH short, normally 2-12 lines.
+- Do NOT attempt to guess a location.
+- If the location is uncertain, produce a smaller patch or do not patch.
+`)
+
+	case "advanced":
+		b.WriteString(`
+PATCH POLICY: ADVANCED
+
+- Target strong local or cloud models.
+- Prefer providing a Symbol anchor whenever possible.
+- SEARCH may contain larger context when necessary.
+- Make the patch precise and localized.
+- Never modify unrelated symbols.
+`)
+
+	default:
+		b.WriteString(`
+PATCH POLICY: BALANCED
+
+- Target approximately 15B-32B models.
+- Prefer EXACT or normalized matching first.
+- Use a Symbol anchor when the modification is inside a known function or method.
+- Keep SEARCH reasonably small, normally 2-24 lines.
+- Never include unrelated functions.
+`)
+	}
+
+	b.WriteString(`
+IF THE CHANGE CANNOT BE EXPRESSED SAFELY AS A SMALL PATCH:
+--- File: path/to/file.go ---
+<complete updated file>
+
+The final code must compile with standard Go tooling.
+`)
+
 	return b.String()
 }
-
 
 func Intent(history, query, projectSummary string) string {
 	var b strings.Builder
@@ -717,16 +761,23 @@ ORIGINAL TASK:
 	b.WriteString(`RULES:
 1. Fix ONLY the error shown above.
 2. Return the corrected patch in the SAME format:
+
+--- Patch: path/to/file.go ---
+--- Symbol: OptionalSymbol ---
+
 <<<<<<< SEARCH
 exact existing code that must be replaced
 =======
 new replacement code
 >>>>>>> REPLACE
-3. The SEARCH block must match the ORIGINAL file content (before your previous patch was applied).
-4. Do NOT rewrite the entire file.
-5. Do NOT add unrelated changes.
-6. The result must compile and pass tests.
-7. Preserve existing behavior unless it is the cause of the error.
+
+3. If the previous patch contained a Symbol line, preserve it unless the Symbol itself was incorrect.
+4. The SEARCH block must match the original file content before the previous patch was applied.
+5. The SEARCH block must match the ORIGINAL file content (before your previous patch was applied).
+6. Do NOT rewrite the entire file.
+7. Do NOT add unrelated changes.
+8. The result must compile and pass tests.
+9. Preserve existing behavior unless it is the cause of the error.
 `)
 	return b.String()
 }
