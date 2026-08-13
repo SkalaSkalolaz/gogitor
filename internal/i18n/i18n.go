@@ -559,7 +559,8 @@ var messages = map[Lang]map[string]string{
 
 		"Running... Ctrl+C cancel | Tab: output/input | PgUp/PgDn scroll | F2: select text": "Выполняется... Ctrl+C отмена | Tab: вывод/ввод | PgUp/PgDn прокрутка | F2: выделение текста",
 		"Output focus: arrows/PgUp/PgDn/mouse scroll | Tab or Esc: back to input | F2: select text | Ctrl+C quit": "Фокус на выводе: стрелки/PgUp/PgDn/мышь | Tab или Esc: назад ко вводу | F2: выделение текста | Ctrl+C выход",
-		"provider=%s model=%s | Enter send | Alt+Enter newline | PgUp/PgDn history | F2: select text | Ctrl+C quit": "провайдер=%s модель=%s | Enter отправить | Alt+Enter новая строка | PgUp/PgDn история | F2: выделение текста | Ctrl+C выход",
+"%s/%s | Enter send | Alt+Enter newline | Ctrl+A copy | PgUp/PgDn history | F2: select | Ctrl+C quit":
+        "%s/%s | Enter отправить | Alt+Enter новая строка | Ctrl+A копировать | PgUp/PgDn история | F2: выделение | Ctrl+C выход",
 		"Text selection: select with mouse and copy via terminal | PgUp/PgDn scroll | F2 back": "Выделение текста: выделите мышкой и скопируйте через терминал | PgUp/PgDn прокрутка | F2 — обратно",
         // ─── Workflow: общие ────────────────────────────────────────────
         "Workflow dry-run is not fully supported; falling back to simple execution":
