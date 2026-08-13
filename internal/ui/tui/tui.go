@@ -1495,8 +1495,10 @@ func (m *model) updateStatus() {
 				}
 			}
 			m.status = i18n.T(
-				"%s | %d req | ≈%d tok%s | %s | Tab: output | Ctrl+C: cancel | F2: select",
-				m.agentRole, m.agentRequests, m.agentTokens, tokRate, dur,
+				"%s | %d req | ≈%d tok%s | Tab: output | Ctrl+C: cancel | F2: select",
+				m.agentRole, m.agentRequests, m.agentTokens, tokRate,
+				// "%s | %d req | ≈%d tok%s | %s | Tab: output | Ctrl+C: cancel | F2: select",
+				// m.agentRole, m.agentRequests, m.agentTokens, tokRate, dur,
 			)
 		} else if !m.progressStart.IsZero() && m.progressETA > 0 {
 			m.status = i18n.T(
