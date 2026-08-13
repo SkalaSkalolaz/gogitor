@@ -1515,7 +1515,7 @@ func (m *model) updateStatus() {
 		return
 	}
 	m.status = i18n.T(
-		"provider=%s model=%s | Enter send | Alt+Enter newline | Ctrl+A copy | PgUp/PgDn history | F2: select | Ctrl+C quit",
+		"%s / %s | Enter send | Alt+Enter newline | Ctrl+A copy | PgUp/PgDn history | F2: select | Ctrl+C quit",
 		m.cfg.Provider,
 		m.cfg.Model,
 	)
