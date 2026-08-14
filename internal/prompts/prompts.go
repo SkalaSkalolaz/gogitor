@@ -329,13 +329,14 @@ func CodeModifyDiffForModel(
 TASK:
 `)
 	b.WriteString(task)
-	b.WriteString("\n")
+	b.WriteString(`
 
-	b.WriteString("EXISTING PROJECT FILES:\n")
+EXISTING PROJECT FILES:
+`)
 	b.WriteString(projectContext)
-	b.WriteString("\n")
+	b.WriteString(`
 
-	b.WriteString(`CRITICAL RULES:
+CRITICAL RULES:
 1. The existing project files above are the source of truth.
 2. Do NOT rewrite code arbitrarily.
 3. Do NOT invent new behavior unless the task explicitly asks for it.
@@ -348,7 +349,6 @@ TASK:
 10. If an existing file is modified, prefer a minimal patch.
 
 PATCH FORMAT:
-
 --- Patch: path/to/file.go ---
 <<<<<<< SEARCH
 exact existing code
@@ -357,11 +357,8 @@ new replacement code
 >>>>>>> REPLACE
 
 OPTIONAL SYMBOL ANCHOR:
-
 --- Symbol: FunctionName ---
-
 or:
-
 --- Symbol: ReceiverType.MethodName ---
 
 The Symbol line is optional.
@@ -369,46 +366,300 @@ If you know the exact function or method being changed, include it.
 Do not invent a Symbol that does not exist in the supplied source.
 
 RULES FOR SEARCH:
-- SEARCH must come from the existing source.
+- SEARCH must come VERBATIM from the existing source.
 - Do not invent missing source code.
-- Keep SEARCH focused on the smallest safe logical block.
 - Do not modify indentation inside SEARCH.
+- Do not add or remove spaces/tabs.
+- Keep SEARCH focused on the smallest safe logical block.
 - Do not include unrelated code.
 - Use one logical modification per SEARCH/REPLACE block.
+- If you need multiple changes in the same file, use multiple SEARCH/REPLACE blocks.
+
+RULES FOR REPLACE:
+- REPLACE must contain valid Go code.
+- Use the same indentation style as the original file.
+- If the file uses tabs, use tabs. If spaces, use spaces.
+- Do not add trailing whitespace.
+- Do not include SEARCH/REPLACE markers inside REPLACE.
+`)
+
+	// НОВОЕ: Примеры формата
+	b.WriteString(`
+EXAMPLES:
+
+=== Example 1: Simple one-line change ===
+
+Input task: "Change the timeout from 30 to 60 seconds"
+Existing code contains:
+    timeout := 30 * time.Second
+
+Correct patch:
+--- Patch: internal/config/config.go ---
+<<<<<<< SEARCH
+	timeout := 30 * time.Second
+=======
+	timeout := 60 * time.Second
+>>>>>>> REPLACE
+
+=== Example 2: Multi-line function modification ===
+
+Input task: "Add error handling to the ParseConfig function"
+Existing code contains:
+    func ParseConfig(path string) *Config {
+        data := os.ReadFile(path)
+        return json.Unmarshal(data)
+    }
+
+Correct patch:
+--- Patch: internal/config/config.go ---
+--- Symbol: ParseConfig ---
+<<<<<<< SEARCH
+func ParseConfig(path string) *Config {
+	data := os.ReadFile(path)
+	return json.Unmarshal(data)
+}
+=======
+func ParseConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	return &cfg, nil
+}
+>>>>>>> REPLACE
+
+=== Example 3: Adding a new function ===
+
+Input task: "Add a Validate method to the Config struct"
+Existing code contains a Config struct but no Validate method.
+
+Correct patch (insert after existing code):
+--- Patch: internal/config/config.go ---
+--- Symbol: Config ---
+<<<<<<< SEARCH
+type Config struct {
+	Timeout int
+	Port    int
+}
+=======
+type Config struct {
+	Timeout int
+	Port    int
+}
+
+func (c *Config) Validate() error {
+	if c.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive, got %d", c.Timeout)
+	}
+	if c.Port <= 0 || c.Port > 65535 {
+		return fmt.Errorf("port must be 1-65535, got %d", c.Port)
+	}
+	return nil
+}
+>>>>>>> REPLACE
+
+=== Example 4: Adding imports ===
+
+Input task: "Use fmt.Errorf instead of errors.New"
+Existing code contains:
+    import (
+        "errors"
+    )
+    ...
+    return errors.New("config invalid")
+
+Correct patch:
+--- Patch: internal/config/config.go ---
+<<<<<<< SEARCH
+import (
+	"errors"
+)
+=======
+import (
+	"fmt"
+)
+>>>>>>> REPLACE
+
+--- Patch: internal/config/config.go ---
+<<<<<<< SEARCH
+	return errors.New("config invalid")
+=======
+	return fmt.Errorf("config invalid: %v", err)
+>>>>>>> REPLACE
+
+=== Example 5: Changing a test ===
+
+Input task: "Fix the test to expect the new error message"
+Existing test contains:
+    func TestValidate(t *testing.T) {
+        err := cfg.Validate()
+        if err == nil {
+            t.Fatal("expected error")
+        }
+    }
+
+Correct patch:
+--- Patch: internal/config/config_test.go ---
+--- Symbol: TestValidate ---
+<<<<<<< SEARCH
+func TestValidate(t *testing.T) {
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+=======
+func TestValidate(t *testing.T) {
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "timeout must be positive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+>>>>>>> REPLACE
+
+=== Example 6: New file (full file, not patch) ===
+
+Input task: "Create a new file internal/config/validate.go with the Validate function"
+
+Correct output:
+--- File: internal/config/validate.go ---
+package config
+
+import "fmt"
+
+func (c *Config) Validate() error {
+	if c.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive, got %d", c.Timeout)
+	}
+	return nil
+}
+`)
+
+	// НОВОЕ: Примеры типичных ошибок
+	b.WriteString(`
+COMMON MISTAKES TO AVOID:
+
+MISTAKE 1: SEARCH does not match the original file.
+WRONG: SEARCH contains "return nil" but the file has "return 0".
+CORRECT: Copy the exact text from EXISTING PROJECT FILES.
+
+MISTAKE 2: SEARCH has different indentation.
+WRONG: SEARCH uses 4 spaces but the file uses tabs.
+CORRECT: Match the exact whitespace of the original.
+
+MISTAKE 3: SEARCH is too large (contains entire file).
+WRONG: SEARCH contains 50+ lines of unrelated code.
+CORRECT: SEARCH contains only the 2-20 lines that change.
+
+MISTAKE 4: SEARCH is too small (ambiguous).
+WRONG: SEARCH is just "}" — this matches many places.
+CORRECT: Include enough surrounding context to be unique.
+
+MISTAKE 5: Inventing code in SEARCH.
+WRONG: SEARCH contains code that does not exist in the file.
+CORRECT: SEARCH must be a verbatim copy from EXISTING PROJECT FILES.
+
+MISTAKE 6: Multiple changes in one SEARCH/REPLACE.
+WRONG: One SEARCH/REPLACE changes imports AND a function.
+CORRECT: Use separate SEARCH/REPLACE blocks for each change.
+
+MISTAKE 7: SEARCH block is a single line like "return".
+WRONG: SEARCH is just "return" — too ambiguous.
+CORRECT: Include the full function or at least 2-3 unique lines.
 `)
 
 	switch strings.ToLower(strings.TrimSpace(patchPolicy)) {
 	case "strict":
 		b.WriteString(`
 PATCH POLICY: STRICT
-
-- Target 8B–14B class models.
+- Target 8B-14B class models.
 - Prefer EXACT or whitespace-tolerant matches.
 - Keep SEARCH short, normally 2-12 lines.
 - Do NOT attempt to guess a location.
 - If the location is uncertain, produce a smaller patch or do not patch.
-`)
+- Never use fuzzy matching. The SEARCH must match exactly.
+- Prefer including the full function signature in SEARCH for uniqueness.
 
+Example for strict policy:
+--- Patch: main.go ---
+--- Symbol: main ---
+<<<<<<< SEARCH
+func main() {
+	fmt.Println("hello")
+}
+=======
+func main() {
+	fmt.Println("world")
+}
+>>>>>>> REPLACE
+`)
 	case "advanced":
 		b.WriteString(`
 PATCH POLICY: ADVANCED
-
 - Target strong local or cloud models.
 - Prefer providing a Symbol anchor whenever possible.
 - SEARCH may contain larger context when necessary.
 - Make the patch precise and localized.
 - Never modify unrelated symbols.
-`)
+- You may use larger SEARCH blocks (up to 40 lines) if needed for clarity.
+- Prefer Symbol anchors for all method-level changes.
 
+Example for advanced policy with Symbol:
+--- Patch: internal/server/server.go ---
+--- Symbol: Server.HandleHealth ---
+<<<<<<< SEARCH
+func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+=======
+func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+    w.Write([]byte("{'status':'healthy'}"))
+}
+>>>>>>> REPLACE
+`)
 	default:
 		b.WriteString(`
 PATCH POLICY: BALANCED
-
 - Target approximately 15B-32B models.
 - Prefer EXACT or normalized matching first.
 - Use a Symbol anchor when the modification is inside a known function or method.
 - Keep SEARCH reasonably small, normally 2-24 lines.
 - Never include unrelated functions.
+- If two similar code blocks exist, use Symbol to disambiguate.
+
+Example for balanced policy:
+--- Patch: internal/handler/handler.go ---
+--- Symbol: Handler.ServeHTTP ---
+<<<<<<< SEARCH
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.handleGet(w, r)
+}
+=======
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.handleGet(w, r)
+	case http.MethodPost:
+		h.handlePost(w, r)
+	default:
+		http.Error(w, "not allowed", http.StatusMethodNotAllowed)
+	}
+}
+>>>>>>> REPLACE
 `)
 	}
 
@@ -418,10 +669,19 @@ IF THE CHANGE CANNOT BE EXPRESSED SAFELY AS A SMALL PATCH:
 <complete updated file>
 
 The final code must compile with standard Go tooling.
-`)
 
+FINAL CHECKLIST (verify before output):
+[ ] Every SEARCH block is copied VERBATIM from EXISTING PROJECT FILES.
+[ ] Every SEARCH block is unique in the file (or has a Symbol anchor).
+[ ] REPLACE blocks use the same indentation as the original file.
+[ ] No SEARCH/REPLACE markers appear inside SEARCH or REPLACE content.
+[ ] Each SEARCH/REPLACE block performs exactly one logical change.
+[ ] All modified files will still compile together.
+[ ] New files use --- File: format, not --- Patch: format.
+`)
 	return b.String()
 }
+
 
 func Intent(history, query, projectSummary string) string {
 	var b strings.Builder
