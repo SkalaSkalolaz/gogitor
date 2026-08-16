@@ -786,8 +786,9 @@ func (s *Service) SearchAnswer(ctx context.Context, query string, emit func(doma
 
 	searchQuery := query
 
-	prompt := prompts.SearchQuery(query)
-	if generated, err := s.LLM.Send(ctx, prompt); err == nil {
+    prompt := prompts.SearchQuery(query)
+    sqCtx := llm.WithReasoningDisabled(ctx)
+    if generated, err := s.LLM.Send(sqCtx, prompt); err == nil {
 		generated = strings.TrimSpace(generated)
 		if generated != "" {
 			searchQuery = generated
@@ -4041,7 +4042,7 @@ func (s *Service) generateCommitMessageForFile(
 	msgCtx = agent.WithRole(msgCtx, agent.RoleCoder)
 	msgCtx = agent.WithPriority(msgCtx, agent.PriorityNormal)
 	msgCtx = agent.WithPurpose(msgCtx, "generate commit message for "+file)
-
+	msgCtx = llm.WithReasoningDisabled(msgCtx)
 	msg, err := s.LLM.Send(msgCtx, prompt)
 	if err != nil {
 		s.Log.Warn("commit message generation failed for file", "file", file, "err", err)
@@ -4267,7 +4268,7 @@ func (s *Service) generateCommitMessage(ctx context.Context, taskContext string,
 	msgCtx = agent.WithRole(msgCtx, agent.RoleCoder)
 	msgCtx = agent.WithPriority(msgCtx, agent.PriorityNormal)
 	msgCtx = agent.WithPurpose(msgCtx, "generate commit message")
-
+	msgCtx = llm.WithReasoningDisabled(msgCtx)
 	msg, err := s.LLM.Send(msgCtx, prompt)
 	if err != nil {
 		s.Log.Warn("commit message generation failed", "err", err)
@@ -4733,7 +4734,7 @@ func (s *Service) generatePRDescription(
 	prCtx = agent.WithRole(prCtx, agent.RoleDocs)
 	prCtx = agent.WithPriority(prCtx, agent.PriorityNormal)
 	prCtx = agent.WithPurpose(prCtx, "generate PR description")
-
+	prCtx = llm.WithReasoningDisabled(prCtx)
 	response, err := s.LLM.Send(prCtx, prompt)
 	if err != nil {
 		sendEvent(emit, domain.EventWarn,

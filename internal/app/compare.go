@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gogitor/internal/llm"
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
 	"gogitor/internal/i18n"
@@ -281,7 +282,7 @@ func (s *Service) selectApproachViaLLM(
 	ctx = agent.WithRole(ctx, agent.RoleRouter)
 	ctx = agent.WithPriority(ctx, agent.PriorityHigh)
 	ctx = agent.WithPurpose(ctx, "interpret approach selection")
-
+    ctx = llm.WithReasoningDisabled(ctx) 
 	response, err := s.LLM.Send(ctx, prompt)
 	if err != nil {
 		sendEvent(

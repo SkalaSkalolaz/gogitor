@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"gogitor/internal/llm"
     "gogitor/internal/i18n"
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
@@ -145,7 +146,7 @@ func (s *Service) articleClassify(
 		classCtx := agent.WithRole(ctx, agent.RoleRouter)
 		classCtx = agent.WithPriority(classCtx, agent.PriorityNormal)
 		classCtx = agent.WithPurpose(classCtx, "article classification")
-
+        classCtx = llm.WithReasoningDisabled(classCtx)
 		prompt := prompts.ArticleClassify(topic, lang)
 		var cls articleClassification
 		if err := s.sendAgentJSON(classCtx, agent.RoleRouter, agent.PriorityNormal,

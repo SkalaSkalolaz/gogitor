@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"gogitor/internal/llm"
     "gogitor/internal/i18n"
     "gogitor/internal/github"
 	"gogitor/internal/agent"
@@ -1470,8 +1471,10 @@ func (s *Service) ExecuteWorkflowReflect(
 	// извлекать структурированные уроки из текста.
 	if s.modelProfile() != modelProfileSmall && llmErr == nil {
 		sendEvent(emit, domain.EventLog, "Extracting lessons from reflection...")
-		lessonsPrompt := prompts.WorkflowExtractLessons(response)
-		lessonsResponse, lessonsErr := s.LLM.Send(ctx, lessonsPrompt)
+
+        lessonsPrompt := prompts.WorkflowExtractLessons(response)
+        lessonsCtx := llm.WithReasoningDisabled(ctx)
+        lessonsResponse, lessonsErr := s.LLM.Send(lessonsCtx, lessonsPrompt)
 		if lessonsErr == nil {
 			lessons := parseWorkflowLessons(lessonsResponse)
 			if len(lessons) > 0 {
