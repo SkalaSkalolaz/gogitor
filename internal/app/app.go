@@ -371,6 +371,26 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 	argString := strings.TrimSpace(strings.Join(args, " "))
 
 	switch cmd {
+    case ":reasoning":
+        if len(args) > 0 {
+            switch strings.ToLower(args[0]) {
+            case "on", "true", "1":
+                s.Cfg.ReasoningEnabled = true
+                return domain.Result{Success: true, Mode: "command",
+                    Response: "Reasoning mode enabled."}
+            case "off", "false", "0":
+                s.Cfg.ReasoningEnabled = false
+                return domain.Result{Success: true, Mode: "command",
+                    Response: "Reasoning mode disabled."}
+            }
+        }
+        status := "off"
+        if s.Cfg.ReasoningEnabled {
+            status = "on"
+        }
+        return domain.Result{Success: true, Mode: "command",
+            Response: fmt.Sprintf("Reasoning: %s (effort: %s)",
+                status, s.Cfg.ReasoningEffort)}
     case ":article":
         if argString == "" {
             return domain.Result{Success: false, Mode: "article", Errors: []string{"usage: :article <topic>"}}
@@ -3593,7 +3613,7 @@ func (s *Service) GitCreate(ctx context.Context, args []string, emit func(domain
 func dispatcherConfig(cfg *config.Config) agent.Config {
     timeout := time.Duration(cfg.LLMTimeout) * time.Second
     if timeout <= 0 {
-        timeout = 300 * time.Second
+        timeout = 3000 * time.Second
     }
 
     // Масштабируем бюджет от размера контекста модели
@@ -3691,6 +3711,7 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
                 PriorityBoost: agent.PriorityLow,
             },
         },
+        ReasoningEnabled: cfg.ReasoningEnabled,
     }
 }
 

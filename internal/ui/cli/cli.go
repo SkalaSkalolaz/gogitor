@@ -42,6 +42,10 @@ var commonFlagSpecs = []flagSpec{
 	{Name: "auto-search", Bool: true},
 	{Name: "help", Short: "h", Bool: true},
 	{Name: "computer", Bool: true},
+    {Name: "reasoning", Bool: true},
+    {Name: "reasoning-effort"},
+    {Name: "reasoning-budget"},
+    {Name: "reasoning-show", Bool: true},
 }
 
 func buildFlagSpecs(extra ...flagSpec) []flagSpec {
@@ -66,6 +70,10 @@ type commonFlags struct {
     autoSearch *bool
 	output   *string
     computer *bool
+    reasoning       *bool
+    reasoningEffort *string
+    reasoningBudget *int
+    reasoningShow   *bool
 }
 
 func Run(args []string, cfg *config.Config, log *slog.Logger, logPath string) error {
@@ -816,7 +824,7 @@ func runDoctor(args []string, cfg *config.Config, logPath string) error {
 	fmt.Printf("Auto search:     %v\n", cfg.AutoSearch)
 	fmt.Printf("Dry run:         %v\n", cfg.DryRun)
 	fmt.Printf("Debug:           %v\n", cfg.Debug)
-
+    fmt.Printf("Reasoning:       %v (effort: %s, budget: %d)", cfg.ReasoningEnabled, cfg.ReasoningEffort, cfg.ReasoningBudget)
 	return nil
 }
 
@@ -837,10 +845,29 @@ func registerCommonFlags(fs *flag.FlagSet, cfg *config.Config) commonFlags {
         maxCtx:    fs.Int("max-context", cfg.MaxContextTokens, "max model context tokens (0=auto, e.g. 262144 for 256K)"),
 		autoSearch: fs.Bool("auto-search", cfg.AutoSearch, "enable automatic web search in multi-agent mode"),
 		output:     fs.String("output", cfg.OutputFile, "save result to file (type by extension: .md, .txt, .go, .json)"),
+		reasoning:      fs.Bool("reasoning", cfg.ReasoningEnabled, "enable reasoning/thinking mode for models that support it"),
+        reasoningEffort: fs.String("reasoning-effort", cfg.ReasoningEffort, "reasoning depth: low, medium, high (for OpenAI o-series)"),
+        reasoningBudget: fs.Int("reasoning-budget", cfg.ReasoningBudget, "max tokens for reasoning (0=server default)"),
+        reasoningShow:   fs.Bool("reasoning-show", cfg.ReasoningShow, "display thinking content in output"),
 	}
 }
 
 func applyCommonFlags(f commonFlags, cfg *config.Config) {
+    if f.reasoning != nil && *f.reasoning {
+        cfg.ReasoningEnabled = true
+    }
+    if f.reasoningEffort != nil {
+        if v := strings.TrimSpace(*f.reasoningEffort); v != "" {
+            cfg.ReasoningEffort = v
+        }
+    }
+    if f.reasoningBudget != nil && *f.reasoningBudget > 0 {
+        cfg.ReasoningBudget = *f.reasoningBudget
+    }
+    if f.reasoningShow != nil && *f.reasoningShow {
+        cfg.ReasoningShow = true
+    }
+    
 	if f.provider != nil {
 		if v := strings.TrimSpace(*f.provider); v != "" {
 			cfg.Provider = v
@@ -1217,6 +1244,10 @@ Common flags:
 -m, --model <model>  model name
 -k, --key <key>      API key
 -r, --repo <path>    project root directory
+--reasoning            Enable reasoning/thinking mode
+--reasoning-effort <v> Reasoning depth: low, medium, high
+--reasoning-budget <n> Max tokens for reasoning (0=server default)
+--reasoning-show       Display thinking content in output
 --github <url>       GitHub repository URL
 --key-github <token> GitHub token (ghp_... or github_pat_...)
 --max-context <n>    max model context tokens (0=auto, e.g. 262144 for 256K)

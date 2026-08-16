@@ -139,6 +139,9 @@ type Config struct {
 	// StatsHook вызывается после завершения LLM-запроса.
 	// Используется для накопления статистики и оценки ETA.
 	StatsHook func(Request, Usage, error)
+	// ReasoningEnabled — включён ли режим размышления (thinking).
+	// Используется для увеличения оценки токенов ответа.
+	ReasoningEnabled bool
 }
 
 // Request — запрос агента к LLM.
@@ -239,7 +242,7 @@ type Dispatcher struct {
 // чем конкурентные запросы.
 func NewDispatcher(llm LLM, cfg Config) *Dispatcher {
 	if cfg.DefaultTimeout <= 0 {
-		cfg.DefaultTimeout = 300 * time.Second
+		cfg.DefaultTimeout = 3000 * time.Second
 	}
 	if cfg.MaxQueue <= 0 {
 		cfg.MaxQueue = 128
@@ -609,10 +612,14 @@ func (d *Dispatcher) execute(t *ticket) {
     	}
     }
 
+    estimatedResponseTokens := estimateTokens(text)
+    if d.cfg.ReasoningEnabled {
+        estimatedResponseTokens *= 3
+    }
     usage := Usage{
-    	Requests:        1,
-    	EstimatedTokens: estimateTokens(t.req.Prompt) + estimateTokens(text),
-    	Duration:        totalDuration,
+        Requests:        1,
+        EstimatedTokens: estimateTokens(t.req.Prompt) + estimatedResponseTokens,
+        Duration:        totalDuration,
     }
     
     d.mu.Lock()

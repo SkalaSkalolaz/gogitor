@@ -44,6 +44,11 @@ type Config struct {
 	ComputerConfirmHigh   bool   `json:"computer_confirm_high"`
 	ComputerCommandTimeout int   `json:"computer_command_timeout"`
 	ComputerMaxOutput     int    `json:"computer_max_output"`
+  // Reasoning (thinking mode)
+    ReasoningEnabled bool   `json:"reasoning_enabled"`
+    ReasoningEffort  string `json:"reasoning_effort"`   // "low"|"medium"|"high"
+    ReasoningBudget  int    `json:"reasoning_budget"`    // макс. токенов на thinking
+    ReasoningShow    bool   `json:"reasoning_show"`      // показывать thinking в выводе
 }
 
 func Default() *Config {
@@ -54,7 +59,7 @@ func Default() *Config {
 		LogLevel:      "info",
 		Debug:         false,
 		DryRun:        false,
-		LLMTimeout:    300,
+		LLMTimeout:    3000,
 		MaxIterations: 5,
 		AutoGitCommit: true,
 		GitAutoInit:   true,
@@ -76,6 +81,10 @@ func Default() *Config {
 		ComputerConfirmHigh:   true,
 		ComputerCommandTimeout: 120,
 		ComputerMaxOutput:     100000,
+        ReasoningEnabled: false,
+        ReasoningEffort:  "medium",
+        ReasoningBudget:  0,      // 0 = сервер решает сам
+        ReasoningShow:    false,
 	}
 }
 
@@ -136,6 +145,17 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) loadEnv() {
+    if v := os.Getenv("GOGITOR_REASONING"); v != "" {
+        c.ReasoningEnabled = parseBool(v)
+    }
+    if v := os.Getenv("GOGITOR_REASONING_EFFORT"); v != "" {
+        c.ReasoningEffort = v
+    }
+    if v := os.Getenv("GOGITOR_REASONING_BUDGET"); v != "" {
+        if n, err := strconv.Atoi(v); err == nil && n > 0 {
+            c.ReasoningBudget = n
+        }
+    }
     if v := os.Getenv("GOGITOR_RAW"); v != "" {
     	c.Raw = parseBool(v)
     }
@@ -226,6 +246,7 @@ func (c *Config) loadEnv() {
 }
 
 func (c *Config) loadLocal() {
+
 	data, err := os.ReadFile(".gogitor.json")
 	if err != nil {
 		return
@@ -235,6 +256,19 @@ func (c *Config) loadLocal() {
 	if err := json.Unmarshal(data, &local); err != nil {
 		return
 	}
+
+    if v, ok := local["reasoning_enabled"].(bool); ok {
+        c.ReasoningEnabled = v
+    }
+    if v, ok := local["reasoning_effort"].(string); ok && v != "" {
+        c.ReasoningEffort = v
+    }
+    if v, ok := local["reasoning_budget"].(float64); ok && v > 0 {
+        c.ReasoningBudget = int(v)
+    }
+    if v, ok := local["reasoning_show"].(bool); ok {
+        c.ReasoningShow = v
+    }
 
     if v, ok := local["raw_output"].(bool); ok {
     	c.Raw = v

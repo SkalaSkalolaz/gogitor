@@ -26,7 +26,7 @@ type Client struct {
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	timeout := time.Duration(cfg.LLMTimeout) * time.Second
 	if timeout <= 0 {
-		timeout = 300 * time.Second
+		timeout = 3000 * time.Second
 	}
 
 	return &Client{
@@ -104,6 +104,10 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
         },
     }
 
+   if c.cfg.ReasoningEnabled {
+        payload["think"] = true
+    }
+
     body, status, err := c.postJSON(ctx, endpoint, payload, nil)
 	if err != nil {
 		return "", err
@@ -115,6 +119,7 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 
 	var resp struct {
 		Response string `json:"response"`
+        Thinking string `json:"thinking"` 
 		Error    string `json:"error"`
 	}
 
@@ -125,6 +130,13 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 	if resp.Error != "" {
 		return "", fmt.Errorf("ollama error: %s", resp.Error)
 	}
+
+    // Логируем thinking в debug
+    if resp.Thinking != "" && c.log != nil {
+        c.log.Debug("ollama thinking",
+            "tokens", (len(resp.Thinking)+3)/4,
+            "preview", textutil.LimitRunes(resp.Thinking, 200, "..."))
+    }
 
 	return strings.TrimSpace(resp.Response), nil
 }
@@ -188,8 +200,17 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		"stream": false,
 		"max_tokens": maxTokens,
 	}
+    if c.cfg.ReasoningEnabled {
+        effort := c.cfg.ReasoningEffort
+        if effort == "" {
+            effort = "medium"
+        }
+        payload["reasoning_effort"] = effort
 
-
+        if c.cfg.ReasoningBudget > 0 {
+            payload["max_completion_tokens"] = maxTokens + c.cfg.ReasoningBudget
+        }
+    }
 
 	headers := map[string]string{}
 
@@ -202,16 +223,32 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		return "", err
 	}
 
-	if status != http.StatusOK {
-		return "", fmt.Errorf("openai-compatible HTTP %d: %s", status, errorSnippet(body))
-	}
+    if status != http.StatusOK {
+        snippet := errorSnippet(body)
+        if c.cfg.ReasoningEnabled &&
+            (strings.Contains(snippet, "reasoning_effort") ||
+             strings.Contains(snippet, "not supported")) {
+            c.log.Warn("reasoning not supported by model, retrying without",
+                "model", c.cfg.Model)
+            // Повтор БЕЗ reasoning_effort
+            delete(payload, "reasoning_effort")
+            delete(payload, "max_completion_tokens")
+            if status != http.StatusOK {
+                return "", fmt.Errorf("openai-compatible HTTP %d: %s",
+                    status, errorSnippet(body))
+            }
+        } else {
+            return "", fmt.Errorf("openai-compatible HTTP %d: %s",
+                status, snippet)
+        }
+    }
 
-	content := parseOpenAIContent(body)
-	if content == "" {
-		return "", fmt.Errorf("openai-compatible returned empty content: %s", errorSnippet(body))
-	}
-
-	return content, nil
+    content := parseOpenAIContent(body)
+    if content == "" {
+        return "", fmt.Errorf("openai-compatible returned empty content: %s",
+            errorSnippet(body))
+    }
+    return content, nil
 }
 
 func openAIChatEndpoint(baseURL string) string {
@@ -321,6 +358,7 @@ func (c *Client) streamOllama(
 		numCtx = maxCtx
 	}
 
+
 	payload := map[string]any{
 		"model":  c.cfg.Model,
 		"prompt": prompt,
@@ -329,6 +367,10 @@ func (c *Client) streamOllama(
 			"num_ctx": numCtx,
 		},
 	}
+
+   if c.cfg.ReasoningEnabled {
+        payload["think"] = true
+    }
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -353,6 +395,7 @@ func (c *Client) streamOllama(
 	}
 
 	var full strings.Builder
+    var thinkingBuf strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
@@ -364,6 +407,7 @@ func (c *Client) streamOllama(
 
 		var chunk struct {
 			Response string `json:"response"`
+            Thinking string `json:"thinking"`
 			Error    string `json:"error"`
 			Done     bool   `json:"done"`
 		}
@@ -377,23 +421,29 @@ func (c *Client) streamOllama(
 			return full.String(), fmt.Errorf("ollama stream error: %s", chunk.Error)
 		}
 
-		if chunk.Response != "" {
-			full.WriteString(chunk.Response)
-			if onToken != nil {
-				onToken(chunk.Response)
-			}
-		}
+       if chunk.Thinking != "" {
+            thinkingBuf.WriteString(chunk.Thinking)
+            if c.cfg.ReasoningShow && onToken != nil {
+                onToken(chunk.Thinking) // показываем если включено
+            }
+        }
+        if chunk.Response != "" {
+            full.WriteString(chunk.Response)
+            if onToken != nil {
+                onToken(chunk.Response)
+            }
+        }
+        if chunk.Done {
+            break
+        }
+    }
 
-		if chunk.Done {
-			break
-		}
-	}
+    if thinkingBuf.Len() > 0 && c.log != nil {
+        c.log.Debug("ollama stream thinking",
+            "tokens", (thinkingBuf.Len()+3)/4)
+    }
 
-	if err := scanner.Err(); err != nil {
-		return full.String(), err
-	}
-
-	return strings.TrimSpace(full.String()), nil
+    return strings.TrimSpace(full.String()), nil
 }
 
 func (c *Client) streamOpenAICompatible(
@@ -468,13 +518,18 @@ func (c *Client) streamOpenAICompatible(
 				if dataPart == "[DONE]" {
 					break
 				}
-
-				if content := parseOpenAIStreamChunk([]byte(dataPart)); content != "" {
-					full.WriteString(content)
-					if onToken != nil {
-						onToken(content)
-					}
-				}
+    			content, reasoning := parseOpenAIStreamChunk([]byte(dataPart))
+    			if reasoning != "" && c.log != nil {
+    				c.log.Debug("openai-compatible reasoning chunk",
+    					"len", len(reasoning))
+    			}
+    			if content != "" {
+    				full.WriteString(content)
+    				if onToken != nil {
+    					onToken(content)
+    				}
+    			}
+    
 			}
 		}
 
@@ -489,27 +544,25 @@ func (c *Client) streamOpenAICompatible(
 	return strings.TrimSpace(full.String()), nil
 }
 
-func parseOpenAIStreamChunk(data []byte) string {
-	var resp struct {
-		Choices []struct {
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-			Text string `json:"text"`
-		} `json:"choices"`
-	}
-
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return ""
-	}
-
-	if len(resp.Choices) == 0 {
-		return ""
-	}
-
-	if resp.Choices[0].Delta.Content != "" {
-		return resp.Choices[0].Delta.Content
-	}
-
-	return resp.Choices[0].Text
+func parseOpenAIStreamChunk(data []byte) (content, reasoning string) {
+    var resp struct {
+        Choices []struct {
+            Delta struct {
+                Content          string `json:"content"`
+                ReasoningContent string `json:"reasoning_content"` // DeepSeek/vLLM
+            } `json:"delta"`
+            Text string `json:"text"`
+        } `json:"choices"`
+    }
+    if err := json.Unmarshal(data, &resp); err != nil {
+        return "", ""
+    }
+    if len(resp.Choices) == 0 {
+        return "", ""
+    }
+    delta := resp.Choices[0].Delta
+    if delta.Content != "" {
+        return delta.Content, delta.ReasoningContent
+    }
+    return resp.Choices[0].Text, delta.ReasoningContent
 }
