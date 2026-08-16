@@ -727,6 +727,42 @@ gogitor version
 
 ---
 
+# Режим размышления (Reasoning)
+Gogitor поддерживает режим размышления (thinking/reasoning) для моделей,
+которые его поддерживают (DeepSeek-R1, QwQ, Qwen3, OpenAI o1/o3/o4-mini и др.).
+
+Флаги командной строки:
+  --reasoning            Включить режим размышления (thinking)
+  --reasoning-effort <v> Глубина размышления: low, medium, high
+  --reasoning-budget <n> Макс. токенов на размышление (0=по умолчанию сервера)
+  --reasoning-show       Показывать процесс размышления в выводе
+
+Команда TUI:
+  :reasoning             Показать текущее состояние режима размышления
+  :reasoning on          Включить режим размышления
+  :reasoning off         Выключить режим размышления
+
+Переменные окружения:
+  GOGITOR_REASONING=true         Включить режим размышления
+  GOGITOR_REASONING_EFFORT=high  Глубина размышления
+  GOGITOR_REASONING_BUDGET=8192  Макс. токенов на размышление
+
+Конфигурация (.gogitor.json):
+  {
+    "reasoning_enabled": true,
+    "reasoning_effort": "high",
+    "reasoning_budget": 8192,
+    "reasoning_show": false
+  }
+
+Примечание:
+  - Для Ollama используется параметр "think": true
+  - Для OpenAI-совместимых API используется "reasoning_effort"
+  - Если модель не поддерживает reasoning, параметр игнорируется
+    или запрос повторяется без него (зависит от провайдера)
+
+---
+
 # LLM-провайдеры
 
 Gogitor поддерживает локальные и удалённые LLM через Ollama и OpenAI-совместимые API.

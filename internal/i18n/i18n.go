@@ -673,10 +673,21 @@ var messages = map[Lang]map[string]string{
         
         "Extracting lessons from reflection...":
         "Извлечение уроков из ретроспективы...",
+		// ─── Reasoning ────────────────────────────────────────────
+		"Reasoning mode enabled.":
+			"Режим размышления включён.",
+		"Reasoning mode disabled.":
+			"Режим размышления выключен.",
+		"Reasoning: %s (effort: %s)":
+			"Размышление: %s (глубина: %s)",
 	},
 }
 
 var ruPatterns = []pattern{
+	// ─── Reasoning ────────────────────────────────────────────
+	{regexp.MustCompile(`^Reasoning mode enabled\.$`), "Режим размышления включён."},
+	{regexp.MustCompile(`^Reasoning mode disabled\.$`), "Режим размышления выключен."},
+	{regexp.MustCompile(`^Reasoning: (\w+) \(effort: (\w+)\)$`), "Размышление: $1 (глубина: $2)"},
     // ─── Computer Mode ─────────────────────────────────────────
     {regexp.MustCompile(`^OS: (\S+) (\S+) (\S+) \| pkg: (\S+) \| shell: (\S+) \| sudo: (\S+)$`),
         "ОС: $1 $2 $3 | пакетный менеджер: $4 | оболочка: $5 | sudo: $6"},

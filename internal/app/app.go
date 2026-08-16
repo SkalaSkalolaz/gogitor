@@ -372,25 +372,25 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 
 	switch cmd {
     case ":reasoning":
-        if len(args) > 0 {
-            switch strings.ToLower(args[0]) {
-            case "on", "true", "1":
-                s.Cfg.ReasoningEnabled = true
-                return domain.Result{Success: true, Mode: "command",
-                    Response: "Reasoning mode enabled."}
-            case "off", "false", "0":
-                s.Cfg.ReasoningEnabled = false
-                return domain.Result{Success: true, Mode: "command",
-                    Response: "Reasoning mode disabled."}
-            }
-        }
-        status := "off"
-        if s.Cfg.ReasoningEnabled {
-            status = "on"
-        }
-        return domain.Result{Success: true, Mode: "command",
-            Response: fmt.Sprintf("Reasoning: %s (effort: %s)",
-                status, s.Cfg.ReasoningEffort)}
+    	if len(args) > 0 {
+    		switch strings.ToLower(args[0]) {
+    		case "on", "true", "1":
+    			s.Cfg.ReasoningEnabled = true
+    			return domain.Result{Success: true, Mode: "command",
+    				Response: i18n.T("Reasoning mode enabled.")}
+    		case "off", "false", "0":
+    			s.Cfg.ReasoningEnabled = false
+    			return domain.Result{Success: true, Mode: "command",
+    				Response: i18n.T("Reasoning mode disabled.")}
+    		}
+    	}
+    	status := "off"
+    	if s.Cfg.ReasoningEnabled {
+    		status = "on"
+    	}
+    	return domain.Result{Success: true, Mode: "command",
+    		Response: i18n.T("Reasoning: %s (effort: %s)",
+    			status, s.Cfg.ReasoningEffort)}
     case ":article":
         if argString == "" {
             return domain.Result{Success: false, Mode: "article", Errors: []string{"usage: :article <topic>"}}
@@ -2527,6 +2527,8 @@ Example:
 :article --full <topic> Write a complex multi-section article
 :task-diff         Show changes for the last task
 :history           Show recent tasks
+:reasoning         Show current thinking mode state
+:reasoning on/off  Enable/disable thinking mode
 
 Code flags:
 --no-compare       Skip approach comparison for complex tasks
@@ -2610,6 +2612,8 @@ func helpTextRu() string {
 :article --full <тема> Написать сложную многосекционную статью
 :task-diff         Показать изменения последней задачи
 :history           Показать последние задачи
+:reasoning         Показать текущее состояние режима размышления
+:reasoning on/off  Включить/выключить режим размышления
 
 Флаги режима code:
 --no-compare       Пропустить сравнение подходов для сложных задач

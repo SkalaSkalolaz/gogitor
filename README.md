@@ -700,6 +700,41 @@ or:
 
 ---
 
+# Reasoning Mode
+Gogitor supports reasoning/thinking mode for models that support it
+(DeepSeek-R1, QwQ, Qwen3, OpenAI o1/o3/o4-mini, etc.).
+
+Command-line flags:
+  --reasoning            Enable reasoning/thinking mode
+  --reasoning-effort <v> Reasoning depth: low, medium, high
+  --reasoning-budget <n> Max tokens for reasoning (0=server default)
+  --reasoning-show       Display thinking content in output
+
+TUI command:
+  :reasoning             Show current reasoning mode status
+  :reasoning on          Enable reasoning mode
+  :reasoning off         Disable reasoning mode
+
+Environment variables:
+  GOGITOR_REASONING=true         Enable reasoning mode
+  GOGITOR_REASONING_EFFORT=high  Reasoning depth
+  GOGITOR_REASONING_BUDGET=8192  Max tokens for reasoning
+
+Configuration (.gogitor.json):
+  {
+    "reasoning_enabled": true,
+    "reasoning_effort": "high",
+    "reasoning_budget": 8192,
+    "reasoning_show": false
+  }
+
+Note:
+  - For Ollama, the "think": true parameter is used
+  - For OpenAI-compatible APIs, "reasoning_effort" is used
+  - If the model does not support reasoning, the parameter is ignored
+    or the request is retried without it (depends on provider)
+---
+
 # LLM Providers
 
 Gogitor supports local, remote, and OpenAI-compatible LLM endpoints.
