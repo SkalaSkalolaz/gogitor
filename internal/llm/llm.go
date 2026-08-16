@@ -108,15 +108,30 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
         payload["think"] = true
     }
 
-    body, status, err := c.postJSON(ctx, endpoint, payload, nil)
+	body, status, err := c.postJSON(ctx, endpoint, payload, nil)
 	if err != nil {
 		return "", err
 	}
-
 	if status != http.StatusOK {
-		return "", fmt.Errorf("ollama HTTP %d: %s", status, errorSnippet(body))
+		snippet := errorSnippet(body)
+		// Если модель не поддерживает thinking, повторяем без него.
+		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+			if c.log != nil {
+				c.log.Warn("model does not support thinking, retrying without",
+					"model", c.cfg.Model)
+			}
+			delete(payload, "think")
+			body, status, err = c.postJSON(ctx, endpoint, payload, nil)
+			if err != nil {
+				return "", err
+			}
+			if status != http.StatusOK {
+				return "", fmt.Errorf("ollama HTTP %d: %s", status, errorSnippet(body))
+			}
+		} else {
+			return "", fmt.Errorf("ollama HTTP %d: %s", status, snippet)
+		}
 	}
-
 	var resp struct {
 		Response string `json:"response"`
         Thinking string `json:"thinking"` 
@@ -223,25 +238,26 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		return "", err
 	}
 
-    if status != http.StatusOK {
-        snippet := errorSnippet(body)
-        if c.cfg.ReasoningEnabled &&
-            (strings.Contains(snippet, "reasoning_effort") ||
-             strings.Contains(snippet, "not supported")) {
-            c.log.Warn("reasoning not supported by model, retrying without",
-                "model", c.cfg.Model)
-            // Повтор БЕЗ reasoning_effort
-            delete(payload, "reasoning_effort")
-            delete(payload, "max_completion_tokens")
-            if status != http.StatusOK {
-                return "", fmt.Errorf("openai-compatible HTTP %d: %s",
-                    status, errorSnippet(body))
-            }
-        } else {
-            return "", fmt.Errorf("openai-compatible HTTP %d: %s",
-                status, snippet)
-        }
-    }
+	if status != http.StatusOK {
+		snippet := errorSnippet(body)
+		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+			c.log.Warn("reasoning not supported by model, retrying without",
+				"model", c.cfg.Model)
+			delete(payload, "reasoning_effort")
+			delete(payload, "max_completion_tokens")
+			body, status, err = c.postJSON(ctx, endpoint, payload, headers)
+			if err != nil {
+				return "", err
+			}
+			if status != http.StatusOK {
+				return "", fmt.Errorf("openai-compatible HTTP %d: %s",
+					status, errorSnippet(body))
+			}
+		} else {
+			return "", fmt.Errorf("openai-compatible HTTP %d: %s",
+				status, snippet)
+		}
+	}
 
     content := parseOpenAIContent(body)
     if content == "" {
@@ -387,12 +403,40 @@ func (c *Client) streamOllama(
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return "", fmt.Errorf("ollama stream HTTP %d: %s", resp.StatusCode, errorSnippet(body))
+		resp.Body.Close()
+		snippet := errorSnippet(body)
+		// Если модель не поддерживает thinking, повторяем без него.
+		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+			if c.log != nil {
+				c.log.Warn("model does not support thinking, retrying stream without",
+					"model", c.cfg.Model)
+			}
+			delete(payload, "think")
+			data, err = json.Marshal(payload)
+			if err != nil {
+				return "", err
+			}
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+			if err != nil {
+				return "", err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err = c.streamHTTP().Do(req)
+			if err != nil {
+				return "", err
+			}
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				resp.Body.Close()
+				return "", fmt.Errorf("ollama stream HTTP %d: %s", resp.StatusCode, errorSnippet(body))
+			}
+		} else {
+			return "", fmt.Errorf("ollama stream HTTP %d: %s", resp.StatusCode, snippet)
+		}
 	}
+	defer resp.Body.Close()
 
 	var full strings.Builder
     var thinkingBuf strings.Builder
@@ -565,4 +609,16 @@ func parseOpenAIStreamChunk(data []byte) (content, reasoning string) {
         return delta.Content, delta.ReasoningContent
     }
     return resp.Choices[0].Text, delta.ReasoningContent
+}
+
+// isThinkingUnsupported проверяет, указывает ли текст ошибки на то,
+// что модель не поддерживает режим reasoning/thinking.
+func isThinkingUnsupported(errText string) bool {
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, "does not support thinking") ||
+		strings.Contains(lower, "not support thinking") ||
+		strings.Contains(lower, "thinking is not supported") ||
+		strings.Contains(lower, "reasoning_effort") ||
+		strings.Contains(lower, "reasoning is not supported") ||
+		strings.Contains(lower, "not supported") && strings.Contains(lower, "reason")
 }
