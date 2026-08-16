@@ -23,6 +23,26 @@ type Client struct {
 	log  *slog.Logger
 }
 
+// ─── Управление reasoning через контекст ────────────────────────────
+// Позволяет отключить thinking для конкретных запросов (например, Роутер),
+// не меняя глобальную конфигурацию.
+
+type reasoningCtxKey struct{}
+
+// WithReasoningDisabled помечает контекст: reasoning для этого запроса отключён.
+func WithReasoningDisabled(ctx context.Context) context.Context {
+    return context.WithValue(ctx, reasoningCtxKey{}, true)
+}
+
+// reasoningDisabled проверяет, отключён ли reasoning через контекст.
+func reasoningDisabled(ctx context.Context) bool {
+    if ctx == nil {
+        return false
+    }
+    v, _ := ctx.Value(reasoningCtxKey{}).(bool)
+    return v
+}
+
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	timeout := time.Duration(cfg.LLMTimeout) * time.Second
 	if timeout <= 0 {
@@ -103,11 +123,9 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
             "num_ctx": numCtx,
         },
     }
-
-   if c.cfg.ReasoningEnabled {
+    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
         payload["think"] = true
     }
-
 	body, status, err := c.postJSON(ctx, endpoint, payload, nil)
 	if err != nil {
 		return "", err
@@ -115,7 +133,7 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 	if status != http.StatusOK {
 		snippet := errorSnippet(body)
 		// Если модель не поддерживает thinking, повторяем без него.
-		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			if c.log != nil {
 				c.log.Warn("model does not support thinking, retrying without",
 					"model", c.cfg.Model)
@@ -218,7 +236,7 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		"stream": false,
 		"max_tokens": maxTokens,
 	}
-    if c.cfg.ReasoningEnabled {
+    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
         effort := c.cfg.ReasoningEffort
         if effort == "" {
             effort = "medium"
@@ -243,7 +261,7 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 
 	if status != http.StatusOK {
 		snippet := errorSnippet(body)
-		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			c.log.Warn("reasoning not supported by model, retrying without",
 				"model", c.cfg.Model)
 			delete(payload, "reasoning_effort")
@@ -387,10 +405,9 @@ func (c *Client) streamOllama(
 		},
 	}
 
-   if c.cfg.ReasoningEnabled {
+    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
         payload["think"] = true
     }
-
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -411,7 +428,7 @@ func (c *Client) streamOllama(
 		resp.Body.Close()
 		snippet := errorSnippet(body)
 		// Если модель не поддерживает thinking, повторяем без него.
-		if c.cfg.ReasoningEnabled && isThinkingUnsupported(snippet) {
+        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			if c.log != nil {
 				c.log.Warn("model does not support thinking, retrying stream without",
 					"model", c.cfg.Model)

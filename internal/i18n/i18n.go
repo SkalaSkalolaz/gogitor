@@ -680,6 +680,10 @@ var messages = map[Lang]map[string]string{
 			"Режим размышления выключен.",
 		"Reasoning: %s (effort: %s)":
 			"Размышление: %s (глубина: %s)",
+        "Router reasoning enabled.":  "Размышления для роутера включены.",
+        "Router reasoning disabled.": "Размышления для роутера выключены.",
+        "Router reasoning: %s":       "Размышления роутера: %s",
+        "Reasoning: %s (effort: %s, router: %s)": "Размышление: %s (глубина: %s, роутер: %s)",
 	},
 }
 
@@ -688,6 +692,9 @@ var ruPatterns = []pattern{
 	{regexp.MustCompile(`^Reasoning mode enabled\.$`), "Режим размышления включён."},
 	{regexp.MustCompile(`^Reasoning mode disabled\.$`), "Режим размышления выключен."},
 	{regexp.MustCompile(`^Reasoning: (\w+) \(effort: (\w+)\)$`), "Размышление: $1 (глубина: $2)"},
+    {regexp.MustCompile(`^Router reasoning enabled\.$`), "Размышления для роутера включены."},
+    {regexp.MustCompile(`^Router reasoning disabled\.$`), "Размышления для роутера выключены."},
+    {regexp.MustCompile(`^Router reasoning: (\w+)$`), "Размышления роутера: $1"},
     // ─── Computer Mode ─────────────────────────────────────────
     {regexp.MustCompile(`^OS: (\S+) (\S+) (\S+) \| pkg: (\S+) \| shell: (\S+) \| sudo: (\S+)$`),
         "ОС: $1 $2 $3 | пакетный менеджер: $4 | оболочка: $5 | sudo: $6"},

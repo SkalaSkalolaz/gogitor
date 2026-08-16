@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+    "gogitor/internal/llm"
 	"gogitor/internal/agent"
 	"gogitor/internal/config"
 	"gogitor/internal/domain"
@@ -179,7 +180,9 @@ func (s *Service) llmExecutionStrategy(
 		string(profile),
 		score,
 	)
-
+	if !s.Cfg.ReasoningRouter {
+		ctx = llm.WithReasoningDisabled(ctx)
+	}
 	var out struct {
 		ExecutionMode string `json:"execution_mode"`
 		Confidence    int    `json:"confidence"`
@@ -188,7 +191,6 @@ func (s *Service) llmExecutionStrategy(
 		Reason        string `json:"reason"`
 		AskUser       bool   `json:"ask_user"`
 	}
-
 	err := s.sendAgentJSON(
 		ctx,
 		agent.RoleRouter,
@@ -200,12 +202,10 @@ func (s *Service) llmExecutionStrategy(
 	if err != nil {
 		return ExecutionStrategy{}, err
 	}
-
 	mode := normalizeExecutionMode(out.ExecutionMode)
 	if mode == ExecutionModeAuto {
 		mode = ExecutionModeAgent
 	}
-
 	// Защитные ограничения: не даём LLM выбрать слишком лёгкий режим
 	// для потенциально сложной задачи.
 	if score >= 8 && mode == ExecutionModeFast {
@@ -216,7 +216,6 @@ func (s *Service) llmExecutionStrategy(
 			out.Reason += "; forced agent due to high complexity"
 		}
 	}
-
 	// И слишком тяжёлый режим для тривиальной задачи.
 	if score <= 2 && mode == ExecutionModeWorkflow {
 		mode = ExecutionModeFast
@@ -226,7 +225,6 @@ func (s *Service) llmExecutionStrategy(
 			out.Reason += "; forced fast due to low complexity"
 		}
 	}
-
 	if out.AskUser && s.Cfg.WorkflowAskUser {
 		sendEvent(
 			emit,
@@ -234,7 +232,6 @@ func (s *Service) llmExecutionStrategy(
 			"LLM suggested asking user before choosing execution mode; continuing with "+string(mode),
 		)
 	}
-
 	return ExecutionStrategy{
 		Mode:       mode,
 		Confidence: out.Confidence,

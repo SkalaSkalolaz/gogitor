@@ -49,6 +49,7 @@ type Config struct {
     ReasoningEffort  string `json:"reasoning_effort"`   // "low"|"medium"|"high"
     ReasoningBudget  int    `json:"reasoning_budget"`    // макс. токенов на thinking
     ReasoningShow    bool   `json:"reasoning_show"`      // показывать thinking в выводе
+	ReasoningRouter  bool   `json:"reasoning_router"`
 }
 
 func Default() *Config {
@@ -85,6 +86,7 @@ func Default() *Config {
         ReasoningEffort:  "medium",
         ReasoningBudget:  0,      // 0 = сервер решает сам
         ReasoningShow:    false,
+		ReasoningRouter:  false,
 	}
 }
 
@@ -155,6 +157,9 @@ func (c *Config) loadEnv() {
         if n, err := strconv.Atoi(v); err == nil && n > 0 {
             c.ReasoningBudget = n
         }
+    }
+    if v := os.Getenv("GOGITOR_REASONING_ROUTER"); v != "" {
+        c.ReasoningRouter = parseBool(v)
     }
     if v := os.Getenv("GOGITOR_RAW"); v != "" {
     	c.Raw = parseBool(v)
@@ -257,6 +262,9 @@ func (c *Config) loadLocal() {
 		return
 	}
 
+    if v, ok := local["reasoning_router"].(bool); ok {
+        c.ReasoningRouter = v
+    }
     if v, ok := local["reasoning_enabled"].(bool); ok {
         c.ReasoningEnabled = v
     }

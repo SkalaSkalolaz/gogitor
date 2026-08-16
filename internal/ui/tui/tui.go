@@ -212,6 +212,7 @@ var testSubcommandSuggestions = []string{
 var reasoningSubcommandSuggestions = []string{
 	"on",
 	"off",
+    "router",
 }
 
 type eventMsg domain.Event

@@ -46,6 +46,7 @@ var commonFlagSpecs = []flagSpec{
     {Name: "reasoning-effort"},
     {Name: "reasoning-budget"},
     {Name: "reasoning-show", Bool: true},
+	{Name: "reasoning-router", Bool: true},
 }
 
 func buildFlagSpecs(extra ...flagSpec) []flagSpec {
@@ -74,6 +75,7 @@ type commonFlags struct {
     reasoningEffort *string
     reasoningBudget *int
     reasoningShow   *bool
+    reasoningRouter *bool
 }
 
 func Run(args []string, cfg *config.Config, log *slog.Logger, logPath string) error {
@@ -824,7 +826,7 @@ func runDoctor(args []string, cfg *config.Config, logPath string) error {
 	fmt.Printf("Auto search:     %v\n", cfg.AutoSearch)
 	fmt.Printf("Dry run:         %v\n", cfg.DryRun)
 	fmt.Printf("Debug:           %v\n", cfg.Debug)
-    fmt.Printf("Reasoning:       %v (effort: %s, budget: %d)", cfg.ReasoningEnabled, cfg.ReasoningEffort, cfg.ReasoningBudget)
+	fmt.Printf("Reasoning:       %v (effort: %s, budget: %d, router: %v)", cfg.ReasoningEnabled, cfg.ReasoningEffort, cfg.ReasoningBudget, cfg.ReasoningRouter)
 	return nil
 }
 
@@ -849,6 +851,7 @@ func registerCommonFlags(fs *flag.FlagSet, cfg *config.Config) commonFlags {
         reasoningEffort: fs.String("reasoning-effort", cfg.ReasoningEffort, "reasoning depth: low, medium, high (for OpenAI o-series)"),
         reasoningBudget: fs.Int("reasoning-budget", cfg.ReasoningBudget, "max tokens for reasoning (0=server default)"),
         reasoningShow:   fs.Bool("reasoning-show", cfg.ReasoningShow, "display thinking content in output"),
+		reasoningRouter: fs.Bool("reasoning-router", cfg.ReasoningRouter, "enable reasoning for intent router (off by default)"),
 	}
 }
 
@@ -868,6 +871,9 @@ func applyCommonFlags(f commonFlags, cfg *config.Config) {
         cfg.ReasoningShow = true
     }
     
+    if f.reasoningRouter != nil && *f.reasoningRouter {
+        cfg.ReasoningRouter = true
+    }
 	if f.provider != nil {
 		if v := strings.TrimSpace(*f.provider); v != "" {
 			cfg.Provider = v
@@ -1248,6 +1254,7 @@ Common flags:
 --reasoning-effort <v> Reasoning depth: low, medium, high
 --reasoning-budget <n> Max tokens for reasoning (0=server default)
 --reasoning-show       Display thinking content in output
+--reasoning-router     Enable reasoning for intent router (off by default)
 --github <url>       GitHub repository URL
 --key-github <token> GitHub token (ghp_... or github_pat_...)
 --max-context <n>    max model context tokens (0=auto, e.g. 262144 for 256K)

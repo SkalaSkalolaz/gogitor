@@ -372,25 +372,50 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 
 	switch cmd {
     case ":reasoning":
-    	if len(args) > 0 {
-    		switch strings.ToLower(args[0]) {
-    		case "on", "true", "1":
-    			s.Cfg.ReasoningEnabled = true
-    			return domain.Result{Success: true, Mode: "command",
-    				Response: i18n.T("Reasoning mode enabled.")}
-    		case "off", "false", "0":
-    			s.Cfg.ReasoningEnabled = false
-    			return domain.Result{Success: true, Mode: "command",
-    				Response: i18n.T("Reasoning mode disabled.")}
-    		}
-    	}
-    	status := "off"
-    	if s.Cfg.ReasoningEnabled {
-    		status = "on"
-    	}
-    	return domain.Result{Success: true, Mode: "command",
-    		Response: i18n.T("Reasoning: %s (effort: %s)",
-    			status, s.Cfg.ReasoningEffort)}
+        if len(args) > 0 {
+            // ➕ НОВОЕ: обработка ":reasoning router [on|off]"
+            if strings.ToLower(args[0]) == "router" {
+                if len(args) > 1 {
+                    switch strings.ToLower(args[1]) {
+                    case "on", "true", "1":
+                        s.Cfg.ReasoningRouter = true
+                        return domain.Result{Success: true, Mode: "command",
+                            Response: i18n.T("Router reasoning enabled.")}
+                    case "off", "false", "0":
+                        s.Cfg.ReasoningRouter = false
+                        return domain.Result{Success: true, Mode: "command",
+                            Response: i18n.T("Router reasoning disabled.")}
+                    }
+                }
+                rStatus := "off"
+                if s.Cfg.ReasoningRouter {
+                    rStatus = "on"
+                }
+                return domain.Result{Success: true, Mode: "command",
+                    Response: i18n.T("Router reasoning: %s", rStatus)}
+            }
+            switch strings.ToLower(args[0]) {
+            case "on", "true", "1":
+                s.Cfg.ReasoningEnabled = true
+                return domain.Result{Success: true, Mode: "command",
+                    Response: i18n.T("Reasoning mode enabled.")}
+            case "off", "false", "0":
+                s.Cfg.ReasoningEnabled = false
+                return domain.Result{Success: true, Mode: "command",
+                    Response: i18n.T("Reasoning mode disabled.")}
+            }
+        }
+        status := "off"
+        if s.Cfg.ReasoningEnabled {
+            status = "on"
+        }
+        rStatus := "off"
+        if s.Cfg.ReasoningRouter {
+            rStatus = "on"
+        }
+        return domain.Result{Success: true, Mode: "command",
+            Response: i18n.T("Reasoning: %s (effort: %s, router: %s)",
+                status, s.Cfg.ReasoningEffort, rStatus)}
     case ":article":
         if argString == "" {
             return domain.Result{Success: false, Mode: "article", Errors: []string{"usage: :article <topic>"}}
@@ -2976,6 +3001,10 @@ func (s *Service) resolveIntent(ctx context.Context, query string, emit func(dom
     ctx = agent.WithRole(ctx, agent.RoleRouter)
     ctx = agent.WithPriority(ctx, agent.PriorityHigh)
     ctx = agent.WithPurpose(ctx, "detect user intent")
+
+    if !s.Cfg.ReasoningRouter {
+        ctx = llm.WithReasoningDisabled(ctx)
+    }
     
 	fallback := domain.Intent{
 		Mode:   "chat",
