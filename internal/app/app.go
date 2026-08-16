@@ -13,6 +13,7 @@ import (
     "regexp" 
 	"strconv"
 
+
 	"gogitor/internal/computer"
 	"gogitor/internal/textutil"
     "gogitor/internal/i18n"
@@ -236,6 +237,36 @@ func (s *Service) ProcessEvents(ctx context.Context, query string, emit func(dom
 	}
 	if strings.HasPrefix(q, ":") {
 		return s.handleCommand(ctx, q, emit)
+	}
+
+	// Автоопределение изображений в запросе
+	imagePaths := ExtractImagePaths(q)
+	if len(imagePaths) > 0 {
+		var images [][]byte
+		for _, ip := range imagePaths {
+			data, err := ReadImageFile(ip)
+			if err != nil {
+				sendEvent(emit, domain.EventWarn, fmt.Sprintf("Cannot read image: %v", err))
+				continue
+			}
+			images = append(images, data...)
+		}
+		if len(images) > 0 {
+			// Удаляем пути к изображениям из текстового запроса
+			cleanQuery := q
+			for _, ip := range imagePaths {
+				cleanQuery = strings.ReplaceAll(cleanQuery, ip, "")
+			}
+			cleanQuery = strings.TrimSpace(cleanQuery)
+			if cleanQuery == "" {
+				cleanQuery = "Опиши, что изображено на картинке."
+			}
+			sendEvent(emit, domain.EventIntent, "Mode: image analysis")
+			res := s.AnalyzeWithImages(ctx, cleanQuery, images, emit)
+			res.RefinedTask = cleanQuery
+			res.Mode = "analyze"
+			return res
+		}
 	}
 
     if looksLikeStackTrace(q) {
@@ -772,6 +803,93 @@ func (s *Service) Analyze(ctx context.Context, query string, emit func(domain.Ev
 		Mode:     "analyze",
 		Response: response,
 	}
+}
+
+// AnalyzeWithImages анализирует изображение с текстовым запросом.
+func (s *Service) AnalyzeWithImages(ctx context.Context, query string, images [][]byte, emit func(domain.Event)) domain.Result {
+	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
+	emitEvent(emit, domain.Event{
+		Type:      domain.EventAgent,
+		Message:   i18n.Localize("current stage: image analysis"),
+		TaskStage: domain.TaskStageAnalyze,
+	})
+	sendEvent(emit, domain.EventLog, "Reading project files")
+	maxFiles, maxBytes := s.contextLimits()
+	analyzeFiles := maxFiles * 3 / 4
+	analyzeBytes := maxBytes * 3 / 4
+	projectContext := s.WS.BuildSmartContext(query, nil, analyzeFiles, analyzeBytes)
+	sendEvent(emit, domain.EventLog, "Sending image analysis request to LLM")
+	prompt := prompts.AnalyzeImage(query, projectContext)
+	response, err := s.sendLLMStreamingWithImages(
+		ctx, prompt, images, emit,
+		agent.RoleDefault, agent.PriorityNormal, "image_analysis",
+	)
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "analyze",
+			Errors:  []string{err.Error()},
+		}
+	}
+	s.addHistory(query, response)
+	return domain.Result{
+		Success:  true,
+		Mode:     "analyze",
+		Response: response,
+	}
+}
+
+// ReadImageFile читает файл изображения и возвращает его содержимое.
+func ReadImageFile(path string) ([][]byte, error) {
+	expandedPath := path
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			expandedPath = filepath.Join(home, path[2:])
+		}
+	}
+	info, err := os.Stat(expandedPath)
+	if err != nil {
+		return nil, fmt.Errorf("image file not found: %s", expandedPath)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("path is a directory: %s", expandedPath)
+	}
+	// Ограничение 20 МБ
+	const maxImageSize = 20 << 20
+	if info.Size() > maxImageSize {
+		return nil, fmt.Errorf("image file too large (%d bytes, max %d)", info.Size(), maxImageSize)
+	}
+	data, err := os.ReadFile(expandedPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read image file: %w", err)
+	}
+	return [][]byte{data}, nil
+}
+
+// imageExtensions — расширения файлов, которые считаются изображениями.
+var imageExtensions = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+// IsImagePath проверяет, является ли строка путём к изображению.
+func IsImagePath(s string) bool {
+	lower := strings.ToLower(s)
+	for _, ext := range imageExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractImagePaths извлекает пути к изображениям из текста запроса.
+func ExtractImagePaths(query string) []string {
+	var paths []string
+	for _, word := range strings.Fields(query) {
+		word = strings.Trim(word, ".,;:()[]{}\"'`")
+		if IsImagePath(word) {
+			paths = append(paths, word)
+		}
+	}
+	return paths
 }
 
 func (s *Service) SearchAnswer(ctx context.Context, query string, emit func(domain.Event)) domain.Result {
@@ -5363,3 +5481,4 @@ func (s *Service) ExecuteComputer(
     result.Response = responseBuilder.String()
 	return result
 }
+

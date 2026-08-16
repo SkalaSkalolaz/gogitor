@@ -25,6 +25,8 @@ import (
 	"gogitor/internal/domain"
 )
 
+var imageExtensions = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
 const (
 	inputTextAreaHeight     = 3
 	inputHorizontalOverhead = 2
@@ -856,9 +858,7 @@ func (m *model) submit(q string) tea.Cmd {
 			case <-ctx.Done():
 			}
 		}
-
 		doneSent := false
-
 		defer func() {
 			if r := recover(); r != nil {
 				send(domain.Event{
@@ -866,20 +866,51 @@ func (m *model) submit(q string) tea.Cmd {
 					Message: fmt.Sprintf("panic: %v", r),
 				})
 			}
-
 			if !doneSent {
 				send(domain.Event{
 					Type: domain.EventDone,
 				})
 			}
-
 			close(ch)
 		}()
-
-		res := m.svc.ProcessEvents(ctx, q, func(e domain.Event) {
-			send(e)
-		})
-
+		var res domain.Result
+		// Проверяем наличие путей к изображениям в запросе
+		imagePaths := app.ExtractImagePaths(q)
+		if len(imagePaths) > 0 {
+			var images [][]byte
+			for _, ip := range imagePaths {
+				data, err := app.ReadImageFile(ip)
+				if err != nil {
+					send(domain.Event{
+						Type:    domain.EventWarn,
+						Message: fmt.Sprintf("Cannot read image: %v", err),
+					})
+					continue
+				}
+				images = append(images, data...)
+			}
+			if len(images) > 0 {
+				cleanQuery := q
+				for _, ip := range imagePaths {
+					cleanQuery = strings.ReplaceAll(cleanQuery, ip, "")
+				}
+				cleanQuery = strings.TrimSpace(cleanQuery)
+				if cleanQuery == "" {
+					cleanQuery = "Опиши, что изображено на картинке."
+				}
+				res = m.svc.AnalyzeWithImages(ctx, cleanQuery, images, func(e domain.Event) {
+					send(e)
+				})
+			} else {
+				res = m.svc.ProcessEvents(ctx, q, func(e domain.Event) {
+					send(e)
+				})
+			}
+		} else {
+			res = m.svc.ProcessEvents(ctx, q, func(e domain.Event) {
+				send(e)
+			})
+		}
 		send(domain.Event{
 			Type:   domain.EventDone,
 			Result: &res,

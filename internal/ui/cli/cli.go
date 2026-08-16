@@ -460,29 +460,103 @@ func runCode(args []string, cfg *config.Config, log *slog.Logger) error {
 }
 
 func runAsk(args []string, cfg *config.Config, log *slog.Logger) error {
-	return runQueryCommand(
-		"ask",
-		args,
-		cfg,
-		log,
-		"usage: gogitor ask <question> [--provider <name>] [--model <model>] [--key <key>]",
-		func(svc *app.Service, ctx context.Context, query string, emit func(domain.Event)) domain.Result {
-			return svc.Chat(ctx, query, emit)
-		},
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	common := registerCommonFlags(fs, cfg)
+	jsonOut := fs.Bool("json", false, "print result as JSON")
+	imagePath := fs.String("image", "", "path to image file for vision analysis")
+	specs := buildFlagSpecs(
+		flagSpec{Name: "json", Bool: true},
+		flagSpec{Name: "image"},
 	)
+	flags, positional, err := reorderArgs(args, specs)
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+	if common.help != nil && *common.help {
+		printHelp()
+		return nil
+	}
+	query := taskFromArgsOrStdin(positional)
+	if query == "" {
+		return fmt.Errorf("usage: gogitor ask <question> [--image <path>] [flags]")
+	}
+	applyCommonFlags(common, cfg)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	raw := rawEnabled(common, cfg)
+	svc := app.New(cfg, log)
+	defer svc.Close()
+
+	var res domain.Result
+	if *imagePath != "" {
+		images, err := app.ReadImageFile(*imagePath)
+		if err != nil {
+			return fmt.Errorf("cannot read image: %w", err)
+		}
+		res = svc.AnalyzeWithImages(context.Background(), query, images, emitCLI(*jsonOut, raw))
+	} else {
+		res = svc.Chat(context.Background(), query, emitCLI(*jsonOut, raw))
+	}
+	printResult(res, *jsonOut, raw)
+	saveErr := saveOutputIfRequested(res, cfg)
+	if !res.Success {
+		return fmt.Errorf("ask failed")
+	}
+	return saveErr
 }
 
 func runAnalyze(args []string, cfg *config.Config, log *slog.Logger) error {
-	return runQueryCommand(
-		"analyze",
-		args,
-		cfg,
-		log,
-		"usage: gogitor analyze <question> [--provider <name>] [--model <model>] [--key <key>]",
-		func(svc *app.Service, ctx context.Context, query string, emit func(domain.Event)) domain.Result {
-			return svc.Analyze(ctx, query, emit)
-		},
+	fs := flag.NewFlagSet("analyze", flag.ContinueOnError)
+	common := registerCommonFlags(fs, cfg)
+	jsonOut := fs.Bool("json", false, "print result as JSON")
+	imagePath := fs.String("image", "", "path to image file for vision analysis")
+	specs := buildFlagSpecs(
+		flagSpec{Name: "json", Bool: true},
+		flagSpec{Name: "image"},
 	)
+	flags, positional, err := reorderArgs(args, specs)
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+	if common.help != nil && *common.help {
+		printHelp()
+		return nil
+	}
+	query := taskFromArgsOrStdin(positional)
+	if query == "" {
+		return fmt.Errorf("usage: gogitor analyze <question> [--image <path>] [flags]")
+	}
+	applyCommonFlags(common, cfg)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	raw := rawEnabled(common, cfg)
+	svc := app.New(cfg, log)
+	defer svc.Close()
+
+	var res domain.Result
+	if *imagePath != "" {
+		images, err := app.ReadImageFile(*imagePath)
+		if err != nil {
+			return fmt.Errorf("cannot read image: %w", err)
+		}
+		res = svc.AnalyzeWithImages(context.Background(), query, images, emitCLI(*jsonOut, raw))
+	} else {
+		res = svc.Analyze(context.Background(), query, emitCLI(*jsonOut, raw))
+	}
+	printResult(res, *jsonOut, raw)
+	saveErr := saveOutputIfRequested(res, cfg)
+	if !res.Success {
+		return fmt.Errorf("analyze failed")
+	}
+	return saveErr
 }
 
 func runSearch(args []string, cfg *config.Config, log *slog.Logger) error {
@@ -1229,8 +1303,8 @@ gogitor code <task> [flags]
 gogitor fix <error / stack trace> [flags]
 gogitor task <path/to/file.txt|file.md> [flags]
 gogitor file <path/to/file.txt|file.md> [flags]
-gogitor ask <question> [flags]
-gogitor analyze <question> [flags]
+gogitor ask <question> [--image <path>] [flags]
+gogitor analyze <question> [--image <path>] [flags]
 gogitor search <query> [flags]
 gogitor run [file] [flags]
 gogitor test [flags]
@@ -1245,11 +1319,17 @@ gogitor article <topic> [--full] [flags]
 gogitor doctor [flags]
 gogitor help
 
+Image analysis:
+  --image <path>         Path to image file (.png, .jpg, .gif, .webp, .bmp)
+                         Used with 'ask' and 'analyze' commands.
+                         The image is sent to a vision-capable LLM model.
+
 Common flags:
--p, --provider <name>    ollama, openai+URL, openai-compatible+URL, or Ollama URL
--m, --model <model>  model name
--k, --key <key>      API key
--r, --repo <path>    project root directory
+-p, --provider <name> ollama, openai+URL, openai-compatible+URL, or Ollama URL
+-m, --model <model> model name
+-k, --key <key>     API key
+-r, --repo <path>   project root directory
+--image <path>      Path to image file for vision analysis (.png, .jpg, .gif, .webp)
 --reasoning            Enable reasoning/thinking mode
 --reasoning-effort <v> Reasoning depth: low, medium, high
 --reasoning-budget <n> Max tokens for reasoning (0=server default)
@@ -1320,6 +1400,9 @@ gogitor git commit
 gogitor article "как работает garbage collector в Go"
 gogitor article "разбор паттерна middleware" --full
 gogitor doctor
+gogitor ask "что на этом изображении?" --image screenshot.png
+gogitor analyze "опиши архитектуру" --image diagram.png
+gogitor ask "explain this error screenshot" --image error.png
 
 Pipe examples:
 echo "напиши hello world" | gogitor code --raw > code.go

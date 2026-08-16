@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
     "bufio"
+	"encoding/base64"
+	"mime"
+	"path/filepath"
 
 	"gogitor/internal/textutil"
 	"gogitor/internal/config"
@@ -633,6 +636,280 @@ func parseOpenAIStreamChunk(data []byte) (content, reasoning string) {
         return delta.Content, delta.ReasoningContent
     }
     return resp.Choices[0].Text, delta.ReasoningContent
+}
+
+// ─── Multimodal (Vision) ─────────────────────────────────────────────
+
+// SendWithImages отправляет промпт с изображениями.
+// Для Ollama: поле "images" в /api/generate.
+// Для OpenAI-compatible: content-массив с image_url.
+func (c *Client) SendWithImages(ctx context.Context, prompt string, images [][]byte) (string, error) {
+	provider := strings.ToLower(strings.TrimSpace(c.cfg.Provider))
+	if base, ok := config.OpenAIBaseFromProvider(c.cfg.Provider); ok {
+		return c.sendOpenAICompatibleWithImages(ctx, base, prompt, images)
+	}
+	switch {
+	case provider == "ollama":
+		base := c.cfg.OllamaURL
+		if base == "" {
+			base = os.Getenv("OLLAMA_HOST")
+		}
+		if base == "" {
+			base = "http://localhost:11434"
+		}
+		return c.sendOllamaWithImages(ctx, base, prompt, images)
+	case strings.HasPrefix(provider, "http://") || strings.HasPrefix(provider, "https://"):
+		return c.sendOllamaWithImages(ctx, provider, prompt, images)
+	default:
+		return "", fmt.Errorf("unsupported provider %q for vision", c.cfg.Provider)
+	}
+}
+
+func (c *Client) sendOllamaWithImages(ctx context.Context, baseURL, prompt string, images [][]byte) (string, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
+	estimatedTokens := (len(prompt) + 3) / 4
+	responseReserve := 2048
+	maxCtx := c.cfg.EffectiveContextTokens()
+	if maxCtx > 65536 {
+		responseReserve = 8192
+	}
+	if maxCtx > 131072 {
+		responseReserve = 16384
+	}
+	numCtx := estimatedTokens + responseReserve
+	if numCtx < 4096 {
+		numCtx = 4096
+	}
+	if numCtx > maxCtx {
+		numCtx = maxCtx
+	}
+
+	// Кодируем изображения в base64
+	b64Images := make([]string, 0, len(images))
+	for _, img := range images {
+		b64Images = append(b64Images, base64.StdEncoding.EncodeToString(img))
+	}
+
+	payload := map[string]any{
+		"model":  c.cfg.Model,
+		"prompt": prompt,
+		"stream": false,
+		"images": b64Images,
+		"options": map[string]any{
+			"num_ctx": numCtx,
+		},
+	}
+	if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+		payload["think"] = true
+	}
+
+	body, status, err := c.postJSON(ctx, endpoint, payload, nil)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("ollama HTTP %d: %s", status, errorSnippet(body))
+	}
+
+	var resp struct {
+		Response string `json:"response"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("invalid ollama response: %w", err)
+	}
+	if resp.Error != "" {
+		return "", fmt.Errorf("ollama error: %s", resp.Error)
+	}
+	return strings.TrimSpace(resp.Response), nil
+}
+
+func (c *Client) sendOpenAICompatibleWithImages(ctx context.Context, baseURL, prompt string, images [][]byte) (string, error) {
+	endpoint := openAIChatEndpoint(baseURL)
+	maxTokens := 4096
+	if c.cfg.EffectiveContextTokens() > 65536 {
+		maxTokens = 16384
+	}
+	if c.cfg.EffectiveContextTokens() > 131072 {
+		maxTokens = 32768
+	}
+
+	// Формируем content-массив: текст + изображения
+	parts := []map[string]any{
+		{"type": "text", "text": prompt},
+	}
+	for _, img := range images {
+		dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(img)
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]string{"url": dataURL},
+		})
+	}
+
+	payload := map[string]any{
+		"model": c.cfg.Model,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": parts,
+			},
+		},
+		"stream":     false,
+		"max_tokens": maxTokens,
+	}
+
+	headers := map[string]string{}
+	if key := strings.TrimSpace(c.cfg.APIKey); key != "" {
+		headers["Authorization"] = "Bearer " + key
+	}
+
+	body, status, err := c.postJSON(ctx, endpoint, payload, headers)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("openai-compatible HTTP %d: %s", status, errorSnippet(body))
+	}
+
+	content := parseOpenAIContent(body)
+	if content == "" {
+		return "", fmt.Errorf("openai-compatible returned empty content")
+	}
+	return content, nil
+}
+
+// StreamWithImages — потоковая генерация с изображениями (Ollama).
+func (c *Client) StreamWithImages(ctx context.Context, prompt string, images [][]byte, onToken func(string)) (string, error) {
+	if onToken == nil {
+		return c.SendWithImages(ctx, prompt, images)
+	}
+	provider := strings.ToLower(strings.TrimSpace(c.cfg.Provider))
+	if _, ok := config.OpenAIBaseFromProvider(c.cfg.Provider); ok {
+		// Для OpenAI-compatible стриминг с картинками сложнее;
+		// деградируем до не-стриминг вызова.
+		return c.SendWithImages(ctx, prompt, images)
+	}
+	switch {
+	case provider == "ollama":
+		base := c.cfg.OllamaURL
+		if base == "" {
+			base = os.Getenv("OLLAMA_HOST")
+		}
+		if base == "" {
+			base = "http://localhost:11434"
+		}
+		return c.streamOllamaWithImages(ctx, base, prompt, images, onToken)
+	case strings.HasPrefix(provider, "http://") || strings.HasPrefix(provider, "https://"):
+		return c.streamOllamaWithImages(ctx, provider, prompt, images, onToken)
+	default:
+		return c.SendWithImages(ctx, prompt, images)
+	}
+}
+
+func (c *Client) streamOllamaWithImages(ctx context.Context, baseURL, prompt string, images [][]byte, onToken func(string)) (string, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
+	estimatedTokens := (len(prompt) + 3) / 4
+	responseReserve := 2048
+	maxCtx := c.cfg.EffectiveContextTokens()
+	if maxCtx > 65536 {
+		responseReserve = 8192
+	}
+	if maxCtx > 131072 {
+		responseReserve = 16384
+	}
+	numCtx := estimatedTokens + responseReserve
+	if numCtx < 4096 {
+		numCtx = 4096
+	}
+	if numCtx > maxCtx {
+		numCtx = maxCtx
+	}
+
+	b64Images := make([]string, 0, len(images))
+	for _, img := range images {
+		b64Images = append(b64Images, base64.StdEncoding.EncodeToString(img))
+	}
+
+	payload := map[string]any{
+		"model":  c.cfg.Model,
+		"prompt": prompt,
+		"stream": true,
+		"images": b64Images,
+		"options": map[string]any{
+			"num_ctx": numCtx,
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.streamHTTP().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return "", fmt.Errorf("ollama stream HTTP %d: %s", resp.StatusCode, errorSnippet(body))
+	}
+
+	var full strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var chunk struct {
+			Response string `json:"response"`
+			Error    string `json:"error"`
+			Done     bool   `json:"done"`
+		}
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			continue
+		}
+		if chunk.Error != "" {
+			return full.String(), fmt.Errorf("ollama stream error: %s", chunk.Error)
+		}
+		if chunk.Response != "" {
+			full.WriteString(chunk.Response)
+			if onToken != nil {
+				onToken(chunk.Response)
+			}
+		}
+		if chunk.Done {
+			break
+		}
+	}
+	return strings.TrimSpace(full.String()), nil
+}
+
+// imageMIME определяет MIME-тип по расширению файла.
+func imageMIME(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	default:
+		return mime.TypeByExtension(ext)
+	}
 }
 
 // isThinkingUnsupported проверяет, указывает ли текст ошибки на то,

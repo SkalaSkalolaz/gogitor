@@ -65,6 +65,63 @@ func (s *Service) sendLLMStreaming(
 	return text, err
 }
 
+// sendLLMStreamingWithImages — потоковый запрос с изображениями.
+func (s *Service) sendLLMStreamingWithImages(
+	ctx context.Context,
+	prompt string,
+	images [][]byte,
+	emit func(domain.Event),
+	role agent.Role,
+	priority agent.Priority,
+	purpose string,
+) (string, error) {
+	ctx = agent.WithRole(ctx, role)
+	ctx = agent.WithPriority(ctx, priority)
+	ctx = agent.WithPurpose(ctx, purpose)
+	s.emitProgressStart(emit, purpose, role, purpose, prompt, 0, 0)
+
+	// Пробуем потоковый multimodal
+	type streamMultimodal interface {
+		StreamWithImages(ctx context.Context, prompt string, images [][]byte, onToken func(string)) (string, error)
+	}
+	if sm, ok := s.LLM.(streamMultimodal); ok {
+		var pending strings.Builder
+		last := time.Now()
+		flush := func(force bool) {
+			if pending.Len() == 0 {
+				return
+			}
+			if force || time.Since(last) >= 80*time.Millisecond || pending.Len() >= 192 {
+				if emit != nil {
+					emit(domain.Event{
+						Type:    domain.EventToken,
+						Message: pending.String(),
+					})
+				}
+				pending.Reset()
+				last = time.Now()
+			}
+		}
+		text, err := sm.StreamWithImages(ctx, prompt, images, func(token string) {
+			pending.WriteString(token)
+			flush(false)
+		})
+		flush(true)
+		return text, err
+	}
+
+	// Fallback: не-потоковый multimodal
+	type multimodal interface {
+		SendWithImages(ctx context.Context, prompt string, images [][]byte) (string, error)
+	}
+	if ml, ok := s.LLM.(multimodal); ok {
+		return ml.SendWithImages(ctx, prompt, images)
+	}
+
+	// Последний fallback: обычный текстовый запрос
+	return s.LLM.Send(ctx, prompt)
+}
+
 // emitProgressStart отправляет событие прогресса с оценкой ETA.
 func (s *Service) emitProgressStart(
 	emit func(domain.Event),

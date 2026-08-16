@@ -220,6 +220,31 @@ USER REQUEST:
 	return b.String()
 }
 
+// AnalyzeImage формирует промпт для анализа изображения.
+func AnalyzeImage(task, projectContext string) string {
+	var b strings.Builder
+	b.WriteString(`You are a senior Go engineer with vision capabilities. Analyze the provided image and answer the user's request.
+USER REQUEST:
+`)
+	b.WriteString(task)
+	b.WriteString("\n")
+	if strings.TrimSpace(projectContext) != "" {
+		b.WriteString("PROJECT FILES:\n")
+		b.WriteString(projectContext)
+		b.WriteString("\n")
+	}
+	b.WriteString(`RULES:
+1. Describe what you see in the image in detail.
+2. If the image contains code, diagrams, error messages, or UI — analyze them.
+3. If the image shows an architecture or design — explain it and suggest improvements.
+4. Point out bugs, risks, and improvements if applicable.
+5. Format the answer in GitHub Flavored Markdown.
+6. Do not return --- File: blocks or placeholders.
+7. Answer in the user's language if obvious.
+`)
+	return b.String()
+}
+
 func Chat(history, query string) string {
 	var b strings.Builder
 	b.WriteString("You are Gogitor, a helpful assistant for Go developers.\n")

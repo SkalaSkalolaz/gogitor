@@ -40,6 +40,16 @@ type StreamLLM interface {
 	Stream(ctx context.Context, prompt string, onToken func(string)) (string, error)
 }
 
+// MultimodalLLM — опциональный интерфейс для моделей с vision.
+type MultimodalLLM interface {
+	SendWithImages(ctx context.Context, prompt string, images [][]byte) (string, error)
+}
+
+// StreamMultimodalLLM — потоковый вариант multimodal.
+type StreamMultimodalLLM interface {
+	StreamWithImages(ctx context.Context, prompt string, images [][]byte, onToken func(string)) (string, error)
+}
+
 const (
 	StatusQueued StatusKind = "queued"
 	StatusStart  StatusKind = "start"
@@ -152,6 +162,7 @@ type Request struct {
 	Priority Priority
 	Timeout  time.Duration
 	StreamFunc func(string)
+	Images     [][]byte
 }
 
 // Result — результат выполнения LLM-запроса.
@@ -320,6 +331,39 @@ func (d *Dispatcher) Send(ctx context.Context, prompt string) (string, error) {
 		Priority: PriorityFromContext(ctx),
 	})
 
+	return text, err
+}
+
+// SendWithImages реализует запрос с изображениями через очередь.
+func (d *Dispatcher) SendWithImages(ctx context.Context, prompt string, images [][]byte) (string, error) {
+	role := RoleFromContext(ctx)
+	if role == "" {
+		role = RoleDefault
+	}
+	text, _, err := d.Request(ctx, Request{
+		Role:     role,
+		Purpose:  PurposeFromContext(ctx),
+		Prompt:   prompt,
+		Priority: PriorityFromContext(ctx),
+		Images:   images,
+	})
+	return text, err
+}
+
+// StreamWithImages — потоковый запрос с изображениями.
+func (d *Dispatcher) StreamWithImages(ctx context.Context, prompt string, images [][]byte, onToken func(string)) (string, error) {
+	role := RoleFromContext(ctx)
+	if role == "" {
+		role = RoleDefault
+	}
+	text, _, err := d.Request(ctx, Request{
+		Role:       role,
+		Purpose:    PurposeFromContext(ctx),
+		Prompt:     prompt,
+		Priority:   PriorityFromContext(ctx),
+		StreamFunc: onToken,
+		Images:     images,
+	})
 	return text, err
 }
 
@@ -565,8 +609,26 @@ func (d *Dispatcher) execute(t *ticket) {
     	attemptCtx = WithPriority(attemptCtx, t.req.Priority)
     
     	start := time.Now()
-    
-    	if t.req.StreamFunc != nil {
+
+    	if len(t.req.Images) > 0 {
+    		// Multimodal path: изображения присутствуют
+    		if t.req.StreamFunc != nil {
+    			if sml, ok := d.llm.(StreamMultimodalLLM); ok {
+    				text, lastErr = sml.StreamWithImages(attemptCtx, t.req.Prompt, t.req.Images, onToken)
+    			} else if ml, ok := d.llm.(MultimodalLLM); ok {
+    				text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
+    			} else {
+    				// Fallback: модель не поддерживает vision
+    				text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+    			}
+    		} else {
+    			if ml, ok := d.llm.(MultimodalLLM); ok {
+    				text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
+    			} else {
+    				text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+    			}
+    		}
+    	} else if t.req.StreamFunc != nil {
     		if sl, ok := d.llm.(StreamLLM); ok {
     			text, lastErr = sl.Stream(attemptCtx, t.req.Prompt, onToken)
     		} else {
@@ -574,8 +636,7 @@ func (d *Dispatcher) execute(t *ticket) {
     		}
     	} else {
     		text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
-    	}
-    
+    	}    
     	elapsed := time.Since(start)
     	totalDuration += elapsed
     	cancel()
