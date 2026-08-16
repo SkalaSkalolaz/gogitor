@@ -153,6 +153,9 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
             "preview", textutil.LimitRunes(resp.Thinking, 200, "..."))
     }
 
+    if c.cfg.ReasoningShow && resp.Thinking != "" {
+        return strings.TrimSpace(resp.Thinking + "\n\n" + resp.Response), nil
+    }
 	return strings.TrimSpace(resp.Response), nil
 }
 
@@ -487,6 +490,10 @@ func (c *Client) streamOllama(
             "tokens", (thinkingBuf.Len()+3)/4)
     }
 
+    if c.cfg.ReasoningShow && thinkingBuf.Len() > 0 {
+        return strings.TrimSpace(thinkingBuf.String() + "\n\n" + full.String()), nil
+    }
+    
     return strings.TrimSpace(full.String()), nil
 }
 
