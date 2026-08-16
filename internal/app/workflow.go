@@ -308,6 +308,11 @@ func (s *Service) executeWorkflowTasks(
 	}
 	sendPlanBoard(emit, plan.Goal, plan.Acceptance, planItems)
 
+	// ─── Agent memory и профиль модели (для Reviewer/Verifier) ────
+	mem := loadAgentMemory(s.Cfg.WorkDir)
+	profile := s.modelProfile()
+	isSmallModel := profile == modelProfileSmall
+
 	// ─── Выполнение задач ────────────────────────────────────
 	for i, sub := range plan.Subtasks {
 		taskEmit := workflowTaskEmitter(emit, processPath, i+1, sub.Task)
@@ -367,6 +372,34 @@ func (s *Service) executeWorkflowTasks(
 			final.Errors = append(final.Errors, res.Errors...)
 			final.AddWarning("previous workflow tasks may already have been committed")
 			return *final
+		}
+
+		// ─── Reviewer (из Agent) ────────────────────────────────────
+		if !isSmallModel {
+			changedFiles := len(res.FilesCreated) + len(res.FilesModified) +
+				len(res.FilesPatched) + len(res.FilesFullRewritten)
+			if changedFiles > 0 {
+				sendEvent(taskEmit, domain.EventAgent, "current stage: reviewer")
+				review, reviewErr := s.runReviewer(
+					ctx, query, sub.Task, res, mem, taskEmit,
+				)
+				if reviewErr == nil && !review.Approved && len(review.CriticalIssues) > 0 {
+					issues := strings.Join(review.CriticalIssues, "; ")
+					sendEvent(taskEmit, domain.EventWarn,
+						"Reviewer found critical issues: "+issues)
+
+					fixTask := buildReviewFixTask(sub.Task, review)
+					sendEvent(taskEmit, domain.EventAgent,
+						"current stage: coder (correction of reviewer comments)")
+					fixRes := s.executeSimple(ctx, fixTask, subOpts, taskEmit)
+					final.Iterations += fixRes.Iterations
+					mergeWorkflowResult(final, fixRes)
+					if !fixRes.Success {
+						final.Warnings = append(final.Warnings,
+							"reviewer fix failed: "+strings.Join(fixRes.Errors, "; "))
+					}
+				}
+			}
 		}
 
 		// ─── Quality gates ───────────────────────────────────
@@ -436,6 +469,36 @@ func (s *Service) executeWorkflowTasks(
 			i+1, commitHash, len(res.FilesCreated), len(res.FilesModified),
 			len(res.FilesPatched), len(res.FilesFullRewritten)))
 	}
+
+	// ─── Verifier (из Agent) ────────────────────────────────────
+	if !isSmallModel {
+		sendEvent(emit, domain.EventAgent, "current stage: verifier")
+		verification, verErr := s.runVerifier(
+			ctx, query, plan, *final, mem, emit,
+		)
+		if verErr == nil && !verification.Completed {
+			missing := strings.Join(verification.Missing, "; ")
+			sendEvent(emit, domain.EventWarn,
+				"Verifier: task not fully completed: "+missing)
+
+			if strings.TrimSpace(verification.FixTask) != "" {
+				sendEvent(emit, domain.EventAgent,
+					"current stage: coder (fix verifier)")
+				fixOpts := opts
+				fixOpts.NoCommit = true
+				fixRes := s.executeSimple(ctx, verification.FixTask, fixOpts, emit)
+				final.Iterations += fixRes.Iterations
+				mergeWorkflowResult(final, fixRes)
+				if !fixRes.Success {
+					final.Success = false
+					final.Errors = append(final.Errors, fixRes.Errors...)
+				}
+			}
+		}
+	}
+
+	// Сохраняем память агента (решения, уроки)
+	_ = mem.save(s.Cfg.WorkDir)
 
 	sendPlanSummary(emit, domain.PlanDone, len(plan.Subtasks), len(plan.Subtasks))
 	if final.Success {
