@@ -174,6 +174,36 @@ func parseGlobalFlags(args []string, cfg *config.Config) ([]string, bool) {
 				cfg.AutoSearch = true
 			}
 			i++
+		case "--reasoning":
+			if hasVal {
+				cfg.ReasoningEnabled = parseBool(val)
+			} else {
+				cfg.ReasoningEnabled = true
+			}
+			i++
+		case "--reasoning-effort":
+			v, next, ok := flagValue(args, i, hasVal, val, name)
+			if !ok {
+				return nil, true
+			}
+			cfg.ReasoningEffort = v
+			i = next
+		case "--reasoning-budget":
+			v, next, ok := flagValue(args, i, hasVal, val, name)
+			if !ok {
+				return nil, true
+			}
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.ReasoningBudget = n
+			}
+			i = next
+		case "--reasoning-show":
+			if hasVal {
+				cfg.ReasoningShow = parseBool(val)
+			} else {
+				cfg.ReasoningShow = true
+			}
+			i++
 		case "--version", "-v":
 			fmt.Printf("gogitor %s\n", Version)
 			return nil, true
