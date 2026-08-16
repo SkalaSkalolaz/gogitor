@@ -175,6 +175,7 @@ var commandSuggestions = []string{
 	":suggest",
 	":vet",
 	":todo",
+    ":reasoning",	
 	":computer",
 	":article",
 	":quit",
@@ -206,6 +207,11 @@ var gitSubcommandSuggestions = []string{
 
 var testSubcommandSuggestions = []string{
 	"lint",
+}
+
+var reasoningSubcommandSuggestions = []string{
+	"on",
+	"off",
 }
 
 type eventMsg domain.Event
@@ -1715,6 +1721,24 @@ func (m *model) updateSuggestions() {
     	return
     }
 
+    if first == ":reasoning" && (len(fields) > 1 || strings.HasSuffix(value, " ")) {
+		if len(fields) > 2 {
+			return
+		}
+		prefix := ""
+		if len(fields) > 1 {
+			prefix = fields[1]
+		}
+		for _, sub := range reasoningSubcommandSuggestions {
+			if strings.HasPrefix(sub, prefix) {
+				m.suggestions = append(m.suggestions, ":reasoning "+sub)
+			}
+		}
+		if len(m.suggestions) == 1 && m.suggestions[0] == strings.TrimSpace(value) {
+			m.suggestions = nil
+		}
+		return
+	}
     if first == ":workflow" && (len(fields) > 1 || strings.HasSuffix(value, " ")) {
 	    if len(fields) > 2 {
 		    return
