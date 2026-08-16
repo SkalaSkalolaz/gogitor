@@ -668,6 +668,9 @@ func (c *Client) SendWithImages(ctx context.Context, prompt string, images [][]b
 func (c *Client) sendOllamaWithImages(ctx context.Context, baseURL, prompt string, images [][]byte) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
 	estimatedTokens := (len(prompt) + 3) / 4
+	for _, img := range images {
+		estimatedTokens += len(img)/3 + 1024 // +1024 запас на метаданные
+	}
 	responseReserve := 2048
 	maxCtx := c.cfg.EffectiveContextTokens()
 	if maxCtx > 65536 {
@@ -677,13 +680,12 @@ func (c *Client) sendOllamaWithImages(ctx context.Context, baseURL, prompt strin
 		responseReserve = 16384
 	}
 	numCtx := estimatedTokens + responseReserve
-	if numCtx < 4096 {
-		numCtx = 4096
+	if numCtx < 8192 {
+		numCtx = 8192 // минимум для vision-запросов
 	}
 	if numCtx > maxCtx {
 		numCtx = maxCtx
 	}
-
 	// Кодируем изображения в base64
 	b64Images := make([]string, 0, len(images))
 	for _, img := range images {
@@ -809,6 +811,10 @@ func (c *Client) StreamWithImages(ctx context.Context, prompt string, images [][
 func (c *Client) streamOllamaWithImages(ctx context.Context, baseURL, prompt string, images [][]byte, onToken func(string)) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
 	estimatedTokens := (len(prompt) + 3) / 4
+	// Добавляем оценку токенов изображения.
+	for _, img := range images {
+		estimatedTokens += len(img)/3 + 1024
+	}
 	responseReserve := 2048
 	maxCtx := c.cfg.EffectiveContextTokens()
 	if maxCtx > 65536 {
@@ -818,13 +824,12 @@ func (c *Client) streamOllamaWithImages(ctx context.Context, baseURL, prompt str
 		responseReserve = 16384
 	}
 	numCtx := estimatedTokens + responseReserve
-	if numCtx < 4096 {
-		numCtx = 4096
+	if numCtx < 8192 {
+		numCtx = 8192
 	}
 	if numCtx > maxCtx {
 		numCtx = maxCtx
 	}
-
 	b64Images := make([]string, 0, len(images))
 	for _, img := range images {
 		b64Images = append(b64Images, base64.StdEncoding.EncodeToString(img))

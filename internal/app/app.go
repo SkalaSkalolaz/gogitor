@@ -813,13 +813,8 @@ func (s *Service) AnalyzeWithImages(ctx context.Context, query string, images []
 		Message:   i18n.Localize("current stage: image analysis"),
 		TaskStage: domain.TaskStageAnalyze,
 	})
-	sendEvent(emit, domain.EventLog, "Reading project files")
-	maxFiles, maxBytes := s.contextLimits()
-	analyzeFiles := maxFiles * 3 / 4
-	analyzeBytes := maxBytes * 3 / 4
-	projectContext := s.WS.BuildSmartContext(query, nil, analyzeFiles, analyzeBytes)
 	sendEvent(emit, domain.EventLog, "Sending image analysis request to LLM")
-	prompt := prompts.AnalyzeImage(query, projectContext)
+	prompt := prompts.AnalyzeImage(query, "")
 	response, err := s.sendLLMStreamingWithImages(
 		ctx, prompt, images, emit,
 		agent.RoleDefault, agent.PriorityNormal, "image_analysis",
@@ -854,8 +849,8 @@ func ReadImageFile(path string) ([][]byte, error) {
 	if info.IsDir() {
 		return nil, fmt.Errorf("path is a directory: %s", expandedPath)
 	}
-	// Ограничение 20 МБ
-	const maxImageSize = 20 << 20
+	// Ограничение 4 МБ
+    const maxImageSize = 4 << 20
 	if info.Size() > maxImageSize {
 		return nil, fmt.Errorf("image file too large (%d bytes, max %d)", info.Size(), maxImageSize)
 	}
