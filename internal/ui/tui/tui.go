@@ -633,22 +633,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) addTimeline(stage domain.TaskStage, message string) {
-	if message == "" {
-		message = strings.ToUpper(string(stage))
-	}
-
-	line := fmt.Sprintf(
-		"%s %s — %s",
-		stage.Symbol(),
-		strings.ToUpper(string(stage)),
-		message,
-	)
-
-	m.taskTimeline = append(m.taskTimeline, line)
-
-	if len(m.taskTimeline) > 20 {
-		m.taskTimeline = m.taskTimeline[len(m.taskTimeline)-20:]
-	}
+    line := fmt.Sprintf("%s %s", stage.Symbol(), strings.ToUpper(string(stage)))
+    // Не добавлять, если идентично последней записи
+    if len(m.taskTimeline) > 0 && m.taskTimeline[len(m.taskTimeline)-1] == line {
+        return
+    }
+    m.taskTimeline = append(m.taskTimeline, line)
+    if len(m.taskTimeline) > 20 {
+        m.taskTimeline = m.taskTimeline[len(m.taskTimeline)-20:]
+    }
 }
 
 func (m *model) appendAgent(s string) {
