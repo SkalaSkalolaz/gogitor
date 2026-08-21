@@ -974,18 +974,19 @@ func (m *model) setLastEntry(text string, kind logKind) {
 	m.rewrapAll()
 }
 
+
 func (m *model) applyProgressEvent(e domain.Event) {
 	if e.Progress == nil {
 		return
 	}
-
 	p := e.Progress
-
 	eta := time.Duration(p.ETASeconds) * time.Second
-
-	m.progressStart = time.Now()
-	m.progressETA = eta
-
+	if eta > 0 {
+		m.progressStart = time.Now()
+		m.progressETA = eta
+	} else if m.progressStart.IsZero() {
+		m.progressStart = time.Now()
+	}
 	if p.ItemIndex > 0 {
 		m.planCurrent = p.ItemIndex
 

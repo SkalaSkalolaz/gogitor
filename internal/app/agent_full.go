@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
@@ -300,8 +301,7 @@ func (s *Service) executeAgentFull(
 
     
     	if s.Stats != nil && emit != nil {
-    		eta := s.Stats.estimate(agent.RoleCoder, "code", taskForCoder)
-    
+            eta := s.Stats.estimateSubtask(taskForCoder, s.Cfg.MultiAgent)
     		emit(domain.Event{
     			Type:    domain.EventProgress,
     			Message: sub.Task,
@@ -320,15 +320,20 @@ func (s *Service) executeAgentFull(
     		sendEvent(emit, domain.EventAgent, "current stage: coder")
     		sendEvent(emit, domain.EventAgent, "coder started")
     	}
-    
-    	subCtx := agent.WithRole(ctx, agent.RoleCoder)
-    	subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
-    	subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
-    
-    	res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
-    
+
+		subCtx := agent.WithRole(ctx, agent.RoleCoder)
+		subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
+		subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
+		subtaskStart := time.Now()
+		res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
+		subtaskDuration := time.Since(subtaskStart)
 		final.Iterations += res.Iterations
 		addFiles(res)
+		// Записываем реальную длительность полной подзадачи.
+		if s.Stats != nil {
+			s.Stats.recordSubtask(taskForCoder, subtaskDuration)
+		}
+
 
 		if !res.Success {
 			markPlan(i+1, domain.PlanFailed, truncate(strings.Join(res.Errors, "; "), 200))

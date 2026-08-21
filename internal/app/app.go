@@ -1109,17 +1109,29 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	patchAppliedSuccessfully := false
 	patchRepairPending := false
 
+	// Оценка ETA для простых задач (не multi-agent подзадач).
+	if opts.ProgressItem == 0 && s.Stats != nil && emit != nil {
+		simpleETA := s.Stats.estimateSubtask(query, false)
+		emit(domain.Event{
+			Type:    domain.EventProgress,
+			Message: query,
+			Progress: &domain.ProgressUpdate{
+				Stage:      truncate(query, 80),
+				ETASeconds: int(simpleETA.Seconds() + 0.5),
+			},
+		})
+	}
+
 	for i := 1; i <= maxIterations; i++ {
 		result.Iterations = i
 		result.FilesCreated = nil
 		result.FilesModified = nil
 		result.OutputFiles = nil
-
-        emitEvent(emit, domain.Event{
-        	Type:      domain.EventLog,
-        	Message:   fmt.Sprintf("Iteration %d/%d", i, maxIterations),
-        	TaskStage: domain.TaskStageCoding,
-        })
+		emitEvent(emit, domain.Event{
+			Type:      domain.EventLog,
+			Message:   fmt.Sprintf("Iteration %d/%d", i, maxIterations),
+			TaskStage: domain.TaskStageCoding,
+		})
 
         emitEvent(emit, domain.Event{
         	Type:      domain.EventProgress,
@@ -1183,15 +1195,31 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		}
 
 		sendEvent(emit, domain.EventLog, "LLM request")
-		s.emitProgressStart(
-			emit,
-			"code",
-			agent.RoleCoder,
-			"code",
-			prompt,
-			opts.ProgressItem,
-			opts.ProgressTotal,
-		)
+		// Для multi-agent подзадач оценка делается в agent_full.go.
+		// Для простых задач общая оценка уже отправлена выше.
+		if opts.ProgressItem > 0 {
+			s.emitProgressStart(
+				emit,
+				"code",
+				agent.RoleCoder,
+				"code",
+				prompt,
+				opts.ProgressItem,
+				opts.ProgressTotal,
+			)
+		} else {
+			emitEvent(emit, domain.Event{
+				Type:      domain.EventProgress,
+				Message:   fmt.Sprintf("Iteration %d/%d", i, maxIterations),
+				TaskStage: domain.TaskStageCoding,
+				Progress: &domain.ProgressUpdate{
+					Stage:      "coding",
+					ItemIndex:  i,
+					TotalItems: maxIterations,
+				},
+			})
+		}
+
 		response, err := s.LLM.Send(ctx, prompt)
 		if err != nil {
 			if ctx.Err() != nil {

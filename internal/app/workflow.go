@@ -339,13 +339,31 @@ func (s *Service) executeWorkflowTasks(
 			// При ошибке поиска продолжаем без него (non-fatal).
 		}
 
-		taskPrompt := formatWorkflowTask(query, plan, sub, i, len(plan.Subtasks), searchContext)
-		subOpts := opts
-		subOpts.ProgressItem = i + 1
-		subOpts.ProgressTotal = len(plan.Subtasks)
-		subOpts.NoCommit = true
-
-		res := s.executeSimple(ctx, taskPrompt, subOpts, taskEmit)
+    	taskPrompt := formatWorkflowTask(query, plan, sub, i, len(plan.Subtasks), searchContext)
+    	subOpts := opts
+    	subOpts.ProgressItem = i + 1
+    	subOpts.ProgressTotal = len(plan.Subtasks)
+    	subOpts.NoCommit = true
+    	// Оценка ETA для задачи workflow.
+    	if s.Stats != nil {
+    		wfETA := s.Stats.estimateSubtask(taskPrompt, !isSmallModel)
+    		taskEmit(domain.Event{
+    			Type:    domain.EventProgress,
+    			Message: sub.Task,
+    			Progress: &domain.ProgressUpdate{
+    				Stage:      truncate(sub.Task, 80),
+    				ItemIndex:  i + 1,
+    				TotalItems: len(plan.Subtasks),
+    				ETASeconds: int(wfETA.Seconds() + 0.5),
+    			},
+    		})
+    	}
+    	wfTaskStart := time.Now()
+    	res := s.executeSimple(ctx, taskPrompt, subOpts, taskEmit)
+    	wfTaskDuration := time.Since(wfTaskStart)
+    	if s.Stats != nil {
+    		s.Stats.recordSubtask(taskPrompt, wfTaskDuration)
+    	}
 		final.Iterations += res.Iterations
 		mergeWorkflowResult(final, res)
 
