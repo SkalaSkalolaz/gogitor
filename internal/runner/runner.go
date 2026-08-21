@@ -710,7 +710,9 @@ func (r *Runner) EnsureLintConfig(ctx context.Context, dir string) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil // конфиг уже есть
 	}
-	const defaultConfig = `run:
+
+	const defaultConfig = `version: "2"
+run:
   timeout: 5m
   tests: true
 

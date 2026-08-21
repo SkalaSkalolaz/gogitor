@@ -364,6 +364,46 @@ func (s *Service) executeAgentFull(
 			continue
 		}
 
+		// ─── Required Artifacts Validation ────────────────────
+		requiredFiles := extractTargetFiles(sub.Task)
+		if len(requiredFiles) > 0 {
+			createdSet := stringSet(res.FilesCreated)
+			modifiedSet := stringSet(res.FilesModified)
+			patchedSet := stringSet(res.FilesPatched)
+			rewrittenSet := stringSet(res.FilesFullRewritten)
+
+			var missing []string
+			for _, f := range requiredFiles {
+				if !createdSet[f] && !modifiedSet[f] &&
+					!patchedSet[f] && !rewrittenSet[f] {
+					missing = append(missing, f)
+				}
+			}
+			if len(missing) > 0 {
+				sendEvent(emit, domain.EventWarn,
+					fmt.Sprintf("Required files not created: %s",
+						strings.Join(missing, ", ")))
+				fixTask := fmt.Sprintf(
+					"The following files were REQUIRED by the subtask "+
+						"but were NOT created or modified: %s.\n"+
+						"Create these files as specified in the "+
+						"original subtask:\n%s",
+					strings.Join(missing, ", "), sub.Task)
+				fixCtx := agent.WithRole(ctx, agent.RoleCoder)
+				fixCtx = agent.WithPriority(fixCtx, agent.PriorityHigh)
+				fixCtx = agent.WithPurpose(fixCtx,
+					fmt.Sprintf("fix missing files %d/%d",
+						i+1, len(plan.Subtasks)))
+				fixRes := s.executeSimple(fixCtx, fixTask, subOpts, emit)
+				final.Iterations += fixRes.Iterations
+				addFiles(fixRes)
+				if !fixRes.Success {
+					final.Warnings = append(final.Warnings,
+						"required files fix failed: "+
+							strings.Join(fixRes.Errors, "; "))
+				}
+			}
+		}
 		// ─── Reviewer ─────────────────────────────────────────
 		changedFiles := len(res.FilesCreated) +
 			len(res.FilesModified) +
@@ -761,12 +801,38 @@ func buildReviewFixTask(subtask string, review agentReview) string {
 	b.WriteString("Original subtask:\n")
 	b.WriteString(subtask)
 	b.WriteString("\n")
-	b.WriteString("Critical issues to fix (fix ONLY these, nothing else):\n")
+
+	// Разделяем проблемы на файловые и прочие.
+	var fileIssues []string
+	var otherIssues []string
 	for _, issue := range review.CriticalIssues {
-		b.WriteString("- ")
-		b.WriteString(issue)
-		b.WriteByte('\n')
+		lower := strings.ToLower(issue)
+		if strings.Contains(lower, "absent") ||
+			strings.Contains(lower, "missing") ||
+			strings.Contains(lower, "not created") ||
+			strings.Contains(lower, "required file") {
+			fileIssues = append(fileIssues, issue)
+		} else {
+			otherIssues = append(otherIssues, issue)
+		}
 	}
+
+	if len(fileIssues) > 0 {
+		b.WriteString("\n⚠ CRITICAL: REQUIRED FILES ARE MISSING\n")
+		b.WriteString("You MUST create these files:\n")
+		for _, issue := range fileIssues {
+			b.WriteString("- " + issue + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(otherIssues) > 0 {
+		b.WriteString("Critical issues to fix (fix ONLY these, nothing else):\n")
+		for _, issue := range otherIssues {
+			b.WriteString("- " + issue + "\n")
+		}
+	}
+
 	b.WriteString(`
 RULES:
 1. Fix ONLY the listed critical issues.
