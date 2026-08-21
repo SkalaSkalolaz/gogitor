@@ -1511,26 +1511,11 @@ func (m *model) updateStatus() {
 	}
 
 	if m.running {
+
 		if m.agentRole != "" {
-			dur := m.agentDuration
-			if !m.agentStartTime.IsZero() {
-				dur = time.Since(m.agentStartTime).Round(100 * time.Millisecond).String()
-			}
-			if dur == "" {
-				dur = "0s"
-			}
-			tokRate := ""
-			if m.agentTokens > 0 && !m.agentStartTime.IsZero() {
-				elapsed := time.Since(m.agentStartTime).Seconds()
-				if elapsed > 1 {
-					tokRate = fmt.Sprintf(" | %d tok/s", int(float64(m.agentTokens)/elapsed))
-				}
-			}
 			m.status = i18n.T(
-				"%s | %d req | ≈%d tok%s | Tab: output | Ctrl+C: cancel | F2: select",
-				m.agentRole, m.agentRequests, m.agentTokens, tokRate,
-				// "%s | %d req | ≈%d tok%s | %s | Tab: output | Ctrl+C: cancel | F2: select",
-				// m.agentRole, m.agentRequests, m.agentTokens, tokRate, dur,
+				"%s | %d req | ≈%d tok | Tab: output | Ctrl+C: cancel | F2: select",
+				m.agentRole, m.agentRequests, m.agentTokens,
 			)
 		} else if !m.progressStart.IsZero() && m.progressETA > 0 {
 			m.status = i18n.T(

@@ -415,7 +415,7 @@ var messages = map[Lang]map[string]string{
         "running": "выполняется",
         "Tab: output | Ctrl+C: cancel | F2: select": "Tab: вывод | Ctrl+C: отмена | F2: выделение",
         "Tab: output | Ctrl+C: cancel | F2: select text": "Tab: вывод | Ctrl+C: отмена | F2: выделение текста",
-        "%s | %d req | ≈%d tok | %s | Tab: output | Ctrl+C: cancel | F2: select": "%s | %d зап | ≈%d ток | %s | Tab: вывод | Ctrl+C: отмена | F2: выделение",
+        "%s | %d req | ≈%d tok | Tab: output | Ctrl+C: cancel | F2: select": "%s | %d зап | ≈%d ток | Tab: вывод | Ctrl+C: отмена | F2: выделение",
         "%s | Tab: output | Ctrl+C: cancel | F2: select text": "%s | Tab: вывод | Ctrl+C: отмена | F2: выделение текста",
         "Running... | Tab: output | Ctrl+C: cancel | F2: select text": "Выполняется... | Tab: вывод | Ctrl+C: отмена | F2: выделение текста",
         "LLM usage: %d requests, %d tokens, %s": "Использование LLM: %d запросов, %d токенов, %s",
