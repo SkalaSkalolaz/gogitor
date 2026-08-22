@@ -1195,19 +1195,19 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		}
 
 		sendEvent(emit, domain.EventLog, "LLM request")
-		// Для multi-agent подзадач оценка делается в agent_full.go.
-		// Для простых задач общая оценка уже отправлена выше.
-		if opts.ProgressItem > 0 {
-			s.emitProgressStart(
-				emit,
-				"code",
-				agent.RoleCoder,
-				"code",
-				prompt,
-				opts.ProgressItem,
-				opts.ProgressTotal,
-			)
-		} else {
+
+        if opts.ProgressItem > 0 {
+            emitEvent(emit, domain.Event{
+                Type:      domain.EventProgress,
+                Message:   fmt.Sprintf("Iteration %d/%d", i, maxIterations),
+                TaskStage: domain.TaskStageCoding,
+                Progress: &domain.ProgressUpdate{
+                    Stage:      "coding",
+                    ItemIndex:  opts.ProgressItem,
+                    TotalItems: opts.ProgressTotal,
+                },
+            })
+        } else {
 			emitEvent(emit, domain.Event{
 				Type:      domain.EventProgress,
 				Message:   fmt.Sprintf("Iteration %d/%d", i, maxIterations),
@@ -4044,6 +4044,8 @@ func (s *Service) RunLint(ctx context.Context, emit func(domain.Event)) domain.R
 		Message:   i18n.Localize("Running golangci-lint"),
 		TaskStage: domain.TaskStageLint,
 	})
+
+	_ = s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir)
 	sendEvent(emit, domain.EventLog, "Preparing sandbox")
 	sandbox, err := s.WS.PrepareSandbox(ctx)
 	if err != nil {

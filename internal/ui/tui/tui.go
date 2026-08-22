@@ -987,19 +987,24 @@ func (m *model) applyProgressEvent(e domain.Event) {
 	} else if m.progressStart.IsZero() {
 		m.progressStart = time.Now()
 	}
-	if p.ItemIndex > 0 {
-		m.planCurrent = p.ItemIndex
 
-		if m.planETA == nil {
-			m.planETA = make(map[int]time.Duration)
-		}
-		if m.planStart == nil {
-			m.planStart = make(map[int]time.Time)
-		}
-
-		m.planETA[p.ItemIndex] = eta
-		m.planStart[p.ItemIndex] = time.Now()
-	}
+    if p.ItemIndex > 0 {
+        m.planCurrent = p.ItemIndex
+        if m.planETA == nil {
+            m.planETA = make(map[int]time.Duration)
+        }
+        if m.planStart == nil {
+            m.planStart = make(map[int]time.Time)
+        }
+        if eta > 0 {
+            if existing, ok := m.planETA[p.ItemIndex]; !ok || existing == 0 || eta > existing {
+                m.planETA[p.ItemIndex] = eta
+            }
+        }
+        if _, ok := m.planStart[p.ItemIndex]; !ok {
+            m.planStart[p.ItemIndex] = time.Now()
+        }
+    }
 
 	m.updateStatus()
 }
@@ -1047,21 +1052,22 @@ func (m *model) updateProgressDisplay() {
 }
 
 func formatProgressNote(elapsed, eta time.Duration) string {
-	if eta <= 0 {
-		return elapsed.Round(time.Second).String()
-	}
-
-	pct := float64(elapsed) / float64(eta)
-	if pct > 0.95 {
-		pct = 0.95
-	}
-
-	return fmt.Sprintf(
-		"%s / ~%s (%.0f%%)",
-		elapsed.Round(time.Second),
-		eta.Round(time.Second),
-		pct*100,
-	)
+    if eta <= 0 {
+        return elapsed.Round(time.Second).String()
+    }
+    pct := float64(elapsed) / float64(eta)
+    if pct > 3.0 {
+        return elapsed.Round(time.Second).String()
+    }
+    if pct > 0.95 {
+        pct = 0.95
+    }
+    return fmt.Sprintf(
+        "%s / ~%s (%.0f%%)",
+        elapsed.Round(time.Second),
+        eta.Round(time.Second),
+        pct*100,
+    )
 }
 
 func listenEvents(ch chan domain.Event) tea.Cmd {

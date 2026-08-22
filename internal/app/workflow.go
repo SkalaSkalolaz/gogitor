@@ -759,6 +759,7 @@ func (s *Service) runWorkflowQualityGates(
 		Lint:      true,
 	}
 
+	_ = s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir)
 	sandbox, err := s.WS.PrepareSandbox(ctx)
 	if err != nil {
 		report.Errors = append(report.Errors, fmt.Sprintf("cannot prepare sandbox: %v", err))

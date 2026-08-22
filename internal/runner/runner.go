@@ -708,11 +708,10 @@ func parseGoBuildErrors(output string) string {
 func (r *Runner) EnsureLintConfig(ctx context.Context, dir string) error {
 	configPath := filepath.Join(dir, ".golangci.yml")
 	if _, err := os.Stat(configPath); err == nil {
-		return nil // конфиг уже есть
+		return nil
 	}
 
-	const defaultConfig = `version: "2"
-run:
+	const defaultConfig = `run:
   timeout: 5m
   tests: true
 
