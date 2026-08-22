@@ -710,27 +710,27 @@ func (r *Runner) EnsureLintConfig(ctx context.Context, dir string) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil
 	}
+	const defaultConfig = `version: "2"
 
-	const defaultConfig = `run:
+run:
   timeout: 5m
   tests: true
-
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - revive
-    - gofmt
-    - goimports
-    - misspell
-    - testifylint
-    - thelper
-    - whitespace
-
+  - errcheck
+  - govet
+  - ineffassign
+  - staticcheck
+  - unused
+  - revive
+  - misspell
+  - testifylint
+  - thelper
+  - whitespace
+formatters:
+  enable:
+  - gofmt
+  - goimports
 linters-settings:
   testifylint:
     enable-all: true
