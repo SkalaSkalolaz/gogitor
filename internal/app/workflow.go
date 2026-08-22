@@ -187,8 +187,9 @@ func (s *Service) executeWorkflowLite(
 	}
 
 	// ─── Итеративное планирование: вопросы по плану ──────────
-	if s.Cfg.WorkflowAskUser {
+	if s.Cfg.WorkflowAskUser && len(opts.InterviewAnswers) == 0 {
 		subtaskTexts := make([]string, len(plan.Subtasks))
+
 		for i, st := range plan.Subtasks {
 			subtaskTexts[i] = st.Task
 		}
