@@ -311,14 +311,14 @@ func Run(cfg *config.Config, log *slog.Logger) error {
 	return err
 }
 
-
-
 func newModel(svc *app.Service, cfg *config.Config, log *slog.Logger) *model {
     ta := textarea.New()
     ta.Prompt = ""
+    ta.CharLimit = 0 
+    ta.MaxHeight = 12
     ta.Placeholder = i18n.T("Task: enter a task or :help")
+    ta.SetHeight(inputTextAreaHeight)
 
-	ta.SetHeight(inputTextAreaHeight)
 	vp := viewport.New(80, 20)
 	m := &model{
 		svc:         svc,
