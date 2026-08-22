@@ -653,7 +653,7 @@ func validateWorkflowPlan(plan *fullPlan, originalTask string) *fullPlan {
 			NeedsSearch: st.NeedsSearch,
 		})
 
-		if len(clean) >= 5 {
+		if len(clean) >= 7 {
 			break
 		}
 	}
@@ -683,7 +683,7 @@ func validateWorkflowPRD(prd *workflowPRD) error {
 		return fmt.Errorf("prd has no tasks")
 	}
 
-	if len(prd.Tasks) > 5 {
+	if len(prd.Tasks) > 7 {
 		return fmt.Errorf("prd has too many tasks: %d", len(prd.Tasks))
 	}
 

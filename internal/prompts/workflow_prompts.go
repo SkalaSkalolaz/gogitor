@@ -212,7 +212,8 @@ JSON schema:
 }
 RULES:
 1. Incorporate ALL user feedback into the revised plan.
-2. Maximum 5 subtasks.
+2. Maximum 7 subtasks.
+2a. Each subtask must contain exactly ONE operation.
 3. Each subtask must be independently executable by a code generation agent.
 4. Preserve subtasks that the user did not object to.
 5. Write in the same language as the TASK.

@@ -314,7 +314,7 @@ USER QUESTION:
 
 func Plan(task string) string {
 	var b strings.Builder
-	b.WriteString(`You are a software planning agent. Break the task into 2-5 concrete subtasks.
+    b.WriteString(`You are a software planning agent. Break the task into 2-7 concrete subtasks.
 
 TASK:
 `)

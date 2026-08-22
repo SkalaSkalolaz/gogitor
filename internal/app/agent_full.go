@@ -623,8 +623,8 @@ func (s *Service) planFullOrFallback(
 			Task: query,
 		})
 	}
-	if len(clean) > 5 {
-		clean = clean[:5]
+	if len(clean) > 7 {
+		clean = clean[:7]
 	}
 	plan.Subtasks = clean
 	if strings.TrimSpace(plan.Goal) == "" {
