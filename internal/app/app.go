@@ -41,6 +41,7 @@ type Options struct {
     Mode string
     WorkflowDir string
 	InterviewAnswers []prompts.WorkflowAnswer
+    InterviewDone    bool
 }
 
 type PendingComparison struct {

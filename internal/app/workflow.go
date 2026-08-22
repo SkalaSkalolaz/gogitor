@@ -187,7 +187,7 @@ func (s *Service) executeWorkflowLite(
 	}
 
 	// ─── Итеративное планирование: вопросы по плану ──────────
-	if s.Cfg.WorkflowAskUser && len(opts.InterviewAnswers) == 0 {
+    if s.Cfg.WorkflowAskUser && !opts.InterviewDone {
 		subtaskTexts := make([]string, len(plan.Subtasks))
 
 		for i, st := range plan.Subtasks {
@@ -1261,18 +1261,15 @@ func (s *Service) ExecuteWorkflowInterview(
 		prompt,
 		&questions,
 	)
-	if err != nil {
-		sendEvent(emit, domain.EventWarn,
-			fmt.Sprintf("Interview question generation failed: %v; proceeding without interview", err))
-		// Fallback: просто запускаем workflow без интервью.
-		return s.ExecuteCode(ctx, task, Options{Mode: "workflow"}, emit)
-	}
-
-	if len(questions.Questions) == 0 {
-		sendEvent(emit, domain.EventLog, "No clarifying questions needed.")
-		return s.ExecuteCode(ctx, task, Options{Mode: "workflow"}, emit)
-	}
-
+    if err != nil {
+        sendEvent(emit, domain.EventWarn,
+            fmt.Sprintf("Interview question generation failed: %v; proceeding without interview", err))
+        return s.ExecuteCode(ctx, task, Options{Mode: "workflow", InterviewDone: true}, emit)
+    }
+    if len(questions.Questions) == 0 {
+        sendEvent(emit, domain.EventLog, "No clarifying questions needed.")
+        return s.ExecuteCode(ctx, task, Options{Mode: "workflow", InterviewDone: true}, emit)
+    }
 	// 2. Формируем текст с вопросами для пользователя.
 	var questionsText strings.Builder
 	if DetectLanguage() == "ru" {
@@ -1348,14 +1345,14 @@ func (s *Service) ContinueWorkflowInterview(
 	
 	answers := parseInterviewAnswers(answersText)
 	
-	// НОВОЕ: Если пользователь ввел "skip" или "go", пропускаем LLM-уточнение
-	if len(answers) == 0 {
-		sendEvent(emit, domain.EventLog, "Interview skipped by user, using original task with defaults.")
-		return s.ExecuteCode(ctx, originalTask, Options{
-			Mode:             "workflow",
-			InterviewAnswers: answers, // передаем пустой слайс, в inbox.md не будет секции Q&A
-		}, emit)
-	}
+    if len(answers) == 0 {
+        sendEvent(emit, domain.EventLog, "Interview skipped by user, using original task with defaults.")
+        return s.ExecuteCode(ctx, originalTask, Options{
+            Mode:             "workflow",
+            InterviewAnswers: answers,
+            InterviewDone:    true,
+        }, emit)
+    }
 
 	// Формируем уточнённую задачу через LLM (только если были реальные ответы).
 	prompt := prompts.WorkflowInterviewSummary(originalTask, answers)
