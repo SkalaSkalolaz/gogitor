@@ -17,7 +17,7 @@ import (
 	"gogitor/internal/ui/tui"
 )
 
-const Version = "1.1.1"
+const Version = "1.1.2"
 
 
 func main() {
