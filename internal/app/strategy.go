@@ -389,21 +389,58 @@ func (s *Service) modelProfile() modelProfile {
 
 // isLocalModelEndpoint определяет, похож ли endpoint на локальный.
 func (s *Service) isLocalModelEndpoint() bool {
-	provider := strings.ToLower(strings.TrimSpace(s.Cfg.Provider))
+	// Локальный endpoint не означает локальную модель.
+	// Если модель явно обозначена как cloud/remote/hosted,
+	// считаем её внешней даже при Ollama localhost.
+	if isClearlyRemoteModel(s.Cfg.Model) {
+		return false
+	}
+
+	provider := strings.ToLower(
+		strings.TrimSpace(s.Cfg.Provider),
+	)
+
 	if provider == "ollama" {
 		base := s.Cfg.OllamaURL
 		if base == "" {
 			base = "http://localhost:11434"
 		}
+
 		return urlHostIsLocal(base)
 	}
-	if strings.HasPrefix(provider, "http://") || strings.HasPrefix(provider, "https://") {
+
+	if strings.HasPrefix(provider, "http://") ||
+		strings.HasPrefix(provider, "https://") {
 		return urlHostIsLocal(provider)
 	}
-	if base, ok := config.OpenAIBaseFromProvider(s.Cfg.Provider); ok {
+
+	if base, ok :=
+		config.OpenAIBaseFromProvider(
+			s.Cfg.Provider,
+		); ok {
 		return urlHostIsLocal(base)
 	}
+
 	return false
+}
+
+func isClearlyRemoteModel(model string) bool {
+	lower := strings.ToLower(
+		strings.TrimSpace(model),
+	)
+
+	if lower == "" {
+		return false
+	}
+
+	markers := []string{
+		"cloud",
+		"remote",
+		"hosted",
+		"online",
+	}
+
+	return containsAny(lower, markers)
 }
 
 func urlHostIsLocal(rawURL string) bool {

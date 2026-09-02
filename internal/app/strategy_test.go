@@ -2,7 +2,35 @@ package app
 
 import (
 	"testing"
+
+    "gogitor/internal/config"
 )
+
+func TestDeepAgentUsesStrictPatchPolicy(
+	t *testing.T,
+) {
+	cfg := config.Default()
+
+	cfg.Provider = "ollama"
+	cfg.Model = "qwen3.8:27b"
+
+	svc := &Service{
+		Cfg: cfg,
+	}
+
+	got := svc.patchPolicyForOptions(
+		Options{
+			AgentDepth: AgentDepthDeep,
+		},
+	)
+
+	if got != workspace.PatchPolicyStrict {
+		t.Fatalf(
+			"deep policy = %v, want strict",
+			got,
+		)
+	}
+}
 
 func TestNormalizeAgentDepth(
 	t *testing.T,
@@ -91,5 +119,32 @@ func TestUrlHostIsLocal(t *testing.T) {
 		if got := urlHostIsLocal(tc.url); got != tc.want {
 			t.Errorf("urlHostIsLocal(%q) = %v, want %v", tc.url, got, tc.want)
 		}
+	}
+}
+
+func TestCloudModelIsRemoteOnLocalOllama(
+	t *testing.T,
+) {
+	cfg := config.Default()
+
+	cfg.Provider = "ollama"
+	cfg.OllamaURL =
+		"http://127.0.0.1:11434"
+	cfg.Model = "gemma4:31b-cloud"
+
+	svc := &Service{
+		Cfg: cfg,
+	}
+
+	if svc.isLocalModelEndpoint() {
+		t.Fatal(
+			"cloud model must not be considered local",
+		)
+	}
+
+	if !svc.isRemoteLLM() {
+		t.Fatal(
+			"cloud model must be considered remote",
+		)
 	}
 }

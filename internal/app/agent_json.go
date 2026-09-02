@@ -8,6 +8,7 @@ import (
 
 	"gogitor/internal/agent"
 	"gogitor/internal/codegen"
+	"gogitor/internal/textutil"
 )
 
 func (s *Service) sendAgentJSON(
@@ -31,14 +32,132 @@ func (s *Service) sendAgentJSON(
 	ctx = agent.WithRole(ctx, role)
 	ctx = agent.WithPriority(ctx, priority)
 	ctx = agent.WithPurpose(ctx, purpose)
-	response, err := s.LLM.Send(ctx, prompt)
-	if err != nil {
-		return err
+    response, err := s.LLM.Send(ctx, prompt)
+    if err != nil {
+    	return err
+    }
+    
+    parseErr := parseAgentJSON(
+    	response,
+    	out,
+    )
+    
+    if parseErr == nil {
+    	return nil
+    }
+    
+    s.Log.Warn(
+    	"agent JSON parse failed; requesting one repair",
+    	"purpose",
+    	purpose,
+    	"err",
+    	parseErr,
+    )
+    
+    repairPrompt := buildAgentJSONRepairPrompt(
+    	purpose,
+    	prompt,
+    	response,
+    	parseErr,
+    )
+    
+    repairCtx := ctx
+    repairCtx = agent.WithPurpose(
+    	repairCtx,
+    	purpose+" JSON repair",
+    )
+    
+    repaired, repairErr :=
+    	s.LLM.Send(
+    		repairCtx,
+    		repairPrompt,
+    	)
+    
+    if repairErr != nil {
+    	return fmt.Errorf(
+    		"%s: JSON repair failed: %w",
+    		purpose,
+    		repairErr,
+    	)
+    }
+    
+    if err := parseAgentJSON(
+    	repaired,
+    	out,
+    ); err != nil {
+    	return fmt.Errorf(
+    		"%s: invalid JSON after repair: %w",
+    		purpose,
+    		err,
+    	)
+    }
+    
+    return nil
+}
+
+func buildAgentJSONRepairPrompt(
+	purpose string,
+	originalPrompt string,
+	invalidResponse string,
+	parseErr error,
+) string {
+	const maxPromptBytes = 14000
+	const maxResponseBytes = 10000
+
+	originalPrompt =
+		textutil.TruncateStringBytes(
+			originalPrompt,
+			maxPromptBytes,
+		)
+
+	invalidResponse =
+		textutil.TruncateStringBytes(
+			invalidResponse,
+			maxResponseBytes,
+		)
+
+	errText := ""
+	if parseErr != nil {
+		errText = parseErr.Error()
 	}
-	if err := parseAgentJSON(response, out); err != nil {
-		return fmt.Errorf("%s: %w", purpose, err)
-	}
-	return nil
+
+	errText =
+		textutil.TruncateStringBytes(
+			errText,
+			1000,
+		)
+
+	return fmt.Sprintf(
+		`You are repairing an invalid JSON response.
+
+Purpose:
+%s
+
+Return ONLY one valid JSON object.
+Do not add markdown.
+Do not add explanations.
+Do not change the intended meaning.
+Preserve all information that can be recovered.
+
+Original request:
+---BEGIN REQUEST---
+%s
+---END REQUEST---
+
+Previous invalid response:
+---BEGIN RESPONSE---
+%s
+---END RESPONSE---
+
+Parser error:
+%s
+
+Return ONLY the corrected JSON object.`,
+		purpose,
+		originalPrompt,
+		invalidResponse,
+		errText,
+	)
 }
 
 func extractJSONCandidate(text string) ([]byte, error) {

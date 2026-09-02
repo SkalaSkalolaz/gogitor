@@ -7,9 +7,11 @@ import (
 	"os"
 	"strings"
 
+    "gogitor/internal/security"
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
 	"gogitor/internal/prompts"
+	"gogitor/internal/runner"
 )
 
 // fullPlan — структурированный план от planner agent.
@@ -215,6 +217,8 @@ func (s *Service) executeAgentFull(
 
 	created := map[string]bool{}
 	modified := map[string]bool{}
+    patched := map[string]bool{}
+    fullRewritten := map[string]bool{}
 
 	var session *agentSession
 
@@ -249,23 +253,44 @@ func (s *Service) executeAgentFull(
 		}()
 	}
 
-	addFiles := func(res domain.Result) {
-		for _, f := range res.FilesCreated {
-			created[f] = true
-		}
-		for _, f := range res.FilesModified {
-			modified[f] = true
-		}
-		for _, f := range res.FilesPatched {
-			modified[f] = true
-		}
-		for _, f := range res.FilesFullRewritten {
-			modified[f] = true
-		}
-		final.FilesCreated = sortedKeys(created)
-		final.FilesModified = sortedKeys(modified)
-		final.OutputFiles = mergeOutputFiles(final.OutputFiles, res.OutputFiles)
-	}
+    addFiles := func(res domain.Result) {
+    	for _, f := range res.FilesCreated {
+    		created[f] = true
+    	}
+    
+    	for _, f := range res.FilesModified {
+    		modified[f] = true
+    	}
+    
+    	for _, f := range res.FilesPatched {
+    		modified[f] = true
+    		patched[f] = true
+    	}
+    
+    	for _, f := range res.FilesFullRewritten {
+    		modified[f] = true
+    		fullRewritten[f] = true
+    	}
+    
+    	final.FilesCreated =
+    		sortedKeys(created)
+    
+    	final.FilesModified =
+    		sortedKeys(modified)
+    
+    	final.FilesPatched =
+    		sortedKeys(patched)
+    
+    	final.FilesFullRewritten =
+    		sortedKeys(fullRewritten)
+    
+    	final.OutputFiles =
+    		mergeOutputFiles(
+    			final.OutputFiles,
+    			res.OutputFiles,
+    		)
+    }
+
 
 	rollback := func(reason string) {
 		if opts.DryRun || checkpoint == nil {
@@ -429,10 +454,37 @@ func (s *Service) executeAgentFull(
 		if changedFiles > 0 {
 			sendEvent(emit, domain.EventAgent, "current stage: reviewer")
 			review, err := s.runReviewer(ctx, query, sub.Task, res, mem, emit)
-			if err != nil {
-				itemStatus = domain.PlanWarn
-				itemNote = "reviewer unavailable"
-			} else if !review.Approved && len(review.CriticalIssues) > 0 {
+
+            if err != nil {
+            	if deep {
+            		markPlan(
+            			i+1,
+            			domain.PlanFailed,
+            			"reviewer unavailable",
+            		)
+            
+            		final.Success = false
+            
+            		final.AddError(
+            			fmt.Sprintf(
+            				"reviewer failed in deep mode: %v",
+            				err,
+            			),
+            		)
+            
+            		rollback(
+            			"reviewer unavailable in deep mode",
+            		)
+            
+            		return final
+            	}
+            
+            	itemStatus = domain.PlanWarn
+            	itemNote = "reviewer unavailable"
+            
+            } else if !review.Approved &&
+            	len(review.CriticalIssues) > 0 {
+
 				issues := strings.Join(review.CriticalIssues, "; ")
 				sendEvent(emit, domain.EventWarn, "Reviewer found critical issues: "+issues)
 				fixTask := buildReviewFixTask(sub.Task, review)
@@ -523,8 +575,39 @@ func (s *Service) executeAgentFull(
 		)
 
 	}
-	// ─── Verifier & Finalization ───────────────────────────────
 
+    // -----------------------------------------------------------
+    // Deterministic verification.
+    // Для Deep эта проверка уже входит в final quality gates.
+    // Для Normal выполняем минимальные объективные проверки.
+    // -----------------------------------------------------------
+    
+    if !deep {
+    	check := s.runAgentDeterministicChecks(
+    		ctx,
+    		final,
+    		opts.NoTests,
+    		emit,
+    	)
+    
+    	final.Tests = check.Tests
+    
+    	if !check.Passed() {
+    		final.Success = false
+    		final.Errors = append(
+    			final.Errors,
+    			check.Errors...,
+    		)
+    
+    		rollback(
+    			"deterministic final verification failed",
+    		)
+    
+    		return final
+    	}
+    }
+
+	// ─── Verifier & Finalization ───────────────────────────────
 	sendEvent(
 		emit,
 		domain.EventAgent,
@@ -618,6 +701,31 @@ func (s *Service) executeAgentFull(
 
 			return final
 		}
+
+        if !deep {
+        	check := s.runAgentDeterministicChecks(
+        		ctx,
+        		final,
+        		opts.NoTests,
+        		emit,
+        	)
+        
+        	final.Tests = check.Tests
+        
+        	if !check.Passed() {
+        		final.Success = false
+        		final.Errors = append(
+        			final.Errors,
+        			check.Errors...,
+        		)
+        
+        		rollback(
+        			"deterministic verification after verifier fix failed",
+        		)
+        
+        		return final
+        	}
+        }
 
 		// Повторная verification — ОБЯЗАТЕЛЬНА.
 		verification, err =
@@ -962,9 +1070,10 @@ func (s *Service) runReviewer(
 		prompt,
 		&review,
 	)
-	if err != nil {
-		return agentReview{Approved: true}, err
-	}
+    if err != nil {
+    	return agentReview{}, err
+    }
+
 	if !review.Approved && len(review.CriticalIssues) == 0 {
 		review.Approved = true
 	}
@@ -1046,6 +1155,203 @@ func (s *Service) runVerifier(
 	}
 	sanitizeVerification(&verification)
 	return verification, nil
+}
+
+type agentDeterministicCheck struct {
+	FilesOK   bool
+	BuildOK   bool
+	TestsOK   bool
+	Tests     domain.TestsStatus
+	Errors    []string
+}
+
+func (c agentDeterministicCheck) Passed() bool {
+	return c.FilesOK &&
+		c.BuildOK &&
+		c.TestsOK &&
+		len(c.Errors) == 0
+}
+
+func (s *Service) runAgentDeterministicChecks(
+	ctx context.Context,
+	result domain.Result,
+	noTests bool,
+	emit func(domain.Event),
+) agentDeterministicCheck {
+	check := agentDeterministicCheck{
+		FilesOK: true,
+	}
+
+	sandbox, err :=
+		s.WS.PrepareSandbox(ctx)
+
+	if err != nil {
+		check.Errors = append(
+			check.Errors,
+			fmt.Sprintf(
+				"cannot prepare verification sandbox: %v",
+				err,
+			),
+		)
+		return check
+	}
+
+	defer os.RemoveAll(sandbox)
+
+	// ------------------------------------------------------------
+	// 1. Проверяем, что все заявленные изменённые файлы существуют.
+	// ------------------------------------------------------------
+
+	files := make(
+		map[string]bool,
+	)
+
+	for _, path :=
+		range result.FilesCreated {
+		files[path] = true
+	}
+
+	for _, path :=
+		range result.FilesModified {
+		files[path] = true
+	}
+
+	for _, path :=
+		range result.FilesPatched {
+		files[path] = true
+	}
+
+	for _, path :=
+		range result.FilesFullRewritten {
+		files[path] = true
+	}
+
+	for path := range files {
+		full, err :=
+			security.SafeJoin(
+				sandbox,
+				path,
+			)
+
+		if err != nil {
+			check.FilesOK = false
+			check.Errors = append(
+				check.Errors,
+				fmt.Sprintf(
+					"invalid changed path %s: %v",
+					path,
+					err,
+				),
+			)
+			continue
+		}
+
+		info, err :=
+			os.Stat(full)
+
+		if err != nil {
+			check.FilesOK = false
+			check.Errors = append(
+				check.Errors,
+				fmt.Sprintf(
+					"changed file is missing: %s",
+					path,
+				),
+			)
+			continue
+		}
+
+		if info.IsDir() {
+			check.FilesOK = false
+			check.Errors = append(
+				check.Errors,
+				fmt.Sprintf(
+					"changed path is a directory: %s",
+					path,
+				),
+			)
+		}
+	}
+
+	if !check.FilesOK {
+		return check
+	}
+
+	// ------------------------------------------------------------
+	// 2. Build.
+	// ------------------------------------------------------------
+
+	emitEvent(
+		emit,
+		domain.Event{
+			Type:      domain.EventLog,
+			Message:   "Running deterministic final build check",
+			TaskStage: domain.TaskStageVerifying,
+		},
+	)
+
+	if err := s.Runner.Build(
+		ctx,
+		sandbox,
+	); err != nil {
+		check.Errors = append(
+			check.Errors,
+			"final build check failed: "+
+				trim(err.Error(), 4000),
+		)
+		return check
+	}
+
+	check.BuildOK = true
+
+	// ------------------------------------------------------------
+	// 3. Tests.
+	// ------------------------------------------------------------
+
+	if noTests {
+		check.TestsOK = true
+		check.Tests = domain.TestsStatus{
+			Skipped: true,
+		}
+		return check
+	}
+
+	emitEvent(
+		emit,
+		domain.Event{
+			Type:      domain.EventLog,
+			Message:   "Running deterministic final test check",
+			TaskStage: domain.TaskStageVerifying,
+		},
+	)
+
+	tests, testErr :=
+		s.Runner.Test(
+			ctx,
+			sandbox,
+		)
+
+	check.Tests = tests
+
+	if testErr != nil {
+		check.Errors = append(
+			check.Errors,
+			"final test check failed: "+
+				trim(testErr.Error(), 4000),
+		)
+		return check
+	}
+
+	if tests.Failed > 0 {
+		check.Errors = append(
+			check.Errors,
+			runner.FormatFeedback(tests),
+		)
+		return check
+	}
+
+	check.TestsOK = true
+	return check
 }
 
 func sanitizeVerification(v *agentVerification) {

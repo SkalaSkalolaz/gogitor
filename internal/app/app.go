@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
+	// "net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1059,6 +1059,23 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 	}
 }
 
+func (s *Service) patchPolicyForOptions(
+	opts Options,
+) workspace.PatchPolicy {
+	policy :=
+		workspace.PatchPolicyForModel(
+			s.Cfg.Provider,
+			s.Cfg.Model,
+			s.Cfg.PatchPolicies,
+		)
+
+	if opts.AgentDepth == AgentDepthDeep {
+		return workspace.PatchPolicyStrict
+	}
+
+	return policy
+}
+
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	if agent.RoleFromContext(ctx) == agent.RoleDefault {
 		ctx = agent.WithRole(ctx, agent.RoleCoder)
@@ -1084,7 +1101,16 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		maxIterations = 3
 	}
 
-	patchPolicy := workspace.PatchPolicyForModel(s.Cfg.Provider, s.Cfg.Model, s.Cfg.PatchPolicies)
+    patchPolicy :=
+    	s.patchPolicyForOptions(opts)
+    
+    if opts.AgentDepth == AgentDepthDeep {
+    	sendEvent(
+    		emit,
+    		domain.EventLog,
+    		"Deep Agent: strict patch policy enabled",
+    	)
+    }
 	targetFiles := extractTargetFiles(query)
 	cc := s.buildCodeContext(query, targetFiles)
 	originalContext := cc.Context
@@ -4962,34 +4988,7 @@ func (s *Service) DecisionJournal(ctx context.Context, emit func(domain.Event)) 
 }
 
 func (s *Service) isRemoteLLM() bool {
-	provider := strings.ToLower(strings.TrimSpace(s.Cfg.Provider))
-	if provider == "ollama" {
-		base := s.Cfg.OllamaURL
-		if base == "" {
-			base = os.Getenv("OLLAMA_HOST")
-		}
-		if base == "" {
-			return false
-		}
-		u, err := url.Parse(base)
-		if err != nil {
-			return false
-		}
-		host := u.Hostname()
-		return host != "localhost" && host != "127.0.0.1" && host != "::1"
-	}
-	if strings.HasPrefix(provider, "http://") || strings.HasPrefix(provider, "https://") {
-		u, err := url.Parse(provider)
-		if err != nil {
-			return true
-		}
-		host := u.Hostname()
-		return host != "localhost" && host != "127.0.0.1" && host != "::1"
-	}
-	if strings.Contains(provider, "+") {
-		return true
-	}
-	return false
+	return !s.isLocalModelEndpoint()
 }
 
 // Suggest анализирует проект и предлагает улучшения.
