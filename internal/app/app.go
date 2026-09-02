@@ -1436,7 +1436,6 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			domain.EventLog,
 			"LLM request",
 		)
-		sendEvent(emit, domain.EventLog, "LLM request")
 
 		if opts.ProgressItem > 0 {
 			emitEvent(emit, domain.Event{
