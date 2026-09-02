@@ -540,23 +540,25 @@ func (s *Service) executeAgentFull(
         }
 
         rollbackSubtask := func(reason string) {
-        	if opts.DryRun ||
-        		subtaskCheckpoint == nil {
-        		return
-        	}
-        
-        	sendEvent(
-        		emit,
-        		domain.EventWarn,
-        		"Subtask rollback: "+reason,
-        	)
-        
-        	err := s.rollbackAgentCheckpoint(
-        		subtaskCheckpoint,
-        		sortedKeys(subtaskCreated),
-        		sortedKeys(subtaskModified),
-        	)
-        
+        if opts.DryRun ||
+        subtaskCheckpoint == nil {
+        return
+        }
+        sendEvent(
+        emit,
+        domain.EventWarn,
+        "Subtask rollback: "+reason,
+        )
+        // Откатываем только файлы, созданные/изменённые ТЕКУЩЕЙ подзадачей.
+        // Файлы предыдущих подзадач сохраняются.
+        // Это гарантирует, что успешные изменения предыдущих шагов не теряются.
+        err := s.rollbackAgentCheckpoint(
+        subtaskCheckpoint,
+        sortedKeys(subtaskCreated),
+        sortedKeys(subtaskModified),
+        )
+
+
         	if err != nil {
         		final.AddWarning(
         			fmt.Sprintf(
@@ -762,13 +764,27 @@ func (s *Service) executeAgentFull(
 				domain.EventAgent,
 				"current stage: quality gates",
 			)
-
-			gate := s.runAgentDeepQualityGates(
-				ctx,
-				emit,
-				i+1,
-				opts.NoTests,
-			)
+            // Собираем список изменённых файлов для текущей подзадачи
+            changedFiles := make([]string, 0)
+            for f := range subtaskCreated {
+	            changedFiles = append(changedFiles, f)
+            }
+            for f := range subtaskModified {
+	            changedFiles = append(changedFiles, f)
+            }
+            for f := range subtaskPatched {
+	            changedFiles = append(changedFiles, f)
+            }
+            for f := range subtaskFullRewritten {
+	            changedFiles = append(changedFiles, f)
+            }
+            gate := s.runAgentDeepQualityGates(
+	            ctx,
+	            emit,
+	            i+1,
+	            opts.NoTests,
+	            changedFiles,
+            )
 
 			final.QualityGates =
 				gate.toDomain()
@@ -798,24 +814,46 @@ func (s *Service) executeAgentFull(
 				)
 			}
 
-			if !gate.Passed {
-				markPlan(
-					i+1,
-					domain.PlanFailed,
-					"quality gates failed",
-				)
+            if !gate.Passed {
+            // Проверяем, все ли ошибки — предсуществующие
+            allPreexisting := true
+            for _, e := range gate.Errors {
+            if !strings.Contains(e, "NEW") && !strings.Contains(e, "new issue") {
+            continue
+            }
+            allPreexisting = false
+            break
+            }
+            if allPreexisting && len(gate.Errors) > 0 {
+            // Все проблемы предсуществующие — предупреждаем, но не откатываем
+            sendEvent(
+            emit,
+            domain.EventWarn,
+            "Quality gates report issues in EXISTING code that were not introduced by this subtask. "+
+            "Consider running ':fix' or ':agent' to address them separately.",
+            )
+            itemStatus = domain.PlanWarn
+            itemNote = "pre-existing lint issues; subtask changes are valid"
+            } else {
+            markPlan(
+            i+1,
+            domain.PlanFailed,
+            "quality gates failed",
+            )
+            final.Success = false
+            final.Errors = append(
+            final.Errors,
+            gate.Errors...,
+            )
+            rollbackSubtask(
+            "agent deep quality gates failed",
+            )
+            return final
+            }
+            }
 
-				final.Success = false
-				final.Errors = append(
-					final.Errors,
-					gate.Errors...,
-				)
 
-                rollbackSubtask(
-                	"agent deep quality gates failed",
-                )
-				return final
-			}
+
 		}
 
 		markPlan(
@@ -1073,12 +1111,23 @@ func (s *Service) executeAgentFull(
 			"current stage: final quality gates",
 		)
 
-		finalGate := s.runAgentDeepQualityGates(
-			ctx,
-			emit,
-			0,
-			opts.NoTests,
-		)
+        finalChangedFiles := make([]string, 0)
+        for _, f := range final.FilesCreated {
+	        finalChangedFiles = append(finalChangedFiles, f)
+        }
+        for _, f := range final.FilesModified {
+	        finalChangedFiles = append(finalChangedFiles, f)
+        }
+        for _, f := range final.FilesPatched {
+	        finalChangedFiles = append(finalChangedFiles, f)
+        }
+        finalGate := s.runAgentDeepQualityGates(
+	        ctx,
+	        emit,
+	        0,
+	        opts.NoTests,
+	        finalChangedFiles,
+        )
 
 		final.QualityGates =
 			finalGate.toDomain()

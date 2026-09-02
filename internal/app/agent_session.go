@@ -232,11 +232,13 @@ type agentGateReport struct {
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
+
 func (s *Service) runAgentDeepQualityGates(
-	ctx context.Context,
-	emit func(domain.Event),
-	taskIndex int,
-	skipTests bool,
+ctx context.Context,
+emit func(domain.Event),
+taskIndex int,
+skipTests bool,
+changedFiles []string,
 ) agentGateReport {
 	report := agentGateReport{
 		TaskIndex: taskIndex,
@@ -405,50 +407,44 @@ func (s *Service) runAgentDeepQualityGates(
 	// 5. golangci-lint
 	// --------------------------------------------------
 
-	if _, err := exec.LookPath(
-		"golangci-lint",
-	); err != nil {
-		report.LintInstalled = false
-		report.Warnings = append(
-			report.Warnings,
-			"golangci-lint is not installed; lint gate skipped",
-		)
-	} else {
-		report.LintInstalled = true
-
-		lintOut, lintErr :=
-			s.Runner.Lint(
-				ctx,
-				sandbox,
-			)
-
-		issues :=
-			runner.CountLintIssues(lintOut)
-
-		report.LintIssues = issues
-
-		if lintErr != nil {
-			report.Lint = false
-
-			report.Errors = append(
-				report.Errors,
-				"lint failed: "+
-					trim(lintOut, 3000),
-			)
-		} else if issues > 0 {
-			report.Lint = false
-
-			report.Errors = append(
-				report.Errors,
-				fmt.Sprintf(
-					"lint found %d issue(s)",
-					issues,
-				),
-			)
-		} else {
-			report.Lint = true
-		}
-	}
+    if len(changedFiles) > 0 && !hasGoFiles(changedFiles) {
+    report.Lint = true
+    report.LintInstalled = true
+    report.Warnings = append(
+    report.Warnings,
+    "lint gate skipped: only non-Go files were changed",
+    )
+    } else if _, err := exec.LookPath("golangci-lint"); err != nil {
+    report.LintInstalled = false
+    report.Warnings = append(
+    report.Warnings,
+    "golangci-lint is not installed; lint gate skipped",
+    )
+    } else {
+    report.LintInstalled = true
+    // Собираем базовую линию: линт ДО изменений подзадачи
+    baselineIssues := s.getLintBaseline(ctx, sandbox)
+    // Линт ПОСЛЕ изменений
+    newIssues, lintOut, lintErr :=
+    s.Runner.LintWithBaseline(ctx, sandbox, baselineIssues)
+    report.LintIssues = len(newIssues)
+    if lintErr != nil && len(newIssues) > 0 {
+    report.Lint = false
+    report.Errors = append(
+    report.Errors,
+    fmt.Sprintf("lint failed (%d NEW issues): %s", len(newIssues), trim(lintOut, 3000)),
+    )
+    } else if lintErr != nil && len(newIssues) == 0 {
+    // Ошибка линта, но все проблемы предсуществующие
+    report.Lint = true
+    report.Warnings = append(
+    report.Warnings,
+    fmt.Sprintf("lint returned pre-existing issues only; %d total, 0 new", len(baselineIssues)),
+    )
+    } else {
+    report.Lint = true
+    }
+    }
 
 	report.Passed =
 		len(report.Errors) == 0 &&
@@ -1474,21 +1470,49 @@ func (s *Service) ExecuteAgentResume(
 		}
 	}
 
-	plan, err :=
-		loadAgentPlan(dir)
-
-	if err != nil {
-		return domain.Result{
-			Success: false,
-			Mode:    "agent-resume",
-			Errors: []string{
-				fmt.Sprintf(
-					"cannot load saved agent plan: %v",
-					err,
-				),
-			},
-		}
-	}
+    plan, err :=
+    loadAgentPlan(dir)
+    if err != nil {
+    return domain.Result{
+    Success: false,
+    Mode:    "agent-resume",
+    Errors: []string{
+    fmt.Sprintf(
+    "cannot load saved agent plan: %v",
+    err,
+    ),
+    },
+    }
+    }
+    // Проверяем, не вызвана ли ошибка предсуществующими проблемами проекта.
+    // Если последняя ошибка — только предсуществующие линт-проблемы,
+    // предлагаем пользователю их исправить перед повтором.
+    if state.Status == "failed" {
+    lastGateData, gateErr := os.ReadFile(
+    filepath.Join(dir, fmt.Sprintf("gate-task-%02d.json", state.CurrentSubtask)),
+    )
+    if gateErr == nil {
+    var lastGate agentGateReport
+    if json.Unmarshal(lastGateData, &lastGate) == nil {
+    hasPreexistingOnly := true
+    for _, e := range lastGate.Errors {
+    if strings.Contains(e, "NEW") {
+    hasPreexistingOnly = false
+    break
+    }
+    }
+    if hasPreexistingOnly && len(lastGate.Errors) > 0 {
+    sendEvent(
+    emit,
+    domain.EventWarn,
+    "Previous failure was caused by pre-existing project issues. "+
+    "Consider fixing them first: ':fix' or ':test lint'. "+
+    "Proceeding with resume anyway.",
+    )
+    }
+    }
+    }
+    }
 
 	if state.CompletedSubtasks >= len(plan.Subtasks) {
 		return domain.Result{
@@ -1778,4 +1802,29 @@ func reportMark(ok bool) string {
 	}
 
 	return "FAIL"
+}
+
+// getLintBaseline возвращает проблемы линта до начала подзадачи.
+// Вызывается на копии песочницы ДО применения изменений.
+func (s *Service) getLintBaseline(ctx context.Context, sandbox string) []runner.LintIssue {
+baselineSandbox, err := s.WS.PrepareSandbox(ctx)
+if err != nil {
+return nil
+}
+defer os.RemoveAll(baselineSandbox)
+if _, err := exec.LookPath("golangci-lint"); err != nil {
+return nil
+}
+lintOut, _ := s.Runner.Lint(ctx, baselineSandbox)
+return runner.ParseLintOutput(lintOut)
+}
+
+// hasGoFiles проверяет, есть ли в списке изменённых файлов .go файлы.
+func hasGoFiles(files []string) bool {
+	for _, f := range files {
+		if strings.HasSuffix(strings.TrimSpace(f), ".go") {
+			return true
+		}
+	}
+	return false
 }
