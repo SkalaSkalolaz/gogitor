@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+    "runtime"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/textutil"
@@ -743,7 +744,27 @@ linters-settings:
   testifylint:
     enable-all: true
 `
-	return os.WriteFile(configPath, []byte(defaultConfig), 0o644)
+
+	if err := os.WriteFile(
+		configPath,
+		[]byte(defaultConfig),
+		0o644,
+	); err != nil {
+		return err
+	}
+	
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(
+			configPath,
+			0o644,
+		); err != nil {
+			return fmt.Errorf(
+				"cannot secure config file: %w",
+				err,
+			)
+		}
+	}
+	return nil
 }
 
 // Vet выполняет go vet ./... и возвращает вывод.

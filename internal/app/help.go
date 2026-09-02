@@ -439,6 +439,9 @@ The assistant automatically detects error traces in regular input:
 :agent deep <task>
 :agent interview <task>
 :agent reflect
+:agent report
+:agent undo
+:agent resume
 
 ### Description
 Forces multi-agent execution regardless of task complexity.
@@ -478,6 +481,9 @@ Same as :code — see :code help
 :agent deep <задача>
 :agent interview <задача>
 :agent reflect
+:agent report
+:agent undo
+:agent resume
 
 ### Описание
 Принудительно запускает мультиагентное выполнение независимо от сложности задачи.

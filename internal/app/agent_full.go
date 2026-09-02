@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
-    "gogitor/internal/security"
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
 	"gogitor/internal/prompts"
 	"gogitor/internal/runner"
+	"gogitor/internal/security"
 )
 
 // fullPlan — структурированный план от planner agent.
@@ -217,8 +218,8 @@ func (s *Service) executeAgentFull(
 
 	created := map[string]bool{}
 	modified := map[string]bool{}
-    patched := map[string]bool{}
-    fullRewritten := map[string]bool{}
+	patched := map[string]bool{}
+	fullRewritten := map[string]bool{}
 
 	var session *agentSession
 
@@ -228,6 +229,54 @@ func (s *Service) executeAgentFull(
 		preTaskHead,
 		opts.InterviewAnswers,
 	)
+
+	state := &agentSessionState{
+		Version:     1,
+		Task:        query,
+		Depth:       depth,
+		StartedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		PreTaskHead: preTaskHead,
+		Status:      "planning",
+		ResumedFrom: opts.AgentResumeSource,
+	}
+
+	if session != nil {
+		if err := saveAgentState(
+			session,
+			state,
+		); err != nil {
+			final.AddWarning(
+				fmt.Sprintf(
+					"agent state could not be saved: %v",
+					err,
+				),
+			)
+		}
+
+		defer func() {
+			if final.Success {
+				state.Status = "completed"
+			} else {
+				state.Status = "failed"
+			}
+
+			state.GitCommit = final.GitCommit
+
+			if err := saveAgentState(
+				session,
+				state,
+			); err != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"agent final state could not be saved: %v",
+						err,
+					),
+				)
+			}
+		}()
+	}
+
 	if err != nil {
 		final.AddWarning(
 			fmt.Sprintf(
@@ -253,24 +302,40 @@ func (s *Service) executeAgentFull(
 		}()
 	}
 
-    addFiles := func(res domain.Result) {
+    addResultFiles := func(
+    	res domain.Result,
+    	createdSet map[string]bool,
+    	modifiedSet map[string]bool,
+    	patchedSet map[string]bool,
+    	fullRewrittenSet map[string]bool,
+    ) {
     	for _, f := range res.FilesCreated {
-    		created[f] = true
+    		createdSet[f] = true
     	}
     
     	for _, f := range res.FilesModified {
-    		modified[f] = true
+    		modifiedSet[f] = true
     	}
     
     	for _, f := range res.FilesPatched {
-    		modified[f] = true
-    		patched[f] = true
+    		modifiedSet[f] = true
+    		patchedSet[f] = true
     	}
     
     	for _, f := range res.FilesFullRewritten {
-    		modified[f] = true
-    		fullRewritten[f] = true
+    		modifiedSet[f] = true
+    		fullRewrittenSet[f] = true
     	}
+    }
+
+    addFiles := func(res domain.Result) {
+    	addResultFiles(
+    		res,
+    		created,
+    		modified,
+    		patched,
+    		fullRewritten,
+    	)
     
     	final.FilesCreated =
     		sortedKeys(created)
@@ -291,9 +356,24 @@ func (s *Service) executeAgentFull(
     		)
     }
 
-
 	rollback := func(reason string) {
 		if opts.DryRun || checkpoint == nil {
+            state.CompletedSubtasks = 0
+            state.CurrentSubtask = 0
+            
+            if session != nil {
+            	if err := saveAgentState(
+            		session,
+            		state,
+            	); err != nil {
+            		final.AddWarning(
+            			fmt.Sprintf(
+            				"cannot save rollback state: %v",
+            				err,
+            			),
+            		)
+            	}
+            }
 			return
 		}
 		sendEvent(emit, domain.EventWarn, "Rollback: "+reason)
@@ -302,11 +382,36 @@ func (s *Service) executeAgentFull(
 			final.AddWarning(fmt.Sprintf("rollback failed: %v", err))
 			return
 		}
+
 		final.AddWarning("changes were rolled back to pre-agent state")
 	}
 
 	// ─── Planning ────────────────────────────────────────────────
-	plan := s.planFullOrFallback(ctx, query, approach, mem, emit)
+	var plan *fullPlan
+
+	if opts.AgentResumePlan != nil {
+		plan = opts.AgentResumePlan
+
+		plan = validateAgentPlan(
+			plan,
+			query,
+		)
+
+		sendEvent(
+			emit,
+			domain.EventAgent,
+			"resuming saved agent plan",
+		)
+	} else {
+		plan = s.planFullOrFallback(
+			ctx,
+			query,
+			approach,
+			mem,
+			emit,
+		)
+	}
+
 	if session != nil {
 		if err := saveAgentPlan(
 			session,
@@ -343,6 +448,29 @@ func (s *Service) executeAgentFull(
 	sendPlanBoard(emit, plan.Goal, plan.Acceptance, planItems)
 
 	planStatuses := make([]domain.PlanStatus, len(plan.Subtasks))
+
+	resumeFrom := opts.AgentResumeFrom
+
+	if resumeFrom < 0 {
+		resumeFrom = 0
+	}
+
+	if resumeFrom > len(plan.Subtasks) {
+		resumeFrom = len(plan.Subtasks)
+	}
+
+	completedSubtasks := resumeFrom
+
+	state.TotalSubtasks = len(plan.Subtasks)
+	state.CompletedSubtasks = completedSubtasks
+	state.CurrentSubtask = resumeFrom
+
+	if session != nil {
+		_ = saveAgentState(
+			session,
+			state,
+		)
+	}
 	markPlan := func(index int, st domain.PlanStatus, note string) {
 		if index >= 1 && index <= len(planStatuses) {
 			planStatuses[index-1] = st
@@ -352,9 +480,99 @@ func (s *Service) executeAgentFull(
 
 	// ─── Subtask execution ───────────────────────────────────────
 	for i, sub := range plan.Subtasks {
-		sendEvent(emit, domain.EventAgent, fmt.Sprintf("current subtask %d/%d: %s", i+1, len(plan.Subtasks), sub.Task))
+		if i < resumeFrom {
+			planStatuses[i] =
+				domain.PlanDone
+
+			continue
+		}
+
+		state.CurrentSubtask = i + 1
+
+		if session != nil {
+			_ = saveAgentState(
+				session,
+				state,
+			)
+		}
+
+		sendEvent(
+			emit,
+			domain.EventAgent,
+			fmt.Sprintf(
+				"current subtask %d/%d: %s",
+				i+1,
+				len(plan.Subtasks),
+				sub.Task,
+			),
+		)
 
 		markPlan(i+1, domain.PlanRunning, "")
+
+        var subtaskCheckpoint *agentCheckpoint
+        
+        subtaskCreated := map[string]bool{}
+        subtaskModified := map[string]bool{}
+        subtaskPatched := map[string]bool{}
+        subtaskFullRewritten := map[string]bool{}
+        
+        if !opts.DryRun {
+        	subtaskCheckpoint, err =
+        		s.createAgentCheckpoint(ctx)
+        
+        	if err != nil {
+        		final.Success = false
+        
+        		final.AddError(
+        			fmt.Sprintf(
+        				"cannot create checkpoint for subtask %d: %v",
+        				i+1,
+        				err,
+        			),
+        		)
+        
+        		rollback(
+        			"cannot create subtask checkpoint",
+        		)
+        
+        		return final
+        	}
+        }
+
+        rollbackSubtask := func(reason string) {
+        	if opts.DryRun ||
+        		subtaskCheckpoint == nil {
+        		return
+        	}
+        
+        	sendEvent(
+        		emit,
+        		domain.EventWarn,
+        		"Subtask rollback: "+reason,
+        	)
+        
+        	err := s.rollbackAgentCheckpoint(
+        		subtaskCheckpoint,
+        		sortedKeys(subtaskCreated),
+        		sortedKeys(subtaskModified),
+        	)
+        
+        	if err != nil {
+        		final.AddWarning(
+        			fmt.Sprintf(
+        				"subtask rollback failed: %v",
+        				err,
+        			),
+        		)
+        	} else {
+        		final.AddWarning(
+        			"current subtask changes were rolled back; previous subtasks preserved",
+        		)
+        	}
+        
+        	subtaskCheckpoint.cleanup()
+        	subtaskCheckpoint = nil
+        }
 
 		subOpts := opts
 		subOpts.NoCommit = true
@@ -428,21 +646,54 @@ func (s *Service) executeAgentFull(
 		subCtx := agent.WithRole(ctx, agent.RoleCoder)
 		subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
 		subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
+        recordSubtaskFiles := func(res domain.Result) {
+        	addResultFiles(
+        		res,
+        		subtaskCreated,
+        		subtaskModified,
+        		subtaskPatched,
+        		subtaskFullRewritten,
+        	)
+        
+        	addFiles(res)
+        }
 
 		res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
 		final.Iterations += res.Iterations
-		addFiles(res)
+		recordSubtaskFiles(res)
 
 		if !res.Success {
 			markPlan(i+1, domain.PlanFailed, truncate(strings.Join(res.Errors, "; "), 200))
 			final.Success = false
 			final.Errors = append(final.Errors, res.Errors...)
-			rollback("subtask failed")
+            rollbackSubtask("subtask failed")
 			return final
 		}
 
 		if isAnalysis {
 			markPlan(i+1, domain.PlanDone, "")
+			completedSubtasks = i + 1
+
+			state.CompletedSubtasks =
+				completedSubtasks
+
+			state.CurrentSubtask =
+				completedSubtasks
+
+			if session != nil {
+				if err := saveAgentState(
+					session,
+					state,
+				); err != nil {
+					final.AddWarning(
+						fmt.Sprintf(
+							"cannot save agent progress: %v",
+							err,
+						),
+					)
+				}
+			}
+
 			continue
 		}
 
@@ -455,47 +706,47 @@ func (s *Service) executeAgentFull(
 			sendEvent(emit, domain.EventAgent, "current stage: reviewer")
 			review, err := s.runReviewer(ctx, query, sub.Task, res, mem, emit)
 
-            if err != nil {
-            	if deep {
-            		markPlan(
-            			i+1,
-            			domain.PlanFailed,
-            			"reviewer unavailable",
-            		)
-            
-            		final.Success = false
-            
-            		final.AddError(
-            			fmt.Sprintf(
-            				"reviewer failed in deep mode: %v",
-            				err,
-            			),
-            		)
-            
-            		rollback(
-            			"reviewer unavailable in deep mode",
-            		)
-            
-            		return final
-            	}
-            
-            	itemStatus = domain.PlanWarn
-            	itemNote = "reviewer unavailable"
-            
-            } else if !review.Approved &&
-            	len(review.CriticalIssues) > 0 {
+			if err != nil {
+				if deep {
+					markPlan(
+						i+1,
+						domain.PlanFailed,
+						"reviewer unavailable",
+					)
+
+					final.Success = false
+
+					final.AddError(
+						fmt.Sprintf(
+							"reviewer failed in deep mode: %v",
+							err,
+						),
+					)
+                    rollbackSubtask(
+                    	"reviewer unavailable in deep mode",
+                    )
+					return final
+				}
+
+				itemStatus = domain.PlanWarn
+				itemNote = "reviewer unavailable"
+
+			} else if !review.Approved &&
+				len(review.CriticalIssues) > 0 {
 
 				issues := strings.Join(review.CriticalIssues, "; ")
 				sendEvent(emit, domain.EventWarn, "Reviewer found critical issues: "+issues)
 				fixTask := buildReviewFixTask(sub.Task, review)
 				fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
 				final.Iterations += fixRes.Iterations
-				addFiles(fixRes)
+				recordSubtaskFiles(fixRes)
 				if !fixRes.Success {
 					markPlan(i+1, domain.PlanFailed, "fix after reviewer failed")
 					final.Success = false
 					final.Errors = append(final.Errors, fixRes.Errors...)
-					rollback("reviewer fix failed")
+                    rollbackSubtask(
+                    	"reviewer fix failed",
+                    )
 					return final
 				}
 				itemStatus = domain.PlanWarn
@@ -560,10 +811,9 @@ func (s *Service) executeAgentFull(
 					gate.Errors...,
 				)
 
-				rollback(
-					"agent deep quality gates failed",
-				)
-
+                rollbackSubtask(
+                	"agent deep quality gates failed",
+                )
 				return final
 			}
 		}
@@ -574,38 +824,65 @@ func (s *Service) executeAgentFull(
 			itemNote,
 		)
 
+        completedSubtasks = i + 1
+        
+        state.CompletedSubtasks =
+        	completedSubtasks
+        
+        state.CurrentSubtask =
+        	completedSubtasks
+        
+        if session != nil {
+        	if err := saveAgentState(
+        		session,
+        		state,
+        	); err != nil {
+        		final.AddWarning(
+        			fmt.Sprintf(
+        				"cannot save agent progress: %v",
+        				err,
+        			),
+        		)
+        	}
+        }
+        
+        if subtaskCheckpoint != nil {
+        	subtaskCheckpoint.cleanup()
+        	subtaskCheckpoint = nil
+        }
+
 	}
 
-    // -----------------------------------------------------------
-    // Deterministic verification.
-    // Для Deep эта проверка уже входит в final quality gates.
-    // Для Normal выполняем минимальные объективные проверки.
-    // -----------------------------------------------------------
-    
-    if !deep {
-    	check := s.runAgentDeterministicChecks(
-    		ctx,
-    		final,
-    		opts.NoTests,
-    		emit,
-    	)
-    
-    	final.Tests = check.Tests
-    
-    	if !check.Passed() {
-    		final.Success = false
-    		final.Errors = append(
-    			final.Errors,
-    			check.Errors...,
-    		)
-    
-    		rollback(
-    			"deterministic final verification failed",
-    		)
-    
-    		return final
-    	}
-    }
+	// -----------------------------------------------------------
+	// Deterministic verification.
+	// Для Deep эта проверка уже входит в final quality gates.
+	// Для Normal выполняем минимальные объективные проверки.
+	// -----------------------------------------------------------
+
+	if !deep {
+		check := s.runAgentDeterministicChecks(
+			ctx,
+			final,
+			opts.NoTests,
+			emit,
+		)
+
+		final.Tests = check.Tests
+
+		if !check.Passed() {
+			final.Success = false
+			final.Errors = append(
+				final.Errors,
+				check.Errors...,
+			)
+
+			rollback(
+				"deterministic final verification failed",
+			)
+
+			return final
+		}
+	}
 
 	// ─── Verifier & Finalization ───────────────────────────────
 	sendEvent(
@@ -702,30 +979,30 @@ func (s *Service) executeAgentFull(
 			return final
 		}
 
-        if !deep {
-        	check := s.runAgentDeterministicChecks(
-        		ctx,
-        		final,
-        		opts.NoTests,
-        		emit,
-        	)
-        
-        	final.Tests = check.Tests
-        
-        	if !check.Passed() {
-        		final.Success = false
-        		final.Errors = append(
-        			final.Errors,
-        			check.Errors...,
-        		)
-        
-        		rollback(
-        			"deterministic verification after verifier fix failed",
-        		)
-        
-        		return final
-        	}
-        }
+		if !deep {
+			check := s.runAgentDeterministicChecks(
+				ctx,
+				final,
+				opts.NoTests,
+				emit,
+			)
+
+			final.Tests = check.Tests
+
+			if !check.Passed() {
+				final.Success = false
+				final.Errors = append(
+					final.Errors,
+					check.Errors...,
+				)
+
+				rollback(
+					"deterministic verification after verifier fix failed",
+				)
+
+				return final
+			}
+		}
 
 		// Повторная verification — ОБЯЗАТЕЛЬНА.
 		verification, err =
@@ -839,11 +1116,6 @@ func (s *Service) executeAgentFull(
 	// Только теперь задача считается успешно выполненной.
 	// -----------------------------------------------------------
 
-	final.Response = fmt.Sprintf(
-		"Agent (%s) completed %d subtasks.",
-		string(depth),
-		len(plan.Subtasks),
-	)
 
 	if !opts.DryRun &&
 		!opts.NoCommit &&
@@ -873,6 +1145,21 @@ func (s *Service) executeAgentFull(
 			}
 		}
 	}
+
+    completedForReport := 0
+    totalForReport := len(plan.Subtasks)
+    
+    if state != nil {
+    	completedForReport =
+    		state.CompletedSubtasks
+    }
+    
+    final.Response = formatAgentTaskReport(
+    	final,
+    	depth,
+    	completedForReport,
+    	totalForReport,
+    )
 
 	final.PreTaskHead = preTaskHead
 	s.lastPreTaskHead = preTaskHead
@@ -991,11 +1278,21 @@ func (s *Service) planFullOrFallback(
 	emit func(domain.Event),
 ) *fullPlan {
 	var prompt string
+
 	if approach != "" {
-		prompt = prompts.PlanFullWithApproach(query, approach, mem.summary(30))
+		prompt = prompts.PlanFullWithApproach(
+			query,
+			approach,
+			mem.summary(30),
+		)
 	} else {
-		prompt = prompts.PlanFull(query, mem.summary(30))
+		prompt = prompts.PlanFull(
+			query,
+			mem.summary(30),
+		)
 	}
+
+	prompt = s.appendProjectInstructions(prompt)
 
 	var plan fullPlan
 	err := s.sendAgentJSON(
@@ -1035,9 +1332,14 @@ func (s *Service) planFullOrFallback(
 	if len(clean) > 7 {
 		clean = clean[:7]
 	}
-	plan.Subtasks = clean
-
-	return validateAgentPlan(&plan, query)
+    plan.Subtasks = clean
+    
+    validated := validateAgentPlan(
+    	&plan,
+    	query,
+    )
+    
+    return s.limitAgentPlan(validated)
 }
 
 func (s *Service) runReviewer(
@@ -1059,8 +1361,14 @@ func (s *Service) runReviewer(
 	maxTotal, maxPerFile := s.reviewLimits()
 	summary := agentChangeSummaryWithLimits(res, maxTotal, maxPerFile)
 
-	prompt := prompts.ReviewChanges(originalTask, subtask, summary, mem.summary(20))
+	prompt := prompts.ReviewChanges(
+		originalTask,
+		subtask,
+		summary,
+		mem.summary(20),
+	)
 
+	prompt = s.appendProjectInstructions(prompt)
 	var review agentReview
 	err := s.sendAgentJSON(
 		ctx,
@@ -1070,9 +1378,9 @@ func (s *Service) runReviewer(
 		prompt,
 		&review,
 	)
-    if err != nil {
-    	return agentReview{}, err
-    }
+	if err != nil {
+		return agentReview{}, err
+	}
 
 	if !review.Approved && len(review.CriticalIssues) == 0 {
 		review.Approved = true
@@ -1081,6 +1389,26 @@ func (s *Service) runReviewer(
 		sendEvent(emit, domain.EventLog, "Reviewer suggestions: "+strings.Join(review.Suggestions, "; "))
 	}
 	return review, nil
+}
+
+func (s *Service) limitAgentPlan(
+	plan *fullPlan,
+) *fullPlan {
+	if plan == nil {
+		return plan
+	}
+
+	max := s.agentModelCapabilities().MaxSubtasks
+
+	if max <= 0 ||
+		len(plan.Subtasks) <= max {
+		return plan
+	}
+
+	plan.Subtasks =
+		plan.Subtasks[:max]
+
+	return plan
 }
 
 // sendAgentReviewFlexible отправляет запрос к LLM и парсит ответ
@@ -1135,8 +1463,13 @@ func (s *Service) runVerifier(
 	}
 
 	task := truncate(originalTask, 4000)
-	prompt := prompts.VerifyCompletion(task, summary, mem.summary(20))
+	prompt := prompts.VerifyCompletion(
+		task,
+		summary,
+		mem.summary(20),
+	)
 
+	prompt = s.appendProjectInstructions(prompt)
 	var verification agentVerification
 	err := s.sendAgentJSON(
 		ctx,
@@ -1158,11 +1491,11 @@ func (s *Service) runVerifier(
 }
 
 type agentDeterministicCheck struct {
-	FilesOK   bool
-	BuildOK   bool
-	TestsOK   bool
-	Tests     domain.TestsStatus
-	Errors    []string
+	FilesOK bool
+	BuildOK bool
+	TestsOK bool
+	Tests   domain.TestsStatus
+	Errors  []string
 }
 
 func (c agentDeterministicCheck) Passed() bool {
@@ -1206,23 +1539,19 @@ func (s *Service) runAgentDeterministicChecks(
 		map[string]bool,
 	)
 
-	for _, path :=
-		range result.FilesCreated {
+	for _, path := range result.FilesCreated {
 		files[path] = true
 	}
 
-	for _, path :=
-		range result.FilesModified {
+	for _, path := range result.FilesModified {
 		files[path] = true
 	}
 
-	for _, path :=
-		range result.FilesPatched {
+	for _, path := range result.FilesPatched {
 		files[path] = true
 	}
 
-	for _, path :=
-		range result.FilesFullRewritten {
+	for _, path := range result.FilesFullRewritten {
 		files[path] = true
 	}
 

@@ -156,6 +156,18 @@ func (s *Service) chooseExecutionStrategy(
 	profile := s.modelProfile()
 	local := s.isLocalModelEndpoint()
 
+	caps := s.agentModelCapabilities()
+
+	if caps.PreferredDepth == AgentDepthDeep &&
+		score >= 4 {
+
+		return ExecutionStrategy{
+			Mode:       ExecutionModeAgent,
+			AgentDepth: AgentDepthDeep,
+			Reason:     "model capability profile prefers deep Agent",
+			Source:     "model-profile",
+		}
+	}
 	threshold := s.Cfg.AgentDeepComplexityThreshold
 	if threshold <= 0 {
 		threshold = 6
@@ -339,17 +351,48 @@ func (s *Service) taskComplexityScore(task string) (int, []string) {
 	return score, reasons
 }
 
-// modelProfile определяет условный класс модели.
 func (s *Service) modelProfile() modelProfile {
-	cfgProfile := strings.ToLower(strings.TrimSpace(s.Cfg.AgentModelProfile))
+	cfgProfile := strings.ToLower(
+		strings.TrimSpace(
+			s.Cfg.AgentModelProfile,
+		),
+	)
+
 	switch cfgProfile {
 	case "small":
 		return modelProfileSmall
+
 	case "medium":
 		return modelProfileMedium
+
 	case "large":
 		return modelProfileLarge
 	}
+
+	if capability, ok :=
+		s.configuredAgentCapability(); ok {
+
+		switch strings.ToLower(
+			strings.TrimSpace(
+				capability.Profile,
+			),
+		) {
+		case "small":
+			return modelProfileSmall
+
+		case "medium":
+			return modelProfileMedium
+
+		case "large":
+			return modelProfileLarge
+		}
+	}
+
+	return s.detectModelProfile()
+}
+
+// modelProfile определяет условный класс модели.
+func (s *Service) detectModelProfile() modelProfile {
 	lower := strings.ToLower(s.Cfg.Model)
 	largeKeywords := []string{
 		"70b", "72b", "123b", "236b", "405b",

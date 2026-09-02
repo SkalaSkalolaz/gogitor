@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-    "gogitor/internal/config"
+	"gogitor/internal/config"
 )
 
 func TestDeepAgentUsesStrictPatchPolicy(

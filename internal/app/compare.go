@@ -26,7 +26,12 @@ func (s *Service) generateComparison(
 	maxFiles, maxBytes := s.contextLimits()
 	projectContext := s.WS.BuildSmartContext(query, nil, maxFiles/2, maxBytes/2)
 
-	prompt := prompts.CompareApproaches(query, projectContext)
+	prompt := prompts.CompareApproaches(
+		query,
+		projectContext,
+	)
+
+	prompt = s.appendProjectInstructions(prompt)
 	response, err := s.LLM.Send(ctx, prompt)
 	if err != nil {
 		return nil, err

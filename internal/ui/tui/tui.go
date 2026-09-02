@@ -166,6 +166,9 @@ var commandSuggestions = []string{
 	":agent deep",
 	":agent interview",
 	":agent reflect",
+	":agent report",
+	":agent undo",
+	":agent resume",
 	":ask",
 	":analyze",
 	":search",
@@ -1759,7 +1762,7 @@ func (m *model) updateSuggestions() {
 		if len(fields) > 1 {
 			prefix = fields[1]
 		}
-		agentSubs := []string{"deep", "interview", "reflect"}
+		agentSubs := []string{"deep", "interview", "reflect", "undo", "resume", "report"}
 		for _, sub := range agentSubs {
 			if strings.HasPrefix(sub, prefix) {
 				m.suggestions = append(m.suggestions, ":agent "+sub)

@@ -10,37 +10,48 @@ import (
 	"strings"
 )
 
+// AgentModelCapability содержит настройки конкретной модели
+// для Agent Harness.
+type AgentModelCapability struct {
+	Profile        string `json:"profile,omitempty"`
+	PreferredDepth string `json:"preferred_depth,omitempty"`
+	ContextTokens  int    `json:"context_tokens,omitempty"`
+	PatchPolicy    string `json:"patch_policy,omitempty"`
+	MaxSubtasks    int    `json:"max_subtasks,omitempty"`
+}
+
 type Config struct {
-	Provider                     string  `json:"provider"`
-	Model                        string  `json:"model"`
-	APIKey                       string  `json:"api_key"`
-	OllamaURL                    string  `json:"ollama_url"`
-	LogLevel                     string  `json:"log_level"`
-	Debug                        bool    `json:"debug_mode"`
-	DryRun                       bool    `json:"dry_run"`
-	LLMTimeout                   int     `json:"llm_timeout"`
-	MaxIterations                int     `json:"max_iterations"`
-	AutoGitCommit                bool    `json:"auto_git_commit"`
-	GitAutoInit                  bool    `json:"git_auto_init"`
-	MultiAgent                   bool    `json:"multi_agent_enabled"`
-	Raw                          bool    `json:"raw_output"`
-	GitHubURL                    string  `json:"github_url"`
-	GitHubToken                  string  `json:"github_token"`
-	WorkDir                      string  `json:"-"`
-	MaxContextTokens             int     `json:"max_context_tokens"`
-	CompareApproaches            bool    `json:"compare_approaches"`
-	AutoSearch                   bool    `json:"auto_search"`
-	OutputFile                   string  `json:"output_file"`
-	AgentModelProfile            string  `json:"agent_model_profile"`
-	AgentDeepComplexityThreshold int     `json:"agent_deep_complexity_threshold"`
-	DepsMode                     string  `json:"deps_mode"`
-	ConfirmApply                 bool    `json:"confirm_apply"`
-	FuzzyMinConfidence           float64 `json:"fuzzy_min_confidence"`
-	ComputerEnabled              bool    `json:"computer_enabled"`
-	ComputerAllowSudo            bool    `json:"computer_allow_sudo"`
-	ComputerConfirmHigh          bool    `json:"computer_confirm_high"`
-	ComputerCommandTimeout       int     `json:"computer_command_timeout"`
-	ComputerMaxOutput            int     `json:"computer_max_output"`
+	Provider                     string                          `json:"provider"`
+	Model                        string                          `json:"model"`
+	APIKey                       string                          `json:"api_key"`
+	OllamaURL                    string                          `json:"ollama_url"`
+	LogLevel                     string                          `json:"log_level"`
+	Debug                        bool                            `json:"debug_mode"`
+	DryRun                       bool                            `json:"dry_run"`
+	LLMTimeout                   int                             `json:"llm_timeout"`
+	MaxIterations                int                             `json:"max_iterations"`
+	AutoGitCommit                bool                            `json:"auto_git_commit"`
+	GitAutoInit                  bool                            `json:"git_auto_init"`
+	MultiAgent                   bool                            `json:"multi_agent_enabled"`
+	Raw                          bool                            `json:"raw_output"`
+	GitHubURL                    string                          `json:"github_url"`
+	GitHubToken                  string                          `json:"github_token"`
+	WorkDir                      string                          `json:"-"`
+	MaxContextTokens             int                             `json:"max_context_tokens"`
+	CompareApproaches            bool                            `json:"compare_approaches"`
+	AutoSearch                   bool                            `json:"auto_search"`
+	OutputFile                   string                          `json:"output_file"`
+	AgentModelProfile            string                          `json:"agent_model_profile"`
+	AgentDeepComplexityThreshold int                             `json:"agent_deep_complexity_threshold"`
+	AgentModelCapabilities       map[string]AgentModelCapability `json:"agent_model_capabilities,omitempty"`
+	DepsMode                     string                          `json:"deps_mode"`
+	ConfirmApply                 bool                            `json:"confirm_apply"`
+	FuzzyMinConfidence           float64                         `json:"fuzzy_min_confidence"`
+	ComputerEnabled              bool                            `json:"computer_enabled"`
+	ComputerAllowSudo            bool                            `json:"computer_allow_sudo"`
+	ComputerConfirmHigh          bool                            `json:"computer_confirm_high"`
+	ComputerCommandTimeout       int                             `json:"computer_command_timeout"`
+	ComputerMaxOutput            int                             `json:"computer_max_output"`
 	// Reasoning (thinking mode)
 	ReasoningEnabled bool   `json:"reasoning_enabled"`
 	ReasoningEffort  string `json:"reasoning_effort"` // "low"|"medium"|"high"
@@ -74,6 +85,7 @@ func Default() *Config {
 		AutoSearch:                   false,
 		AgentModelProfile:            "auto",
 		AgentDeepComplexityThreshold: 6,
+        AgentModelCapabilities:       defaultAgentModelCapabilities(),
 		DepsMode:                     "auto",
 		ConfirmApply:                 false,
 		FuzzyMinConfidence:           0,
@@ -152,6 +164,59 @@ func defaultPatchPolicies() map[string]string {
 		"gemma4:31b-cloud": "advanced",
 		"openai-compatible+http://localhost:8000/v1": "advanced",
 		"llama3": "balanced",
+	}
+}
+
+func defaultAgentModelCapabilities() map[string]AgentModelCapability {
+	return map[string]AgentModelCapability{
+		"gemma3:4b": {
+			Profile:        "small",
+			PreferredDepth: "deep",
+			PatchPolicy:    "strict",
+			MaxSubtasks:    4,
+		},
+		"gemma4:12b": {
+			Profile:        "medium",
+			PreferredDepth: "normal",
+			PatchPolicy:    "strict",
+			MaxSubtasks:    5,
+		},
+		"ornith-1.5:9b": {
+			Profile:        "small",
+			PreferredDepth: "deep",
+			PatchPolicy:    "strict",
+			MaxSubtasks:    4,
+		},
+		"qwen3.8:27b": {
+			Profile:        "medium",
+			PreferredDepth: "deep",
+			PatchPolicy:    "balanced",
+			MaxSubtasks:    6,
+		},
+		"gemma4:26b": {
+			Profile:        "medium",
+			PreferredDepth: "normal",
+			PatchPolicy:    "balanced",
+			MaxSubtasks:    6,
+		},
+		"gpt-oss:20b": {
+			Profile:        "medium",
+			PreferredDepth: "normal",
+			PatchPolicy:    "strict",
+			MaxSubtasks:    5,
+		},
+		"gemma4:31b-cloud": {
+			Profile:        "medium",
+			PreferredDepth: "deep",
+			PatchPolicy:    "advanced",
+			MaxSubtasks:    6,
+		},
+		"llama3": {
+			Profile:        "medium",
+			PreferredDepth: "normal",
+			PatchPolicy:    "balanced",
+			MaxSubtasks:    5,
+		},
 	}
 }
 
@@ -393,6 +458,21 @@ func (c *Config) loadLocal() {
 		c.AgentDeepComplexityThreshold =
 			int(v)
 	}
+
+	if raw, ok := local["agent_model_capabilities"]; ok {
+		data, err := json.Marshal(raw)
+		if err == nil {
+			var capabilities map[string]AgentModelCapability
+
+			if err := json.Unmarshal(
+				data,
+				&capabilities,
+			); err == nil {
+				c.AgentModelCapabilities =
+					capabilities
+			}
+		}
+	}
 	if v, ok := local["deps_mode"].(string); ok && strings.TrimSpace(v) != "" {
 		c.DepsMode = strings.TrimSpace(v)
 	}
@@ -470,11 +550,12 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return fmt.Errorf("cannot create config dir %s: %w", Dir(), err)
 	}
+
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("cannot marshal config: %w", err)
 	}
-	return os.WriteFile(Path(), data, 0o644)
+	return os.WriteFile(Path(), data, 0o600)
 }
 
 func parseBool(s string) bool {

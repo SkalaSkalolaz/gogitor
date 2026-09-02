@@ -1,19 +1,99 @@
 package app
 
 import (
-	// "context"
-	// "crypto/sha256"
-	// "fmt"
-	// "io"
-	// "os"
-	// "path/filepath"
-	// "sort"
-	// "strings"
-	// "time"
-// 
+	"context"
+	"fmt"
+	"gogitor/internal/config"
+	"os"
+	"path/filepath"
+	"strings"
 	// "gogitor/internal/security"
 	"testing"
 )
+
+func TestProjectInstructions(t *testing.T) {
+	root := t.TempDir()
+
+	cfg := config.Default()
+	cfg.WorkDir = root
+
+	svc := &Service{
+		Cfg: cfg,
+	}
+
+	data := []byte(
+		"# Rules\n\nUse Go.\n",
+	)
+
+	if err := os.WriteFile(
+		filepath.Join(root, ".gogitor.md"),
+		data,
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	got := svc.projectInstructions()
+
+	if !strings.Contains(
+		got,
+		"Use Go.",
+	) {
+		t.Fatalf(
+			"unexpected instructions: %q",
+			got,
+		)
+	}
+}
+
+func TestAgentModelCapabilities(t *testing.T) {
+	cfg := config.Default()
+
+	cfg.Provider = "ollama"
+	cfg.Model = "qwen3.8:27b"
+
+	cfg.AgentModelCapabilities =
+		map[string]config.AgentModelCapability{
+			"qwen3.8:27b": {
+				PreferredDepth: "deep",
+				ContextTokens:  131072,
+				PatchPolicy:    "strict",
+				MaxSubtasks:    6,
+			},
+		}
+
+	svc := &Service{
+		Cfg: cfg,
+	}
+
+	caps := svc.agentModelCapabilities()
+
+	if caps.PreferredDepth !=
+		AgentDepthDeep {
+		t.Fatal(
+			"expected deep preference",
+		)
+	}
+
+	if caps.ContextTokens !=
+		131072 {
+		t.Fatal(
+			"unexpected context limit",
+		)
+	}
+
+	if !caps.HasPatchPolicy {
+		t.Fatal(
+			"expected patch policy",
+		)
+	}
+
+	if caps.MaxSubtasks != 6 {
+		t.Fatal(
+			"unexpected max subtasks",
+		)
+	}
+}
 
 func TestRollbackAgentCheckpointRestoresActualTree(
 	t *testing.T,

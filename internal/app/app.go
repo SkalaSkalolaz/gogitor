@@ -32,15 +32,18 @@ import (
 )
 
 type Options struct {
-	DryRun           bool
-	NoCommit         bool
-	NoTests          bool
-	NoCompare        bool
-	ProgressItem     int
-	ProgressTotal    int
-	Mode             string
-	AgentDepth       AgentDepth
-	InterviewAnswers []prompts.AgentInterviewAnswer
+	DryRun            bool
+	NoCommit          bool
+	NoTests           bool
+	NoCompare         bool
+	ProgressItem      int
+	ProgressTotal     int
+	Mode              string
+	AgentDepth        AgentDepth
+	InterviewAnswers  []prompts.AgentInterviewAnswer
+	AgentResumePlan   *fullPlan
+	AgentResumeFrom   int
+	AgentResumeSource string
 }
 
 type PendingComparison struct {
@@ -552,6 +555,24 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 			}
 		}
 		lowerArgs := strings.ToLower(strings.TrimSpace(argString))
+		if lowerArgs == "undo" {
+			return s.ExecuteAgentUndo(
+				ctx,
+				emit,
+			)
+		}
+		if lowerArgs == "resume" {
+			return s.ExecuteAgentResume(
+				ctx,
+				emit,
+			)
+		}
+		if lowerArgs == "report" {
+			return s.ExecuteAgentReport(
+				ctx,
+				emit,
+			)
+		}
 		if lowerArgs == "reflect" {
 			return s.ExecuteAgentReflect(ctx, emit)
 		}
@@ -627,6 +648,215 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 			Errors:  []string{fmt.Sprintf("unknown command %s; type :help", cmd)},
 		}
 	}
+}
+
+func (s *Service) ExecuteAgentReport(
+	ctx context.Context,
+	emit func(domain.Event),
+) domain.Result {
+	dir, err :=
+		s.findLatestAgentSessionDir()
+
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-report",
+			Errors: []string{
+				err.Error(),
+			},
+		}
+	}
+
+	data, err :=
+		os.ReadFile(
+			filepath.Join(
+				dir,
+				"result.json",
+			),
+		)
+
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-report",
+			Errors: []string{
+				fmt.Sprintf(
+					"cannot read Agent result: %v",
+					err,
+				),
+			},
+		}
+	}
+
+	var result domain.Result
+
+	if err := json.Unmarshal(
+		data,
+		&result,
+	); err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-report",
+			Errors: []string{
+				fmt.Sprintf(
+					"cannot parse Agent result: %v",
+					err,
+				),
+			},
+		}
+	}
+
+	state, _ :=
+		loadAgentState(dir)
+
+	depth := AgentDepthNormal
+
+    completedSubtasks := 0
+    totalSubtasks := 0
+    
+    if state != nil {
+    	completedSubtasks =
+    		state.CompletedSubtasks
+    
+    	totalSubtasks =
+    		state.TotalSubtasks
+    }
+    
+    report := formatAgentTaskReport(
+    	result,
+    	depth,
+    	completedSubtasks,
+    	totalSubtasks,
+    )
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		"Loaded Agent task report: "+
+			filepath.Base(dir),
+	)
+
+	return domain.Result{
+		Success:  true,
+		Mode:     "agent-report",
+		Response: report,
+	}
+}
+
+func (s *Service) ExecuteAgentUndo(
+	ctx context.Context,
+	emit func(domain.Event),
+) domain.Result {
+	result := domain.Result{
+		Mode: "agent-undo",
+	}
+
+	if !s.Git.IsRepo(ctx) {
+		result.AddError(
+			"current project is not a Git repository",
+		)
+		return result
+	}
+
+	dir, state, err :=
+		s.findLatestUndoableAgentSession()
+
+	if err != nil {
+		result.AddError(err.Error())
+		return result
+	}
+
+	head, err :=
+		s.Git.HeadHash(ctx)
+
+	if err != nil {
+		result.AddError(
+			fmt.Sprintf(
+				"cannot determine current HEAD: %v",
+				err,
+			),
+		)
+		return result
+	}
+
+	// Не разрешаем Undo, если после Agent уже появился
+	// другой commit.
+	if strings.TrimSpace(head) !=
+		strings.TrimSpace(state.GitCommit) {
+		result.AddError(
+			"the last Agent commit is no longer HEAD; refusing automatic undo",
+		)
+
+		result.AddError(
+			"Use ':git revert <hash>' manually if you really want to undo it.",
+		)
+
+		return result
+	}
+
+	sendEvent(
+		emit,
+		domain.EventWarn,
+		fmt.Sprintf(
+			"Undoing last Agent commit %s...",
+			state.GitCommit,
+		),
+	)
+
+	_, err =
+		s.Git.Revert(
+			ctx,
+			state.GitCommit,
+		)
+
+	if err != nil {
+		result.AddError(
+			fmt.Sprintf(
+				"Agent undo failed: %v",
+				err,
+			),
+		)
+
+		return result
+	}
+
+	undoHead, _ :=
+		s.Git.HeadHash(ctx)
+
+	state.Status = "undone"
+	state.UndoCommit = undoHead
+
+	statePath := filepath.Join(
+		dir,
+		"state.json",
+	)
+
+	data, marshalErr :=
+		json.MarshalIndent(
+			state,
+			"",
+			"  ",
+		)
+
+	if marshalErr == nil {
+		_ = os.WriteFile(
+			statePath,
+			data,
+			0o644,
+		)
+	}
+
+	s.WS.RefreshIndex()
+
+	result.Success = true
+
+	result.Response = fmt.Sprintf(
+		"Last Agent change was reverted.\nAgent commit: %s\nUndo commit: %s",
+		state.GitCommit,
+		undoHead,
+	)
+
+	return result
 }
 
 func (s *Service) handleGitCommand(
@@ -1059,22 +1289,6 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 	}
 }
 
-func (s *Service) patchPolicyForOptions(
-	opts Options,
-) workspace.PatchPolicy {
-	policy :=
-		workspace.PatchPolicyForModel(
-			s.Cfg.Provider,
-			s.Cfg.Model,
-			s.Cfg.PatchPolicies,
-		)
-
-	if opts.AgentDepth == AgentDepthDeep {
-		return workspace.PatchPolicyStrict
-	}
-
-	return policy
-}
 
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	if agent.RoleFromContext(ctx) == agent.RoleDefault {
@@ -1101,16 +1315,16 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		maxIterations = 3
 	}
 
-    patchPolicy :=
-    	s.patchPolicyForOptions(opts)
-    
-    if opts.AgentDepth == AgentDepthDeep {
-    	sendEvent(
-    		emit,
-    		domain.EventLog,
-    		"Deep Agent: strict patch policy enabled",
-    	)
-    }
+	patchPolicy :=
+		s.patchPolicyForOptions(opts)
+
+	if opts.AgentDepth == AgentDepthDeep {
+		sendEvent(
+			emit,
+			domain.EventLog,
+			"Deep Agent: strict patch policy enabled",
+		)
+	}
 	targetFiles := extractTargetFiles(query)
 	cc := s.buildCodeContext(query, targetFiles)
 	originalContext := cc.Context
@@ -1215,6 +1429,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			usePatchPrompt = false
 		}
 
+		prompt = s.appendProjectInstructions(prompt)
+
+		sendEvent(
+			emit,
+			domain.EventLog,
+			"LLM request",
+		)
 		sendEvent(emit, domain.EventLog, "LLM request")
 
 		if opts.ProgressItem > 0 {
@@ -2189,8 +2410,13 @@ func (s *Service) buildCodeContext(query string, targetFiles []string) codeConte
 	}
 }
 
-func (s *Service) contextLimits() (maxFiles int, maxBytes int) {
-	ctxTokens := s.Cfg.EffectiveContextTokens()
+func (s *Service) contextLimits() (
+	maxFiles int,
+	maxBytes int,
+) {
+	ctxTokens :=
+		s.effectiveAgentContextTokens()
+
 	if ctxTokens <= 0 {
 		ctxTokens = 32768
 	}
@@ -2198,12 +2424,16 @@ func (s *Service) contextLimits() (maxFiles int, maxBytes int) {
 	switch {
 	case ctxTokens <= 8192:
 		maxFiles = 10
+
 	case ctxTokens <= 32768:
 		maxFiles = 18
+
 	case ctxTokens <= 65536:
 		maxFiles = 30
+
 	case ctxTokens <= 131072:
 		maxFiles = 45
+
 	default:
 		maxFiles = 70
 	}
@@ -2212,7 +2442,9 @@ func (s *Service) contextLimits() (maxFiles int, maxBytes int) {
 	const projectContextShare = 0.70
 
 	maxBytes = int(
-		float64(ctxTokens*bytesPerToken) * projectContextShare,
+		float64(
+			ctxTokens*bytesPerToken,
+		) * projectContextShare,
 	)
 
 	if maxBytes < 16*1024 {
@@ -2222,10 +2454,30 @@ func (s *Service) contextLimits() (maxFiles int, maxBytes int) {
 	return maxFiles, maxBytes
 }
 
+func (s *Service) patchPolicyForOptions(
+	opts Options,
+) workspace.PatchPolicy {
+	if opts.AgentDepth == AgentDepthDeep {
+		return workspace.PatchPolicyStrict
+	}
+
+	caps := s.agentModelCapabilities()
+
+	if caps.HasPatchPolicy {
+		return caps.PatchPolicy
+	}
+
+	return workspace.PatchPolicyForModel(
+		s.Cfg.Provider,
+		s.Cfg.Model,
+		s.Cfg.PatchPolicies,
+	)
+}
+
 // reviewLimits возвращает лимиты для ревьюера/верификатора.
 func (s *Service) reviewLimits() (maxTotal int, maxPerFile int) {
-	ctxTokens := s.Cfg.EffectiveContextTokens()
-
+	ctxTokens :=
+		s.effectiveAgentContextTokens()
 	switch {
 	case ctxTokens <= 8192:
 		return 15000, 4000
@@ -2848,7 +3100,12 @@ func helpTextEn() string {
 
 - **:agent reflect**
     Analyze the latest Agent session and extract lessons.
-
+- **:agent report**
+    Show the latest Agent report
+- **:agent resume**
+    Resume the latest failed Agent session
+- **:agent undo**
+     Revert the latest completed Agent commit
 ---
 
 ## Git & GitHub
@@ -3372,6 +3629,13 @@ func helpTextRu() string {
 - **:agent reflect**
     Проанализировать последнюю сессию Agent
     и извлечь уроки.
+
+- **:agent report**
+    Показать отчёт последней Agent-сессии
+- **:agent resume**
+    Продолжить последнюю неуспешную Agent-сессию
+- **:agent undo**
+     Отменить последний Git-коммит Agent
 
 ---
 

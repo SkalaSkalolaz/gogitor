@@ -29,7 +29,24 @@ type agentSession struct {
 	PlanJSONPath  string
 	ProcessPath   string
 	ResultPath    string
+	StatePath     string
 	FinalGatePath string
+}
+
+type agentSessionState struct {
+	Version           int        `json:"version"`
+	Task              string     `json:"task"`
+	Depth             AgentDepth `json:"depth"`
+	StartedAt         time.Time  `json:"started_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	PreTaskHead       string     `json:"pre_task_head,omitempty"`
+	CurrentSubtask    int        `json:"current_subtask"`
+	CompletedSubtasks int        `json:"completed_subtasks"`
+	TotalSubtasks     int        `json:"total_subtasks"`
+	Status            string     `json:"status"`
+	GitCommit         string     `json:"git_commit,omitempty"`
+	UndoCommit        string     `json:"undo_commit,omitempty"`
+	ResumedFrom       string     `json:"resumed_from,omitempty"`
 }
 
 func (r agentGateReport) toDomain() domain.QualityGateStatus {
@@ -70,6 +87,7 @@ func (s *Service) startAgentSession(task string, depth AgentDepth, preTaskHead s
 		PlanJSONPath:  filepath.Join(dir, "plan.json"),
 		ProcessPath:   filepath.Join(dir, "process.md"),
 		ResultPath:    filepath.Join(dir, "result.json"),
+		StatePath:     filepath.Join(dir, "state.json"),
 		FinalGatePath: filepath.Join(dir, "gate-final.json"),
 	}
 
@@ -107,6 +125,66 @@ func (s *Service) startAgentSession(task string, depth AgentDepth, preTaskHead s
 		appendAgentProcess(session.ProcessPath, "Pre-task HEAD: "+preTaskHead)
 	}
 	return session, nil
+}
+
+func saveAgentState(
+	session *agentSession,
+	state *agentSessionState,
+) error {
+	if session == nil || state == nil {
+		return nil
+	}
+
+	state.UpdatedAt = time.Now()
+
+	data, err := json.MarshalIndent(
+		state,
+		"",
+		"  ",
+	)
+	if err != nil {
+		return err
+	}
+
+	tmp := session.StatePath + ".tmp"
+
+	if err := os.WriteFile(
+		tmp,
+		data,
+		0o644,
+	); err != nil {
+		return err
+	}
+
+	return os.Rename(
+		tmp,
+		session.StatePath,
+	)
+}
+
+func loadAgentState(
+	dir string,
+) (*agentSessionState, error) {
+	path := filepath.Join(
+		dir,
+		"state.json",
+	)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var state agentSessionState
+
+	if err := json.Unmarshal(
+		data,
+		&state,
+	); err != nil {
+		return nil, err
+	}
+
+	return &state, nil
 }
 
 func formatAgentInbox(task string, depth AgentDepth, answers []prompts.AgentInterviewAnswer) string {
@@ -432,6 +510,80 @@ func (s *Service) findLatestAgentSessionDir() (string, error) {
 	return filepath.Join(baseDir, latest), nil
 }
 
+func (s *Service) findLatestResumableAgentSession() (
+	string,
+	*agentSessionState,
+	error,
+) {
+	baseDir := filepath.Join(
+		s.Cfg.WorkDir,
+		".gogitor",
+		"agent",
+	)
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return "", nil, err
+	}
+
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+
+		if !entry.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(
+			baseDir,
+			entry.Name(),
+		)
+
+		state, err :=
+			loadAgentState(dir)
+
+		if err != nil {
+			continue
+		}
+
+		switch state.Status {
+		case "failed", "running":
+			return dir, state, nil
+		}
+	}
+
+	return "",
+		nil,
+		fmt.Errorf(
+			"no resumable agent session found",
+		)
+}
+
+func loadAgentPlan(
+	dir string,
+) (*fullPlan, error) {
+	data, err := os.ReadFile(
+		filepath.Join(
+			dir,
+			"plan.json",
+		),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	var plan fullPlan
+
+	if err := json.Unmarshal(
+		data,
+		&plan,
+	); err != nil {
+		return nil, err
+	}
+
+	return &plan, nil
+}
+
 // Перенесенные функции валидации плана из workflow.go
 func validateAgentPlan(plan *fullPlan, originalTask string) *fullPlan {
 	if plan == nil {
@@ -611,6 +763,7 @@ func (s *Service) ExecuteAgentInterview(
 		s.projectSummary(),
 	)
 
+	prompt = s.appendProjectInstructions(prompt)
 	var interview agentInterviewResult
 
 	err := s.sendAgentJSON(
@@ -741,6 +894,7 @@ func (s *Service) ContinueAgentInterview(
 		answers,
 	)
 
+	prompt = s.appendProjectInstructions(prompt)
 	refinedTask := originalTask
 
 	response, err := s.LLM.Send(
@@ -1301,4 +1455,327 @@ func parseAgentLessons(
 	}
 
 	return lessons
+}
+
+func (s *Service) ExecuteAgentResume(
+	ctx context.Context,
+	emit func(domain.Event),
+) domain.Result {
+	dir, state, err :=
+		s.findLatestResumableAgentSession()
+
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-resume",
+			Errors: []string{
+				err.Error(),
+			},
+		}
+	}
+
+	plan, err :=
+		loadAgentPlan(dir)
+
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-resume",
+			Errors: []string{
+				fmt.Sprintf(
+					"cannot load saved agent plan: %v",
+					err,
+				),
+			},
+		}
+	}
+
+	if state.CompletedSubtasks >= len(plan.Subtasks) {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-resume",
+			Errors: []string{
+				"agent session has no unfinished subtasks",
+			},
+		}
+	}
+
+	sendEvent(
+		emit,
+		domain.EventAgent,
+		fmt.Sprintf(
+			"Resuming Agent session: %s",
+			filepath.Base(dir),
+		),
+	)
+
+	result := s.executeAgentFull(
+		ctx,
+		state.Task,
+		"",
+		Options{
+			Mode:              "agent",
+			AgentDepth:        state.Depth,
+			AgentResumePlan:   plan,
+			AgentResumeFrom:   state.CompletedSubtasks,
+			AgentResumeSource: dir,
+		},
+		emit,
+	)
+
+	result.Mode = "agent"
+	return result
+}
+
+func (s *Service) findLatestUndoableAgentSession() (
+	string,
+	*agentSessionState,
+	error,
+) {
+	baseDir := filepath.Join(
+		s.Cfg.WorkDir,
+		".gogitor",
+		"agent",
+	)
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return "", nil, err
+	}
+
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+
+		if !entry.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(
+			baseDir,
+			entry.Name(),
+		)
+
+		state, err :=
+			loadAgentState(dir)
+
+		if err != nil {
+			continue
+		}
+
+		if state.Status != "completed" {
+			continue
+		}
+
+		if strings.TrimSpace(
+			state.GitCommit,
+		) == "" {
+			continue
+		}
+
+		return dir, state, nil
+	}
+
+	return "",
+		nil,
+		fmt.Errorf(
+			"no completed Agent session with Git commit found",
+		)
+}
+
+func formatAgentTaskReport(
+	result domain.Result,
+	depth AgentDepth,
+	completedSubtasks int,
+	totalSubtasks int,
+) string {
+	var b strings.Builder
+
+	if result.Success {
+		b.WriteString("AGENT COMPLETED\n")
+	} else {
+		b.WriteString("AGENT FAILED\n")
+	}
+
+	b.WriteString("\n")
+
+	fmt.Fprintf(
+		&b,
+		"Profile: %s\n",
+		depth,
+	)
+
+    fmt.Fprintf(
+    	&b,
+    	"Subtasks: %d/%d\n",
+    	completedSubtasks,
+    	totalSubtasks,
+    )
+	if result.Iterations > 0 {
+		fmt.Fprintf(
+			&b,
+			"Iterations: %d\n",
+			result.Iterations,
+		)
+	}
+
+	if len(result.FilesCreated) > 0 ||
+		len(result.FilesModified) > 0 ||
+		len(result.FilesPatched) > 0 ||
+		len(result.FilesFullRewritten) > 0 {
+
+		b.WriteString("\nFILES\n")
+
+		if len(result.FilesCreated) > 0 {
+			fmt.Fprintf(
+				&b,
+				"Created: %d\n",
+				len(result.FilesCreated),
+			)
+		}
+
+		if len(result.FilesModified) > 0 {
+			fmt.Fprintf(
+				&b,
+				"Modified: %d\n",
+				len(result.FilesModified),
+			)
+		}
+
+		if len(result.FilesPatched) > 0 {
+			fmt.Fprintf(
+				&b,
+				"Patched (DIFF): %d\n",
+				len(result.FilesPatched),
+			)
+		}
+
+		if len(result.FilesFullRewritten) > 0 {
+			fmt.Fprintf(
+				&b,
+				"Full rewritten: %d\n",
+				len(result.FilesFullRewritten),
+			)
+		}
+	}
+
+	b.WriteString("\nTESTS\n")
+
+	if result.Tests.Skipped {
+		b.WriteString("Skipped\n")
+	} else {
+		fmt.Fprintf(
+			&b,
+			"Passed: %d\n",
+			result.Tests.Passed,
+		)
+
+		fmt.Fprintf(
+			&b,
+			"Failed: %d\n",
+			result.Tests.Failed,
+		)
+
+		if result.Tests.Coverage > 0 {
+			fmt.Fprintf(
+				&b,
+				"Coverage: %.1f%%\n",
+				result.Tests.Coverage,
+			)
+		}
+	}
+
+	if depth == AgentDepthDeep {
+		g := result.QualityGates
+
+		b.WriteString("\nQUALITY GATES\n")
+
+		fmt.Fprintf(
+			&b,
+			"Build: %s\n",
+			reportMark(g.Build),
+		)
+
+		fmt.Fprintf(
+			&b,
+			"Tests: %s\n",
+			reportMark(g.Tests),
+		)
+
+		fmt.Fprintf(
+			&b,
+			"Vet: %s\n",
+			reportMark(g.Vet),
+		)
+
+		fmt.Fprintf(
+			&b,
+			"Gofmt: %s\n",
+			reportMark(g.Gofmt),
+		)
+
+		if g.LintInstalled {
+			fmt.Fprintf(
+				&b,
+				"Lint: %s (%d issues)\n",
+				reportMark(g.Lint),
+				g.LintIssues,
+			)
+		} else {
+			b.WriteString(
+				"Lint: skipped (not installed)\n",
+			)
+		}
+	}
+
+	b.WriteString("\nVERIFICATION\n")
+
+	if result.Success {
+		b.WriteString("Final status: PASS\n")
+	} else {
+		b.WriteString("Final status: FAIL\n")
+	}
+
+	if result.GitCommit != "" {
+		fmt.Fprintf(
+			&b,
+			"Git commit: %s\n",
+			result.GitCommit,
+		)
+	}
+
+	if len(result.Warnings) > 0 {
+		b.WriteString("\nWARNINGS\n")
+
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(
+				&b,
+				"- %s\n",
+				warning,
+			)
+		}
+	}
+
+	if len(result.Errors) > 0 {
+		b.WriteString("\nERRORS\n")
+
+		for _, failure := range result.Errors {
+			fmt.Fprintf(
+				&b,
+				"- %s\n",
+				failure,
+			)
+		}
+	}
+
+	return strings.TrimSpace(
+		b.String(),
+	)
+}
+
+func reportMark(ok bool) string {
+	if ok {
+		return "PASS"
+	}
+
+	return "FAIL"
 }

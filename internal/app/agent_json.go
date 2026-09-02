@@ -32,67 +32,67 @@ func (s *Service) sendAgentJSON(
 	ctx = agent.WithRole(ctx, role)
 	ctx = agent.WithPriority(ctx, priority)
 	ctx = agent.WithPurpose(ctx, purpose)
-    response, err := s.LLM.Send(ctx, prompt)
-    if err != nil {
-    	return err
-    }
-    
-    parseErr := parseAgentJSON(
-    	response,
-    	out,
-    )
-    
-    if parseErr == nil {
-    	return nil
-    }
-    
-    s.Log.Warn(
-    	"agent JSON parse failed; requesting one repair",
-    	"purpose",
-    	purpose,
-    	"err",
-    	parseErr,
-    )
-    
-    repairPrompt := buildAgentJSONRepairPrompt(
-    	purpose,
-    	prompt,
-    	response,
-    	parseErr,
-    )
-    
-    repairCtx := ctx
-    repairCtx = agent.WithPurpose(
-    	repairCtx,
-    	purpose+" JSON repair",
-    )
-    
-    repaired, repairErr :=
-    	s.LLM.Send(
-    		repairCtx,
-    		repairPrompt,
-    	)
-    
-    if repairErr != nil {
-    	return fmt.Errorf(
-    		"%s: JSON repair failed: %w",
-    		purpose,
-    		repairErr,
-    	)
-    }
-    
-    if err := parseAgentJSON(
-    	repaired,
-    	out,
-    ); err != nil {
-    	return fmt.Errorf(
-    		"%s: invalid JSON after repair: %w",
-    		purpose,
-    		err,
-    	)
-    }
-    
-    return nil
+	response, err := s.LLM.Send(ctx, prompt)
+	if err != nil {
+		return err
+	}
+
+	parseErr := parseAgentJSON(
+		response,
+		out,
+	)
+
+	if parseErr == nil {
+		return nil
+	}
+
+	s.Log.Warn(
+		"agent JSON parse failed; requesting one repair",
+		"purpose",
+		purpose,
+		"err",
+		parseErr,
+	)
+
+	repairPrompt := buildAgentJSONRepairPrompt(
+		purpose,
+		prompt,
+		response,
+		parseErr,
+	)
+
+	repairCtx := ctx
+	repairCtx = agent.WithPurpose(
+		repairCtx,
+		purpose+" JSON repair",
+	)
+
+	repaired, repairErr :=
+		s.LLM.Send(
+			repairCtx,
+			repairPrompt,
+		)
+
+	if repairErr != nil {
+		return fmt.Errorf(
+			"%s: JSON repair failed: %w",
+			purpose,
+			repairErr,
+		)
+	}
+
+	if err := parseAgentJSON(
+		repaired,
+		out,
+	); err != nil {
+		return fmt.Errorf(
+			"%s: invalid JSON after repair: %w",
+			purpose,
+			err,
+		)
+	}
+
+	return nil
 }
 
 func buildAgentJSONRepairPrompt(
