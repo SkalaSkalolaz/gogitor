@@ -256,10 +256,17 @@ func applyOnePatchWithPolicy(
 
 	if patchRequiresSymbol(p, policy) &&
 		strings.TrimSpace(p.Symbol) == "" {
-		return "", fmt.Errorf(
-			"strict patch requires Symbol anchor for SEARCH block with %d lines",
-			strings.Count(search, "\n")+1,
-		)
+		// Пытаемся автоматически определить якорь через AST.
+		autoSymbol, autoErr := detectSymbolForSearch(content, search)
+		if autoErr == nil && autoSymbol != "" {
+			p.Symbol = autoSymbol
+		} else {
+			return "", fmt.Errorf(
+				"strict patch requires Symbol anchor for SEARCH block with %d lines (auto-detection failed: %v)",
+				strings.Count(search, "\n")+1,
+				autoErr,
+			)
+		}
 	}
 
 	if strings.TrimSpace(p.Symbol) != "" {
@@ -310,6 +317,61 @@ func applyOnePatchWithPolicy(
 	}
 
 	return updated, nil
+}
+
+// detectSymbolForSearch ищет функцию/метод, содержащий SEARCH-блок,
+// чтобы автоматически определить Symbol anchor.
+func detectSymbolForSearch(content, search string) (string, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(
+		fset, "detect.go", []byte(content), parser.ParseComments,
+	)
+	if err != nil {
+		return "", fmt.Errorf("cannot parse file: %w", err)
+	}
+
+	searchLines := strings.Split(search, "\n")
+	contentLines := strings.Split(content, "\n")
+
+	// Находим позицию SEARCH в файле (по точному совпадению строк).
+	startLine := -1
+	for i := 0; i+len(searchLines) <= len(contentLines); i++ {
+		match := true
+		for j, sl := range searchLines {
+			if strings.TrimSpace(contentLines[i+j]) != strings.TrimSpace(sl) {
+				match = false
+				break
+			}
+		}
+		if match {
+			startLine = i + 1 // 1-based
+			break
+		}
+	}
+	if startLine == -1 {
+		return "", fmt.Errorf("SEARCH block not found in content")
+	}
+
+	// Ищем функцию, содержащую эту строку.
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		fnStart := fset.Position(fn.Pos()).Line
+		fnEnd := fset.Position(fn.End()).Line
+		if startLine >= fnStart && startLine <= fnEnd {
+			name := fn.Name.Name
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				recv := receiverTypeName(fn.Recv.List[0].Type)
+				if recv != "" {
+					name = recv + "." + name
+				}
+			}
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("SEARCH block is not inside any function")
 }
 
 func applyPatchText(

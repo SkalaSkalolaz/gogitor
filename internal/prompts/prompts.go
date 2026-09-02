@@ -1097,6 +1097,21 @@ FINAL CHECK:
 - REPLACE contains valid Go code.
 - No unrelated changes are included.
 - No full file is returned.
+
+MANDATORY SYMBOL RULE:
+If the SEARCH block is 4 or more lines and is inside a function or method,
+you MUST include a Symbol line BEFORE the SEARCH marker.
+Format:
+--- Patch: path/to/file.go ---
+--- Symbol: FunctionName ---
+<<<<<<< SEARCH
+exact existing source
+=======
+correct replacement source
+>>>>>>> REPLACE
+
+WITHOUT the Symbol line, the patch WILL BE REJECTED.
+Do NOT omit the Symbol line for multi-line SEARCH blocks.
 `)
 
 	return b.String()

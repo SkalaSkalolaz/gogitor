@@ -1336,9 +1336,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	forceFull := false
 	patchAttempted := false
 	patchFixAttempts := 0
-	maxPatchFixAttempts := 2
+	maxPatchFixAttempts := 3
 	if patchPolicy == workspace.PatchPolicyStrict {
-		maxPatchFixAttempts = 3
+		maxPatchFixAttempts = 4
 	}
 	var lastPatchContent string
 	patchAppliedSuccessfully := false
@@ -1378,12 +1378,22 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				TotalItems: maxIterations,
 			},
 		})
+
 		var prompt string
 		allowFallback := false
 		usePatchPrompt := false
-
 		if i == 1 {
+			// Проверяем, существуют ли целевые файлы.
+			// Если ни один целевой файл не существует, патч-режим не нужен.
+			targetFiles := extractTargetFiles(query)
+			existingTargets := s.WS.ExistingFiles(targetFiles)
+			allTargetsExist := len(targetFiles) == 0 || len(existingTargets) == len(targetFiles)
+
 			switch {
+			case originalContext != "" && !allTargetsExist:
+				// Целевые файлы не существуют → режим создания, а не патчей.
+				sendEvent(emit, domain.EventLog, "Target files do not exist, using create mode")
+				prompt = prompts.CodeCreateInExistingProject(query, originalContext)
 			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
 				if !forceFull {
 					sendEvent(emit, domain.EventLog, "Using patch mode for existing project files")
@@ -1405,6 +1415,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				prompt = prompts.CodeCreate(query, "")
 				allowFallback = true
 			}
+
 		} else if (patchAppliedSuccessfully || patchRepairPending) &&
 			!forceFull &&
 			patchFixAttempts < maxPatchFixAttempts {
@@ -1625,6 +1636,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 			continue
 		}
+
 		if err := s.WS.ApplyChangesSmartWithPolicy(
 			sandbox,
 			changes,
@@ -1633,21 +1645,25 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		); err != nil {
 			_ = os.RemoveAll(sandbox)
 			lastErrors = []string{err.Error()}
-
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
 					patchRepairPending = true
-
 					sendEvent(
 						emit,
 						domain.EventWarn,
 						"Patch rejected before validation. Will request a corrected patch.",
 					)
+					// Ранний fallback: после 2 неудач переходим к полному файлу.
+					if patchFixAttempts >= 2 {
+						sendEvent(emit, domain.EventWarn,
+							"Patch failed twice. Switching to full-file mode.")
+						forceFull = true
+						patchRepairPending = false
+					}
 				} else {
 					forceFull = true
 				}
 			}
-
 			continue
 		}
 
