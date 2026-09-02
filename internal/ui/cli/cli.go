@@ -1357,7 +1357,7 @@ gogitor autonomy [on|off|status|run|clear] [flags]
 gogitor mutate [limit] [flags]
 gogitor autogen-tests [count] [flags]
 gogitor decisions [flags]
-gogitor git [status|diff|commit|init|log|checkout|branch|merge|push|pull|fetch|clone|remote] [flags]
+gogitor git [status|diff|diff-task|commit|init|log|checkout|branch|merge|revert|reset|push|pull|fetch|clone|remote|create|pr|issue|changelog|pr-comment] [flags]
 gogitor article <topic> [--full] [flags]
 gogitor doctor [flags]
 gogitor help
@@ -1392,18 +1392,36 @@ Common flags:
 -h, --help           show help
 
 Code flags:
---dry-run            validate but do not apply changes
---no-commit          disable automatic git commit
---no-tests           skip tests
---no-compare         skip approach comparison for complex tasks
---json               JSON output
+  --dry-run            validate but do not apply changes
+  --no-commit          disable automatic git commit
+  --no-tests           skip tests
+  --no-compare         skip approach comparison for complex tasks
+  --mode <m>           execution mode: auto, simple, agent
+  --agent              force agent mode (same as --mode agent)
+  --deep               force deep agent profile
+  --json               JSON output
+
+Fix flags:
+  --dry-run            validate but do not apply changes
+  --no-commit          disable automatic git commit
+  --no-tests           skip tests
+  --json               JSON output
+
+Task file flags:
+  --code               force code mode instead of automatic intent detection
+  --json               JSON output
+
+Article flags:
+  --full               complex article mode (multi-section)
+  --json               JSON output
 
 Autonomy flags:
 --json               JSON output (for CLI mode)
 
-Task file flags:
---code               force code mode instead of automatic intent detection
---json               JSON output
+Computer flags:
+  --json               JSON output
+  --dry-run            show plan without executing
+  --allow-sudo         allow sudo commands
 
 Flags can be placed before or after the task text.
 If the task text itself starts with a dash or contains flag-like text, use --:
