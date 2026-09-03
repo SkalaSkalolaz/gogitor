@@ -109,6 +109,78 @@ type LLMClient interface {
 	Send(ctx context.Context, prompt string) (string, error)
 }
 
+var (
+	dependencyImportLineRE = regexp.MustCompile(
+		`(?m)^\s+([^\s:]+):\s+`,
+	)
+
+	dependencyProvidesRE = regexp.MustCompile(
+		`(?m)(?:no required module provides package|cannot find module providing package)\s+([^\s]+)`,
+	)
+
+	dependencyReadGoModRE = regexp.MustCompile(
+		`(?m)\breading\s+([^\s]+?)/go\.mod\b`,
+	)
+)
+
+func isDependencyFetchError(text string) bool {
+	lower := strings.ToLower(text)
+
+	markers := []string{
+		"git ls-remote",
+		"permission denied (publickey)",
+		"could not read from remote repository",
+		"no required module provides package",
+		"cannot find module providing package",
+		"unrecognized import path",
+		"does not contain package",
+		"reading github.com/",
+		"reading charm.land/",
+		"go mod tidy",
+	}
+
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func extractDependencyImportPath(text string) string {
+	if m := dependencyProvidesRE.FindStringSubmatch(text); len(m) == 2 {
+		return strings.Trim(
+			m[1],
+			".,;:()[]{}\"'",
+		)
+	}
+
+	if m := dependencyImportLineRE.FindStringSubmatch(text); len(m) == 2 {
+		value := strings.Trim(
+			m[1],
+			".,;:()[]{}\"'",
+		)
+
+		if strings.Contains(value, "/") {
+			return value
+		}
+	}
+
+	if m := dependencyReadGoModRE.FindStringSubmatch(text); len(m) == 2 {
+		value := strings.Trim(
+			m[1],
+			".,;:()[]{}\"'",
+		)
+
+		if strings.Contains(value, "/") {
+			return value
+		}
+	}
+
+	return ""
+}
+
 func New(cfg *config.Config, log *slog.Logger) *Service {
 	baseLLM := llm.NewClient(cfg, log)
 
@@ -200,6 +272,147 @@ func (s *Service) searchForSubtask(
 	sendEvent(emit, domain.EventLog,
 		fmt.Sprintf("Auto-search: found %d source(s)", len(result.Sources)))
 	return formatted, nil
+}
+
+func (s *Service) searchForDependency(
+	ctx context.Context,
+	sandbox string,
+	importPath string,
+	errorText string,
+	emit func(domain.Event),
+) (string, error) {
+	if !s.Cfg.AutoSearch {
+		return "", nil
+	}
+
+	if s.SafeSearch == nil {
+		return "", nil
+	}
+
+	importPath = strings.TrimSpace(importPath)
+	if importPath == "" {
+		return "", nil
+	}
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		"Auto-search: dependency resolution failed; researching package/module...",
+	)
+
+	var b strings.Builder
+
+	fmt.Fprintf(
+		&b,
+		`Find authoritative information about the Go dependency "%s".
+
+The project failed while resolving this dependency.
+
+Determine:
+1. whether "%s" is a valid current Go import path;
+2. which Go module provides that package;
+3. whether the module path differs from the import path;
+4. whether a major-version suffix such as /v2 is required;
+5. which currently valid version should be used;
+6. whether the reported error is caused by an invalid package path,
+   a module/version mismatch, or Git/SSH transport/authentication.
+
+IMPORTANT:
+- Prefer pkg.go.dev, go.dev, the official project repository,
+  or other authoritative technical sources.
+- Do not invent a module path or version.
+- The search result will be used only as technical evidence for
+  a later code-repair step.
+
+PACKAGE:
+%s
+
+ERROR:
+%s
+`,
+		importPath,
+		importPath,
+		importPath,
+		truncate(errorText, 3000),
+	)
+
+	if data, err := os.ReadFile(
+		filepath.Join(sandbox, "go.mod"),
+	); err == nil {
+		goMod := textutil.TruncateStringBytes(
+			string(data),
+			5000,
+		)
+
+		b.WriteString("\nCURRENT go.mod:\n")
+		b.WriteString(goMod)
+		b.WriteString("\n")
+	}
+
+	question := b.String()
+
+	searchQuery := question
+
+	sqCtx := llm.WithReasoningDisabled(ctx)
+
+	if generated, err := s.LLM.Send(
+		sqCtx,
+		prompts.SearchQuery(question),
+	); err == nil {
+		generated = strings.TrimSpace(generated)
+
+		if generated != "" {
+			searchQuery = generated
+		}
+	}
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		fmt.Sprintf(
+			"Auto-search: dependency query: %s",
+			truncate(searchQuery, 300),
+		),
+	)
+
+	result, err := s.SafeSearch.Search(
+		ctx,
+		searchQuery,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	formatted := search.FormatForPrompt(result)
+
+	// Не даём одному dependency-research раздувать
+	// repair prompt до полного лимита search subsystem.
+	formatted = textutil.TruncateStringBytes(
+		formatted,
+		12000,
+	)
+
+	if strings.TrimSpace(formatted) == "" {
+		return "", nil
+	}
+
+	var out strings.Builder
+
+	out.WriteString(
+		"AUTO-SEARCH DEPENDENCY RESEARCH:\n",
+	)
+	out.WriteString("Package: ")
+	out.WriteString(importPath)
+	out.WriteString("\n\n")
+	out.WriteString(formatted)
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		"Auto-search: dependency research added to repair context",
+	)
+
+	return out.String(), nil
 }
 
 // Close освобождает ресурсы сервиса: LLM-диспетчер и файловый watcher проекта.
@@ -1675,26 +1888,73 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			Message:   "Running go build",
 			TaskStage: domain.TaskStageVerifying,
 		})
-		if err := s.Runner.Build(ctx, sandbox); err != nil {
-			_ = os.RemoveAll(sandbox)
-			lastErrors = []string{trim(err.Error(), 4000)}
-			// ─── ИЗМЕНЕНО: патч применился, но build упал ───────────
-			if patchModeChanges || usePatchPrompt {
-				if patchFixAttempts < maxPatchFixAttempts {
-					// Патч был применён успешно (ApplyChangesSmart прошёл),
-					// но результат не компилируется. Просим исправить патч.
-					patchAppliedSuccessfully = true
-					sendEvent(emit, domain.EventWarn,
-						fmt.Sprintf("Patch applied but build failed. Requesting patch repair (%d/%d).",
-							patchFixAttempts+1, maxPatchFixAttempts),
-					)
-				} else {
-					// Исчерпали попытки исправления патча → полный файл.
-					forceFull = true
-				}
-			}
-			continue
-		}
+
+        if err := s.Runner.Build(ctx, sandbox); err != nil {
+        	buildError := trim(err.Error(), 4000)
+        
+        	lastErrors = []string{
+        		buildError,
+        	}
+        
+        	if s.Cfg.AutoSearch &&
+        		isDependencyFetchError(buildError) {
+        
+        		dependency := extractDependencyImportPath(
+        			buildError,
+        		)
+        
+        		if dependency != "" {
+        			research, searchErr :=
+        				s.searchForDependency(
+        					ctx,
+        					sandbox,
+        					dependency,
+        					buildError,
+        					emit,
+        				)
+        
+        			if searchErr != nil {
+        				sendEvent(
+        					emit,
+        					domain.EventWarn,
+        					fmt.Sprintf(
+        						"Dependency auto-search failed (non-fatal): %v",
+        						searchErr,
+        					),
+        				)
+        			} else if strings.TrimSpace(research) != "" {
+        				lastErrors = append(
+        					lastErrors,
+        					research,
+        				)
+        			}
+        		}
+        	}
+        
+        	_ = os.RemoveAll(sandbox)
+        
+        	if patchModeChanges || usePatchPrompt {
+        		if patchFixAttempts < maxPatchFixAttempts {
+        			patchFixAttempts++
+        
+        			patchRepairPending = true
+        
+        			sendEvent(
+        				emit,
+        				domain.EventWarn,
+        				fmt.Sprintf(
+        					"Build failed after patch. Requesting patch repair (%d/%d).",
+        					patchFixAttempts,
+        					maxPatchFixAttempts,
+        				),
+        			)
+        		} else {
+        			forceFull = true
+        		}
+        	}
+        
+        	continue
+        }
 
 		if !opts.NoTests {
 			sendEvent(emit, domain.EventLog, "Running go test")

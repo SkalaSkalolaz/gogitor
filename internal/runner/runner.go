@@ -250,12 +250,69 @@ func (r *Runner) ResolveDeps(ctx context.Context, dir string) {
 
 	tidyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	out, err := r.run(tidyCtx, dir, "go", "mod", "tidy")
-	if err != nil {
-		r.depsLog("⚠ go mod tidy failed: " + trim(err.Error(), 500))
-		if r.Log != nil {
-			r.Log.Warn("go mod tidy failed (non-fatal)", "err", err)
+
+    out, err := r.run(tidyCtx, dir, "go", "mod", "tidy")
+    if err != nil {
+		if shouldRetryDependencyViaProxy(out) &&
+			strings.TrimSpace(os.Getenv("GOPRIVATE")) == "" {
+			r.depsLog(
+				"⚠ Dependency fetch used Git/SSH; retrying through Go module proxy...",
+			)
+
+			retryCtx, retryCancel :=
+				context.WithTimeout(ctx, 60*time.Second)
+
+			retryOut, retryErr := r.runWithEnv(
+				retryCtx,
+				dir,
+				map[string]string{
+					"GOPROXY": "https://proxy.golang.org",
+				},
+				"go",
+				"mod",
+				"tidy",
+			)
+
+			retryCancel()
+
+			if retryErr == nil {
+				if installed := parseTidyOutput(retryOut); installed != "" {
+					r.depsLog(
+						"✓ Dependencies resolved through Go module proxy:\n" +
+							installed,
+					)
+				} else {
+					r.depsLog(
+						"✓ Dependencies resolved through Go module proxy.",
+					)
+				}
+				return
+			}
+
+			// Для дальнейшей диагностики используем результат
+			// именно последней попытки.
+			out = retryOut
+			err = retryErr
+
+			r.depsLog(
+				"⚠ Go module proxy retry failed: " +
+					trim(retryErr.Error(), 500),
+			)
 		}
+
+		r.depsLog(
+			"⚠ go mod tidy failed: " +
+				trim(err.Error(), 500),
+		)
+
+		if r.Log != nil {
+			r.Log.Warn(
+				"go mod tidy failed (non-fatal)",
+				"err",
+				err,
+			)
+		}
+
 		return
 	}
 
@@ -265,6 +322,26 @@ func (r *Runner) ResolveDeps(ctx context.Context, dir string) {
 	} else {
 		r.depsLog("✓ Dependencies resolved.")
 	}
+}
+
+func shouldRetryDependencyViaProxy(output string) bool {
+	lower := strings.ToLower(output)
+
+	markers := []string{
+		"git ls-remote",
+		"permission denied (publickey)",
+		"could not read from remote repository",
+		"ssh: connect to host",
+		"repository not found",
+	}
+
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // depsLog вызывает колбэк, если он установлен.
@@ -386,6 +463,67 @@ func (r *Runner) Format(ctx context.Context, dir string) error {
 	}
 	_ = out
 	return nil
+}
+
+func (r *Runner) runWithEnv(
+	ctx context.Context,
+	dir string,
+	overrides map[string]string,
+	name string,
+	args ...string,
+) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
+
+	cmd := r.command(ctx, dir, name, args...)
+
+	env := os.Environ()
+
+	for key, value := range overrides {
+		prefix := key + "="
+		replaced := false
+
+		next := make([]string, 0, len(env)+1)
+
+		for _, item := range env {
+			if strings.HasPrefix(item, prefix) {
+				if !replaced {
+					next = append(next, prefix+value)
+					replaced = true
+				}
+				continue
+			}
+
+			next = append(next, item)
+		}
+
+		if !replaced {
+			next = append(next, prefix+value)
+		}
+
+		env = next
+	}
+
+	cmd.Env = env
+
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	if ctx.Err() != nil {
+		return output, ctx.Err()
+	}
+
+	if err != nil {
+		return output, fmt.Errorf(
+			"%s %s: %v\n%s",
+			name,
+			strings.Join(args, " "),
+			err,
+			trim(output, 5000),
+		)
+	}
+
+	return output, nil
 }
 
 func (r *Runner) run(ctx context.Context, dir, name string, args ...string) (string, error) {
