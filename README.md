@@ -35,7 +35,7 @@ It combines:
 
 Gogitor is primarily designed for Go projects and supports local LLMs through **Ollama** as well as remote models through **OpenAI-compatible APIs**.
 
-> **Current source version:** `1.1.3`
+> **Current source version:** `1.1.4`
 >
 > Gogitor is primarily focused on Go development. The application UI is available in English and Russian.
 
