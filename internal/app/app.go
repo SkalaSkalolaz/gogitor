@@ -320,6 +320,8 @@ Determine:
 IMPORTANT:
 - Prefer pkg.go.dev, go.dev, the official project repository,
   or other authoritative technical sources.
+- the official project repository
+- official project documentation
 - Do not invent a module path or version.
 - The search result will be used only as technical evidence for
   a later code-repair step.
@@ -924,23 +926,23 @@ func (s *Service) ExecuteAgentReport(
 
 	depth := AgentDepthNormal
 
-    completedSubtasks := 0
-    totalSubtasks := 0
-    
-    if state != nil {
-    	completedSubtasks =
-    		state.CompletedSubtasks
-    
-    	totalSubtasks =
-    		state.TotalSubtasks
-    }
-    
-    report := formatAgentTaskReport(
-    	result,
-    	depth,
-    	completedSubtasks,
-    	totalSubtasks,
-    )
+	completedSubtasks := 0
+	totalSubtasks := 0
+
+	if state != nil {
+		completedSubtasks =
+			state.CompletedSubtasks
+
+		totalSubtasks =
+			state.TotalSubtasks
+	}
+
+	report := formatAgentTaskReport(
+		result,
+		depth,
+		completedSubtasks,
+		totalSubtasks,
+	)
 
 	sendEvent(
 		emit,
@@ -1502,7 +1504,6 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 	}
 }
 
-
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	if agent.RoleFromContext(ctx) == agent.RoleDefault {
 		ctx = agent.WithRole(ctx, agent.RoleCoder)
@@ -1889,72 +1890,72 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			TaskStage: domain.TaskStageVerifying,
 		})
 
-        if err := s.Runner.Build(ctx, sandbox); err != nil {
-        	buildError := trim(err.Error(), 4000)
-        
-        	lastErrors = []string{
-        		buildError,
-        	}
-        
-        	if s.Cfg.AutoSearch &&
-        		isDependencyFetchError(buildError) {
-        
-        		dependency := extractDependencyImportPath(
-        			buildError,
-        		)
-        
-        		if dependency != "" {
-        			research, searchErr :=
-        				s.searchForDependency(
-        					ctx,
-        					sandbox,
-        					dependency,
-        					buildError,
-        					emit,
-        				)
-        
-        			if searchErr != nil {
-        				sendEvent(
-        					emit,
-        					domain.EventWarn,
-        					fmt.Sprintf(
-        						"Dependency auto-search failed (non-fatal): %v",
-        						searchErr,
-        					),
-        				)
-        			} else if strings.TrimSpace(research) != "" {
-        				lastErrors = append(
-        					lastErrors,
-        					research,
-        				)
-        			}
-        		}
-        	}
-        
-        	_ = os.RemoveAll(sandbox)
-        
-        	if patchModeChanges || usePatchPrompt {
-        		if patchFixAttempts < maxPatchFixAttempts {
-        			patchFixAttempts++
-        
-        			patchRepairPending = true
-        
-        			sendEvent(
-        				emit,
-        				domain.EventWarn,
-        				fmt.Sprintf(
-        					"Build failed after patch. Requesting patch repair (%d/%d).",
-        					patchFixAttempts,
-        					maxPatchFixAttempts,
-        				),
-        			)
-        		} else {
-        			forceFull = true
-        		}
-        	}
-        
-        	continue
-        }
+		if err := s.Runner.Build(ctx, sandbox); err != nil {
+			buildError := trim(err.Error(), 4000)
+
+			lastErrors = []string{
+				buildError,
+			}
+
+			if s.Cfg.AutoSearch &&
+				isDependencyFetchError(buildError) {
+
+				dependency := extractDependencyImportPath(
+					buildError,
+				)
+
+				if dependency != "" {
+					research, searchErr :=
+						s.searchForDependency(
+							ctx,
+							sandbox,
+							dependency,
+							buildError,
+							emit,
+						)
+
+					if searchErr != nil {
+						sendEvent(
+							emit,
+							domain.EventWarn,
+							fmt.Sprintf(
+								"Dependency auto-search failed (non-fatal): %v",
+								searchErr,
+							),
+						)
+					} else if strings.TrimSpace(research) != "" {
+						lastErrors = append(
+							lastErrors,
+							research,
+						)
+					}
+				}
+			}
+
+			_ = os.RemoveAll(sandbox)
+
+			if patchModeChanges || usePatchPrompt {
+				if patchFixAttempts < maxPatchFixAttempts {
+					patchFixAttempts++
+
+					patchRepairPending = true
+
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						fmt.Sprintf(
+							"Build failed after patch. Requesting patch repair (%d/%d).",
+							patchFixAttempts,
+							maxPatchFixAttempts,
+						),
+					)
+				} else {
+					forceFull = true
+				}
+			}
+
+			continue
+		}
 
 		if !opts.NoTests {
 			sendEvent(emit, domain.EventLog, "Running go test")
@@ -3196,7 +3197,6 @@ func HelpText() string {
 	return helpTextEn()
 }
 
-
 func helpTextEn() string {
 	return `# Gogitor Commands
 
@@ -3311,7 +3311,6 @@ Parses Conventional Commits and generates CHANGELOG.md.
 - **Ctrl+C** — Cancel task / quit
 `
 }
-
 
 func helpTextRu() string {
 	return `# Команды Gogitor

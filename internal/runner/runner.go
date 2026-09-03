@@ -10,11 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
-    "runtime"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/textutil"
@@ -30,7 +30,7 @@ var (
 )
 
 var lintIssueRE = regexp.MustCompile(
-`^[^\s]+\.go:\d+(?::\d+)?:\s+.+(\[[\w.-]+\]|\([\w.-]+\))\s*$`,
+	`^[^\s]+\.go:\d+(?::\d+)?:\s+.+(\[[\w.-]+\]|\([\w.-]+\))\s*$`,
 )
 
 type Runner struct {
@@ -251,8 +251,8 @@ func (r *Runner) ResolveDeps(ctx context.Context, dir string) {
 	tidyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-    out, err := r.run(tidyCtx, dir, "go", "mod", "tidy")
-    if err != nil {
+	out, err := r.run(tidyCtx, dir, "go", "mod", "tidy")
+	if err != nil {
 		if shouldRetryDependencyViaProxy(out) &&
 			strings.TrimSpace(os.Getenv("GOPRIVATE")) == "" {
 			r.depsLog(
@@ -857,7 +857,7 @@ func (r *Runner) EnsureLintConfig(ctx context.Context, dir string) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil
 	}
-    const defaultConfig = `version: "2"
+	const defaultConfig = `version: "2"
 
 run:
 timeout: 5m
@@ -894,7 +894,7 @@ enable-all: true
 	); err != nil {
 		return err
 	}
-	
+
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(
 			configPath,
@@ -924,94 +924,94 @@ func (r *Runner) Vet(ctx context.Context, dir string) (string, error) {
 
 // ParseLintIssues извлекает структурированные проблемы из вывода линтера.
 type LintIssue struct {
-File    string
-Line    int
-Col     int
-Message string
-Linter  string
+	File    string
+	Line    int
+	Col     int
+	Message string
+	Linter  string
 }
 
 // ParseLintOutput парсит вывод линтера в структурированные проблемы.
 func ParseLintOutput(output string) []LintIssue {
-    var issues []LintIssue
-    for _, line := range strings.Split(output, "\n") {
-    trimmed := strings.TrimSpace(line)
-    if trimmed == "" {
-    continue
-    }
-    if strings.HasPrefix(trimmed, "level=") ||
-    strings.HasPrefix(trimmed, "WARN") ||
-    strings.HasPrefix(trimmed, "INFO") ||
-    strings.HasPrefix(trimmed, "Running") {
-    continue
-    }
-    if !lintIssueRE.MatchString(trimmed) {
-    continue
-    }
-    // Парсим: файл:строка:столбец: сообщение (линтёры)
-    re := regexp.MustCompile(`^([^\s]+\.go):(\d+)(?::(\d+))?:\s+(.+?)(?:\s+\[[\w.-]+\]|\s+\([\w.-]+\))\s*$`)
-    m := re.FindStringSubmatch(trimmed)
-    if m == nil {
-    continue
-    }
-    issue := LintIssue{File: m[1], Message: m[4]}
-    if n, err := strconv.Atoi(m[2]); err == nil {
-    issue.Line = n
-    }
-    if len(m) > 3 && m[3] != "" {
-    if n, err := strconv.Atoi(m[3]); err == nil {
-    issue.Col = n
-    }
-    }
-    issues = append(issues, issue)
-    }
-    return issues
+	var issues []LintIssue
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "level=") ||
+			strings.HasPrefix(trimmed, "WARN") ||
+			strings.HasPrefix(trimmed, "INFO") ||
+			strings.HasPrefix(trimmed, "Running") {
+			continue
+		}
+		if !lintIssueRE.MatchString(trimmed) {
+			continue
+		}
+		// Парсим: файл:строка:столбец: сообщение (линтёры)
+		re := regexp.MustCompile(`^([^\s]+\.go):(\d+)(?::(\d+))?:\s+(.+?)(?:\s+\[[\w.-]+\]|\s+\([\w.-]+\))\s*$`)
+		m := re.FindStringSubmatch(trimmed)
+		if m == nil {
+			continue
+		}
+		issue := LintIssue{File: m[1], Message: m[4]}
+		if n, err := strconv.Atoi(m[2]); err == nil {
+			issue.Line = n
+		}
+		if len(m) > 3 && m[3] != "" {
+			if n, err := strconv.Atoi(m[3]); err == nil {
+				issue.Col = n
+			}
+		}
+		issues = append(issues, issue)
+	}
+	return issues
 }
 
 // FilterNewIssues сравнивает два набора проблем и возвращает только новые.
 // Проблема считается существующей, если совпадают файл, строка и сообщение.
 func FilterNewIssues(before, after []LintIssue) []LintIssue {
-    type issueKey struct {
-    File    string
-    Line    int
-    Message string
-    }
-    beforeSet := make(map[issueKey]bool, len(before))
-    for _, b := range before {
-    beforeSet[issueKey{b.File, b.Line, b.Message}] = true
-    }
-    var newIssues []LintIssue
-    for _, a := range after {
-    key := issueKey{a.File, a.Line, a.Message}
-    if !beforeSet[key] {
-    newIssues = append(newIssues, a)
-    }
-    }
-    return newIssues
+	type issueKey struct {
+		File    string
+		Line    int
+		Message string
+	}
+	beforeSet := make(map[issueKey]bool, len(before))
+	for _, b := range before {
+		beforeSet[issueKey{b.File, b.Line, b.Message}] = true
+	}
+	var newIssues []LintIssue
+	for _, a := range after {
+		key := issueKey{a.File, a.Line, a.Message}
+		if !beforeSet[key] {
+			newIssues = append(newIssues, a)
+		}
+	}
+	return newIssues
 }
 
 // LintWithBaseline выполняет линт и возвращает только НОВЫЕ проблемы
 // относительно базовой линии (состояния до изменений).
 func (r *Runner) LintWithBaseline(ctx context.Context, dir string, baselineIssues []LintIssue) ([]LintIssue, string, error) {
-    rawOutput, err := r.Lint(ctx, dir)
-    allIssues := ParseLintOutput(rawOutput)
-    if err != nil && len(allIssues) == 0 {
-    // Линт вернул ошибку, но проблем нет — возможно, проблема конфигурации.
-    return nil, rawOutput, err
-    }
-    newIssues := FilterNewIssues(baselineIssues, allIssues)
-    if len(newIssues) > 0 {
-    return newIssues, rawOutput, fmt.Errorf("lint found %d new issue(s)", len(newIssues))
-    }
-    return nil, rawOutput, nil
+	rawOutput, err := r.Lint(ctx, dir)
+	allIssues := ParseLintOutput(rawOutput)
+	if err != nil && len(allIssues) == 0 {
+		// Линт вернул ошибку, но проблем нет — возможно, проблема конфигурации.
+		return nil, rawOutput, err
+	}
+	newIssues := FilterNewIssues(baselineIssues, allIssues)
+	if len(newIssues) > 0 {
+		return newIssues, rawOutput, fmt.Errorf("lint found %d new issue(s)", len(newIssues))
+	}
+	return nil, rawOutput, nil
 }
 
 // hasGoFilesInList проверяет, содержит ли список путей хотя бы один .go файл.
 func hasGoFilesInList(files []string) bool {
-for _, f := range files {
-if strings.HasSuffix(f, ".go") {
-return true
-}
-}
-return false
+	for _, f := range files {
+		if strings.HasSuffix(f, ".go") {
+			return true
+		}
+	}
+	return false
 }
