@@ -521,6 +521,51 @@ func applyPatchText(
 		minConfidenceOverride,
 	)
 
+	// ------------------------------------------------------------
+	// 5a. AST-AWARE FUZZY
+	// ------------------------------------------------------------
+	astFuzzy := findASTAwareBlock(
+		origLines,
+		searchLines,
+	)
+
+	if astFuzzy != nil {
+		if astFuzzy.Similarity < threshold {
+			return "", false, fmt.Errorf(
+				"AST-aware fuzzy SEARCH rejected: confidence %.2f below threshold %.2f",
+				astFuzzy.Similarity,
+				threshold,
+			)
+		}
+
+		margin := astFuzzy.Similarity -
+			astFuzzy.SecondBest
+
+		if astFuzzy.SecondBest <= 0 {
+			margin = astFuzzy.Similarity
+		}
+
+		if margin < requiredMargin {
+			return "", false, fmt.Errorf(
+				"AST-aware fuzzy SEARCH rejected: ambiguous candidates (best %.2f, second %.2f, margin %.2f, required %.2f)",
+				astFuzzy.Similarity,
+				astFuzzy.SecondBest,
+				margin,
+				requiredMargin,
+			)
+		}
+
+		return replaceLineRange(
+			origLines,
+			astFuzzy.StartLine,
+			astFuzzy.StartLine+len(searchLines),
+			replace,
+		), true, nil
+	}
+
+	// ------------------------------------------------------------
+	// 5b. LEGACY FUZZY
+	// ------------------------------------------------------------
 	fuzzy := findClosestBlockWithMargin(
 		origLines,
 		searchLines,
@@ -539,7 +584,9 @@ func applyPatchText(
 		)
 	}
 
-	margin := fuzzy.Similarity - fuzzy.SecondBest
+	margin := fuzzy.Similarity -
+		fuzzy.SecondBest
+
 	if fuzzy.SecondBest <= 0 {
 		margin = fuzzy.Similarity
 	}
@@ -560,6 +607,7 @@ func applyPatchText(
 		fuzzy.StartLine+len(searchLines),
 		replace,
 	), true, nil
+
 }
 
 func hasUniqueExactAnchor(
