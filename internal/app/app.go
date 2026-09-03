@@ -1675,10 +1675,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			Message:   "Running go build",
 			TaskStage: domain.TaskStageVerifying,
 		})
+
 		if err := s.Runner.Build(ctx, sandbox); err != nil {
 			_ = os.RemoveAll(sandbox)
 			lastErrors = []string{trim(err.Error(), 4000)}
-			// ─── ИЗМЕНЕНО: патч применился, но build упал ───────────
+
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
 					// Патч был применён успешно (ApplyChangesSmart прошёл),
@@ -5810,4 +5811,70 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+// Регулярные выражения для извлечения Go-модулей из текста ошибок
+var goModuleExplicitRE = regexp.MustCompile(`(?m)(?:no required module provides package|module|imports|reading|missing go\.sum entry for)\s+([a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+(?:/[a-zA-Z0-9_.-]+)+)`)
+var goModulePathRE = regexp.MustCompile(`(?m)((?:github\.com|gitlab\.com|bitbucket\.org|gopkg\.in|go\.uber\.org|golang\.org|google\.golang\.org|k8s\.io|go\.etcd\.io)(?:/[a-zA-Z0-9_.-]+)+)`)
+
+// extractFailingModules извлекает имена Go-модулей из текста ошибки сборки/tidy.
+func extractFailingModules(errText string) []string {
+	seen := make(map[string]bool)
+	var modules []string
+
+	process := func(m string) {
+		m = strings.TrimRight(m, ".,;:()[]{}\"'")
+		// Убираем версию вида @v1.2.3
+		if idx := strings.Index(m, "@"); idx != -1 {
+			m = m[:idx]
+		}
+		// Убираем суффикс мажорной версии /v2, /v3 для более точного поиска базы пакета
+		baseM := m
+		if vIdx := strings.LastIndex(m, "/v"); vIdx != -1 {
+			suffix := m[vIdx+2:]
+			if _, err := strconv.Atoi(suffix); err == nil {
+				baseM = m[:vIdx]
+			}
+		}
+		if !seen[baseM] && len(baseM) > 8 {
+			seen[baseM] = true
+			modules = append(modules, baseM)
+		}
+	}
+
+	for _, m := range goModuleExplicitRE.FindAllStringSubmatch(errText, -1) {
+		if len(m) > 1 {
+			process(m[1])
+		}
+	}
+	for _, m := range goModulePathRE.FindAllString(errText, -1) {
+		process(m)
+	}
+	return modules
+}
+
+// augmentWithDependencySearch ищет информацию об упавших зависимостях и формирует контекст для LLM.
+func (s *Service) augmentWithDependencySearch(ctx context.Context, errText string, emit func(domain.Event)) string {
+	if !s.Cfg.AutoSearch || s.SafeSearch == nil {
+		return ""
+	}
+	modules := extractFailingModules(errText)
+	if len(modules) == 0 {
+		return ""
+	}
+	// Ограничиваем поиск первыми двумя модулями, чтобы не раздувать запрос
+	if len(modules) > 2 {
+		modules = modules[:2]
+	}
+	
+	sendEvent(emit, domain.EventLog, fmt.Sprintf("Auto-search: dependency error detected, searching for %s", strings.Join(modules, ", ")))
+	
+	// Формируем поисковый запрос
+	searchQuery := "golang package " + strings.Join(modules, " OR ") + " latest version correct import path pkg.go.dev"
+	
+	searchRes, searchErr := s.SafeSearch.Search(ctx, searchQuery)
+	if searchErr == nil && searchRes != nil && searchRes.Content != "" {
+		return "\n\nWEB SEARCH RESULTS FOR FAILING DEPENDENCIES (use this to fix import paths, module names and versions in go.mod):\n" + search.FormatForPrompt(searchRes)
+	}
+	return ""
 }
