@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"gogitor/internal/textutil"
 	"gogitor/internal/domain"
 	"gogitor/internal/index"
 	"gogitor/internal/security"
+	"gogitor/internal/textutil"
 )
 
 const indexRefreshInterval = 2 * time.Second
@@ -22,10 +22,10 @@ const indexRefreshInterval = 2 * time.Second
 type Workspace struct {
 	Root string
 
-	mu          sync.Mutex
-	idx         *index.Index
-	lastRefresh time.Time
-
+	mu              sync.Mutex
+	applyMu         sync.Mutex
+	idx             *index.Index
+	lastRefresh     time.Time
 	watcher         *fsnotify.Watcher
 	watcherOnce     sync.Once
 	watcherStop     chan struct{}
@@ -305,6 +305,12 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 	minConfidenceOverride float64,
 ) error {
 	for _, ch := range changes {
+		if _, _, err := validateExpectedSource(dir, ch); err != nil {
+			return err
+		}
+	}
+
+	for _, ch := range changes {
 		target, err := security.SafeJoin(dir, ch.Path)
 		if err != nil {
 			return err
@@ -388,8 +394,17 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 	return nil
 }
 
-
 func (w *Workspace) CopyToRootSafe(sandboxDir string, changes []domain.FileChange) error {
+	w.applyMu.Lock()
+	defer w.applyMu.Unlock()
+
+	// Последняя optimistic-concurrency проверка.
+	// Ни одного изменения root ещё не сделано.
+	for _, ch := range changes {
+		if _, _, err := validateExpectedSource(w.Root, ch); err != nil {
+			return err
+		}
+	}
 	type backupEntry struct {
 		path    string
 		data    []byte
@@ -716,5 +731,3 @@ func isExecutableScriptPath(path string) bool {
 	}
 	return false
 }
-
- 

@@ -5,15 +5,15 @@ import "time"
 type EventType string
 
 const (
-	EventLog      EventType = "log"
-	EventIntent   EventType = "intent"
-	EventWarn     EventType = "warn"
-	EventError    EventType = "error"
-	EventDone     EventType = "done"
-	EventAgent    EventType = "agent"
-	EventPlan     EventType = "plan"
-	EventToken    EventType = "token"
-	EventProgress EventType = "progress"
+	EventLog             EventType = "log"
+	EventIntent          EventType = "intent"
+	EventWarn            EventType = "warn"
+	EventError           EventType = "error"
+	EventDone            EventType = "done"
+	EventAgent           EventType = "agent"
+	EventPlan            EventType = "plan"
+	EventToken           EventType = "token"
+	EventProgress        EventType = "progress"
 	EventComputerConfirm EventType = "computer_confirm"
 	EventComputerBlocked EventType = "computer_blocked"
 )
@@ -22,17 +22,17 @@ const (
 type TaskStage string
 
 const (
-	TaskStageIdle       TaskStage = "idle"
-	TaskStagePlanning   TaskStage = "planning"
-	TaskStageContext    TaskStage = "context"
-	TaskStageCoding     TaskStage = "coding"
-	TaskStageReview     TaskStage = "review"
-	TaskStageVerifying  TaskStage = "verifying"
-	TaskStageTesting    TaskStage = "testing"
-	TaskStageRepairing  TaskStage = "repairing"
-	TaskStageCompleted  TaskStage = "completed"
-	TaskStageFailed     TaskStage = "failed"
-	TaskStageCancelled  TaskStage = "cancelled"
+	TaskStageIdle      TaskStage = "idle"
+	TaskStagePlanning  TaskStage = "planning"
+	TaskStageContext   TaskStage = "context"
+	TaskStageCoding    TaskStage = "coding"
+	TaskStageReview    TaskStage = "review"
+	TaskStageVerifying TaskStage = "verifying"
+	TaskStageTesting   TaskStage = "testing"
+	TaskStageRepairing TaskStage = "repairing"
+	TaskStageCompleted TaskStage = "completed"
+	TaskStageFailed    TaskStage = "failed"
+	TaskStageCancelled TaskStage = "cancelled"
 	TaskStageExecuting TaskStage = "executing"
 	TaskStageChat      TaskStage = "chat"
 	TaskStageAnalyze   TaskStage = "analyze"
@@ -169,13 +169,13 @@ type PlanUpdate struct {
 }
 
 type Event struct {
-	Type     EventType       `json:"type"`
-	Message  string          `json:"message"`
-	Result   *Result         `json:"result,omitempty"`
-	Plan     *PlanUpdate     `json:"plan,omitempty"`
-	Progress *ProgressUpdate `json:"progress,omitempty"`
-	Agent    *AgentStatus    `json:"agent,omitempty"`
-	TaskStage TaskStage `json:"task_stage,omitempty"`
+	Type      EventType       `json:"type"`
+	Message   string          `json:"message"`
+	Result    *Result         `json:"result,omitempty"`
+	Plan      *PlanUpdate     `json:"plan,omitempty"`
+	Progress  *ProgressUpdate `json:"progress,omitempty"`
+	Agent     *AgentStatus    `json:"agent,omitempty"`
+	TaskStage TaskStage       `json:"task_stage,omitempty"`
 }
 
 type Intent struct {
@@ -185,9 +185,14 @@ type Intent struct {
 }
 
 type Patch struct {
-	Search  string `json:"search"`
-	Replace string `json:"replace"`
-	Symbol  string `json:"symbol,omitempty"`
+	Search      string `json:"search"`
+	Replace     string `json:"replace"`
+	Symbol      string `json:"symbol,omitempty"`
+	ReplaceOnly bool   `json:"replace_only,omitempty"`
+
+	// Заполняются только Gogitor из доверенного snapshot.
+	ExpectedSourceHash        string `json:"expected_source_hash,omitempty"`
+	ExpectedSymbolFingerprint string `json:"expected_symbol_fingerprint,omitempty"`
 }
 
 type FileChange struct {
@@ -196,6 +201,11 @@ type FileChange struct {
 	Created   bool    `json:"created"`
 	Patches   []Patch `json:"patches,omitempty"`
 	PatchMode bool    `json:"patch_mode,omitempty"`
+
+	// Заполняются только Gogitor из snapshot. LLM эти поля не формирует.
+	SourceHash      string `json:"-"`
+	ExpectedPresent bool   `json:"-"`
+	ExpectedAbsent  bool   `json:"-"`
 }
 
 type TestFailure struct {
@@ -245,7 +255,6 @@ type QualityGateStatus struct {
 	Passed        bool    `json:"passed"`
 }
 
-
 type Result struct {
 	Success            bool              `json:"success"`
 	Mode               string            `json:"mode"`
@@ -264,7 +273,7 @@ type Result struct {
 	FilesFullRewritten []string          `json:"files_full_rewritten,omitempty"`
 	OutputFiles        []OutputFile      `json:"-"`
 	Lint               LintStatus        `json:"lint"`
-    QualityGates QualityGateStatus `json:"quality_gates,omitempty"`
+	QualityGates       QualityGateStatus `json:"quality_gates,omitempty"`
 	PreTaskHead        string            `json:"pre_task_head,omitempty"`
 	CumulativeDiff     string            `json:"cumulative_diff,omitempty"`
 	Comparison         *ComparisonResult `json:"comparison,omitempty"`
@@ -273,16 +282,16 @@ type Result struct {
 }
 
 type TaskHistoryEntry struct {
-	ID          int       `json:"id"`
-	Time        time.Time `json:"time"`
-	Query       string    `json:"query"`
-	Mode        string    `json:"mode"`
-	Success     bool      `json:"success"`
-	Iterations  int       `json:"iterations"`
-	Files       []string  `json:"files,omitempty"`
-	AddedLines  int       `json:"added_lines,omitempty"`
-	RemovedLines int      `json:"removed_lines,omitempty"`
-	GitCommit   string    `json:"git_commit,omitempty"`
+	ID           int       `json:"id"`
+	Time         time.Time `json:"time"`
+	Query        string    `json:"query"`
+	Mode         string    `json:"mode"`
+	Success      bool      `json:"success"`
+	Iterations   int       `json:"iterations"`
+	Files        []string  `json:"files,omitempty"`
+	AddedLines   int       `json:"added_lines,omitempty"`
+	RemovedLines int       `json:"removed_lines,omitempty"`
+	GitCommit    string    `json:"git_commit,omitempty"`
 }
 
 func (r *Result) AddError(msg string) {
@@ -345,9 +354,8 @@ type DecisionDebt struct {
 
 // DecisionJournal — полный журнал для отображения.
 type DecisionJournal struct {
-	Entries        []DecisionEntry `json:"entries"`
-	FailedApproaches []string      `json:"failed_approaches,omitempty"`
-	Debts          []DecisionDebt  `json:"debts,omitempty"`
-	Summary        string          `json:"summary,omitempty"`
+	Entries          []DecisionEntry `json:"entries"`
+	FailedApproaches []string        `json:"failed_approaches,omitempty"`
+	Debts            []DecisionDebt  `json:"debts,omitempty"`
+	Summary          string          `json:"summary,omitempty"`
 }
-

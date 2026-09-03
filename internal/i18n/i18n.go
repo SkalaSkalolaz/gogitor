@@ -170,23 +170,20 @@ func localizeLine(l Lang, line string) string {
 var messages = map[Lang]map[string]string{
 	EN: map[string]string{},
 	RU: map[string]string{
-		"Running Agent Deep quality gates": "Выполнение quality gates Agent Deep",
-
-		"Agent session artifacts: %s": "Артефакты сессии Agent: %s",
-
-		"Analyzing agent artifacts: %s": "Анализ артефактов Agent: %s",
-
-		"Generating agent reflection...": "Формирование ретроспективы Agent...",
-
-		"Reflection saved: %s": "Ретроспектива сохранена: %s",
-
-		"no agent session found: %v": "Сессия Agent не найдена: %v",
-
-		"agent interview":                 "интервью Agent",
-		"GitHub token loaded (%s).":       "Токен GitHub загружен (%s).",
-		"GitHub token is not configured.": "Токен GitHub не настроен.",
-		"Packet coverage:":                "Покрытие по пакетам:",
-		" | Enter send | :help":           " | Enter отправить | :help",
+		"Auto-search: generating focused research query...":                       "Автопоиск: формирование точечного исследовательского запроса...",
+		"Auto-research context added to coding task.":                             "Контекст автопоиска добавлен к задаче программирования.",
+		"Auto-search: current external information is required for this article.": "Автопоиск: для статьи требуется актуальная внешняя информация.",
+		"Running Agent Deep quality gates":                                        "Выполнение quality gates Agent Deep",
+		"Agent session artifacts: %s":                                             "Артефакты сессии Agent: %s",
+		"Analyzing agent artifacts: %s":                                           "Анализ артефактов Agent: %s",
+		"Generating agent reflection...":                                          "Формирование ретроспективы Agent...",
+		"Reflection saved: %s":                                                    "Ретроспектива сохранена: %s",
+		"no agent session found: %v":                                              "Сессия Agent не найдена: %v",
+		"agent interview":                                                         "интервью Agent",
+		"GitHub token loaded (%s).":                                               "Токен GitHub загружен (%s).",
+		"GitHub token is not configured.":                                         "Токен GitHub не настроен.",
+		"Packet coverage:":                                                        "Покрытие по пакетам:",
+		" | Enter send | :help":                                                   " | Enter отправить | :help",
 		// ─── TUI: сохранение и история ─────────────────────────────
 		"usage: :save <filename>":              "использование: :save <имя-файла>",
 		"No result to save. Run a task first.": "Нет результата для сохранения. Сначала выполните задачу.",
@@ -675,6 +672,12 @@ var messages = map[Lang]map[string]string{
 }
 
 var ruPatterns = []pattern{
+	{regexp.MustCompile(`^Auto-search: research type: (.*)$`),
+		"Автопоиск: тип исследования: $1"},
+	{regexp.MustCompile(`^Auto-search: query: (.*)$`),
+		"Автопоиск: запрос: $1"},
+	{regexp.MustCompile(`^Auto-search: found (\d+) source\(s\)$`),
+		"Автопоиск: найдено источников: $1"},
 	{regexp.MustCompile(`^Dependency fetch problem detected: (.*)$`),
 		"Обнаружена проблема загрузки внешней Go-зависимости: $1"},
 	{regexp.MustCompile(`^Auto-search: found (\d+) source\(s\)$`),

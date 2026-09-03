@@ -25,6 +25,7 @@ JSON schema:
     }
   ]
 }
+
 RULES:
 1. Maximum 7 subtasks.
 2. Each subtask must be independently executable by a code generation agent.
@@ -45,10 +46,31 @@ RULES:
 12. Do NOT create subtasks such as: chmod +x, make executable, run, execute, start, launch, curl, wget, send request, go run, manual test. Shell scripts created by Gogitor are automatically executable.
 13. If the task is "analyze code and create a helper script", prefer ONE subtask: create the helper script using context from the code.
 14. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
+15. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
+16. Use "needs_search": true for:
+   - external libraries and their current APIs;
+   - dependency/module versions;
+   - breaking changes and migrations;
+   - external API documentation;
+   - security advisories and vulnerabilities;
+   - current Go/toolchain compatibility;
+   - platform-specific behavior when version matters;
+   - performance information or benchmarks when external evidence is required.
+17. Use "needs_search": false for:
+   - local refactoring;
+   - local syntax fixes;
+   - renaming;
+   - moving code;
+   - straightforward tests;
+   - changes whose correctness can be established from the supplied project source.
+18. Do not request web search merely because a task is complex.
+19. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
+
 BAD SUBTASKS:
 - chmod +x <script_name>.sh
 - run <script_name>.sh and check output
 - start server and send request
+
 GOOD SUBTASK:
 - Create <script_name>.sh with #!/usr/bin/env bash and a curl command, using the file name from the TASK.
 `)
@@ -235,6 +257,25 @@ RULES:
 11. Do NOT create subtasks such as: chmod +x, run, execute, start, curl, wget.
 12. The plan MUST follow the SELECTED IMPLEMENTATION APPROACH below. Do not deviate from it.
 13. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
+14. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
+15. Use "needs_search": true for:
+   - external libraries and their current APIs;
+   - dependency/module versions;
+   - breaking changes and migrations;
+   - external API documentation;
+   - security advisories and vulnerabilities;
+   - current Go/toolchain compatibility;
+   - platform-specific behavior when version matters;
+   - performance information or benchmarks when external evidence is required.
+16. Use "needs_search": false for:
+   - local refactoring;
+   - local syntax fixes;
+   - renaming;
+   - moving code;
+   - straightforward tests;
+   - changes whose correctness can be established from the supplied project source.
+17. Do not request web search merely because a task is complex.
+18. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
 
 `)
 	if strings.TrimSpace(approach) != "" {

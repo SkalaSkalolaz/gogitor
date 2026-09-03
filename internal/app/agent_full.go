@@ -302,78 +302,78 @@ func (s *Service) executeAgentFull(
 		}()
 	}
 
-    addResultFiles := func(
-    	res domain.Result,
-    	createdSet map[string]bool,
-    	modifiedSet map[string]bool,
-    	patchedSet map[string]bool,
-    	fullRewrittenSet map[string]bool,
-    ) {
-    	for _, f := range res.FilesCreated {
-    		createdSet[f] = true
-    	}
-    
-    	for _, f := range res.FilesModified {
-    		modifiedSet[f] = true
-    	}
-    
-    	for _, f := range res.FilesPatched {
-    		modifiedSet[f] = true
-    		patchedSet[f] = true
-    	}
-    
-    	for _, f := range res.FilesFullRewritten {
-    		modifiedSet[f] = true
-    		fullRewrittenSet[f] = true
-    	}
-    }
+	addResultFiles := func(
+		res domain.Result,
+		createdSet map[string]bool,
+		modifiedSet map[string]bool,
+		patchedSet map[string]bool,
+		fullRewrittenSet map[string]bool,
+	) {
+		for _, f := range res.FilesCreated {
+			createdSet[f] = true
+		}
 
-    addFiles := func(res domain.Result) {
-    	addResultFiles(
-    		res,
-    		created,
-    		modified,
-    		patched,
-    		fullRewritten,
-    	)
-    
-    	final.FilesCreated =
-    		sortedKeys(created)
-    
-    	final.FilesModified =
-    		sortedKeys(modified)
-    
-    	final.FilesPatched =
-    		sortedKeys(patched)
-    
-    	final.FilesFullRewritten =
-    		sortedKeys(fullRewritten)
-    
-    	final.OutputFiles =
-    		mergeOutputFiles(
-    			final.OutputFiles,
-    			res.OutputFiles,
-    		)
-    }
+		for _, f := range res.FilesModified {
+			modifiedSet[f] = true
+		}
+
+		for _, f := range res.FilesPatched {
+			modifiedSet[f] = true
+			patchedSet[f] = true
+		}
+
+		for _, f := range res.FilesFullRewritten {
+			modifiedSet[f] = true
+			fullRewrittenSet[f] = true
+		}
+	}
+
+	addFiles := func(res domain.Result) {
+		addResultFiles(
+			res,
+			created,
+			modified,
+			patched,
+			fullRewritten,
+		)
+
+		final.FilesCreated =
+			sortedKeys(created)
+
+		final.FilesModified =
+			sortedKeys(modified)
+
+		final.FilesPatched =
+			sortedKeys(patched)
+
+		final.FilesFullRewritten =
+			sortedKeys(fullRewritten)
+
+		final.OutputFiles =
+			mergeOutputFiles(
+				final.OutputFiles,
+				res.OutputFiles,
+			)
+	}
 
 	rollback := func(reason string) {
 		if opts.DryRun || checkpoint == nil {
-            state.CompletedSubtasks = 0
-            state.CurrentSubtask = 0
-            
-            if session != nil {
-            	if err := saveAgentState(
-            		session,
-            		state,
-            	); err != nil {
-            		final.AddWarning(
-            			fmt.Sprintf(
-            				"cannot save rollback state: %v",
-            				err,
-            			),
-            		)
-            	}
-            }
+			state.CompletedSubtasks = 0
+			state.CurrentSubtask = 0
+
+			if session != nil {
+				if err := saveAgentState(
+					session,
+					state,
+				); err != nil {
+					final.AddWarning(
+						fmt.Sprintf(
+							"cannot save rollback state: %v",
+							err,
+						),
+					)
+				}
+			}
 			return
 		}
 		sendEvent(emit, domain.EventWarn, "Rollback: "+reason)
@@ -612,16 +612,23 @@ func (s *Service) executeAgentFull(
 		subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
 		subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
 
+		if searchContext != "" {
+			taskForCoder +=
+				"\n\n" +
+					"IMPORTANT: Web research has already been performed for this subtask. " +
+					"Do not perform additional automatic research unless a new dependency " +
+					"or explicit new external-information need is discovered during validation."
+		}
 
 		res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
 		final.Iterations += res.Iterations
-        addFiles(res)
+		addFiles(res)
 
 		if !res.Success {
 			markPlan(i+1, domain.PlanFailed, truncate(strings.Join(res.Errors, "; "), 200))
 			final.Success = false
 			final.Errors = append(final.Errors, res.Errors...)
-            rollbackSubtask("subtask failed")
+			rollbackSubtask("subtask failed")
 			return final
 		}
 
@@ -677,9 +684,9 @@ func (s *Service) executeAgentFull(
 							err,
 						),
 					)
-                    rollbackSubtask(
-                    	"reviewer unavailable in deep mode",
-                    )
+					rollbackSubtask(
+						"reviewer unavailable in deep mode",
+					)
 					return final
 				}
 
@@ -692,16 +699,16 @@ func (s *Service) executeAgentFull(
 				issues := strings.Join(review.CriticalIssues, "; ")
 				sendEvent(emit, domain.EventWarn, "Reviewer found critical issues: "+issues)
 				fixTask := buildReviewFixTask(sub.Task, review)
-    			fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
-    			final.Iterations += fixRes.Iterations
-    			addFiles(fixRes)
+				fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
+				final.Iterations += fixRes.Iterations
+				addFiles(fixRes)
 				if !fixRes.Success {
 					markPlan(i+1, domain.PlanFailed, "fix after reviewer failed")
 					final.Success = false
 					final.Errors = append(final.Errors, fixRes.Errors...)
-                    rollbackSubtask(
-                    	"reviewer fix failed",
-                    )
+					rollbackSubtask(
+						"reviewer fix failed",
+					)
 					return final
 				}
 				itemStatus = domain.PlanWarn
@@ -717,21 +724,21 @@ func (s *Service) executeAgentFull(
 				domain.EventAgent,
 				"current stage: quality gates",
 			)
-    		// Собираем список изменённых файлов из результата подзадачи.
-    		changedFiles := make([]string, 0,
-    			len(res.FilesCreated)+len(res.FilesModified)+
-    				len(res.FilesPatched)+len(res.FilesFullRewritten))
-    		changedFiles = append(changedFiles, res.FilesCreated...)
-    		changedFiles = append(changedFiles, res.FilesModified...)
-    		changedFiles = append(changedFiles, res.FilesPatched...)
-    		changedFiles = append(changedFiles, res.FilesFullRewritten...)
-            gate := s.runAgentDeepQualityGates(
-	            ctx,
-	            emit,
-	            i+1,
-	            opts.NoTests,
-	            changedFiles,
-            )
+			// Собираем список изменённых файлов из результата подзадачи.
+			changedFiles := make([]string, 0,
+				len(res.FilesCreated)+len(res.FilesModified)+
+					len(res.FilesPatched)+len(res.FilesFullRewritten))
+			changedFiles = append(changedFiles, res.FilesCreated...)
+			changedFiles = append(changedFiles, res.FilesModified...)
+			changedFiles = append(changedFiles, res.FilesPatched...)
+			changedFiles = append(changedFiles, res.FilesFullRewritten...)
+			gate := s.runAgentDeepQualityGates(
+				ctx,
+				emit,
+				i+1,
+				opts.NoTests,
+				changedFiles,
+			)
 
 			final.QualityGates =
 				gate.toDomain()
@@ -761,45 +768,43 @@ func (s *Service) executeAgentFull(
 				)
 			}
 
-            if !gate.Passed {
-            // Проверяем, все ли ошибки — предсуществующие
-            allPreexisting := true
-            for _, e := range gate.Errors {
-            if !strings.Contains(e, "NEW") && !strings.Contains(e, "new issue") {
-            continue
-            }
-            allPreexisting = false
-            break
-            }
-            if allPreexisting && len(gate.Errors) > 0 {
-            // Все проблемы предсуществующие — предупреждаем, но не откатываем
-            sendEvent(
-            emit,
-            domain.EventWarn,
-            "Quality gates report issues in EXISTING code that were not introduced by this subtask. "+
-            "Consider running ':fix' or ':agent' to address them separately.",
-            )
-            itemStatus = domain.PlanWarn
-            itemNote = "pre-existing lint issues; subtask changes are valid"
-            } else {
-            markPlan(
-            i+1,
-            domain.PlanFailed,
-            "quality gates failed",
-            )
-            final.Success = false
-            final.Errors = append(
-            final.Errors,
-            gate.Errors...,
-            )
-            rollbackSubtask(
-            "agent deep quality gates failed",
-            )
-            return final
-            }
-            }
-
-
+			if !gate.Passed {
+				// Проверяем, все ли ошибки — предсуществующие
+				allPreexisting := true
+				for _, e := range gate.Errors {
+					if !strings.Contains(e, "NEW") && !strings.Contains(e, "new issue") {
+						continue
+					}
+					allPreexisting = false
+					break
+				}
+				if allPreexisting && len(gate.Errors) > 0 {
+					// Все проблемы предсуществующие — предупреждаем, но не откатываем
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						"Quality gates report issues in EXISTING code that were not introduced by this subtask. "+
+							"Consider running ':fix' or ':agent' to address them separately.",
+					)
+					itemStatus = domain.PlanWarn
+					itemNote = "pre-existing lint issues; subtask changes are valid"
+				} else {
+					markPlan(
+						i+1,
+						domain.PlanFailed,
+						"quality gates failed",
+					)
+					final.Success = false
+					final.Errors = append(
+						final.Errors,
+						gate.Errors...,
+					)
+					rollbackSubtask(
+						"agent deep quality gates failed",
+					)
+					return final
+				}
+			}
 
 		}
 
@@ -1113,23 +1118,23 @@ func (s *Service) executeAgentFull(
 			"current stage: final quality gates",
 		)
 
-        finalChangedFiles := make([]string, 0)
-        for _, f := range final.FilesCreated {
-	        finalChangedFiles = append(finalChangedFiles, f)
-        }
-        for _, f := range final.FilesModified {
-	        finalChangedFiles = append(finalChangedFiles, f)
-        }
-        for _, f := range final.FilesPatched {
-	        finalChangedFiles = append(finalChangedFiles, f)
-        }
-        finalGate := s.runAgentDeepQualityGates(
-	        ctx,
-	        emit,
-	        0,
-	        opts.NoTests,
-	        finalChangedFiles,
-        )
+		finalChangedFiles := make([]string, 0)
+		for _, f := range final.FilesCreated {
+			finalChangedFiles = append(finalChangedFiles, f)
+		}
+		for _, f := range final.FilesModified {
+			finalChangedFiles = append(finalChangedFiles, f)
+		}
+		for _, f := range final.FilesPatched {
+			finalChangedFiles = append(finalChangedFiles, f)
+		}
+		finalGate := s.runAgentDeepQualityGates(
+			ctx,
+			emit,
+			0,
+			opts.NoTests,
+			finalChangedFiles,
+		)
 
 		final.QualityGates =
 			finalGate.toDomain()
@@ -1167,7 +1172,6 @@ func (s *Service) executeAgentFull(
 	// Только теперь задача считается успешно выполненной.
 	// -----------------------------------------------------------
 
-
 	if !opts.DryRun &&
 		!opts.NoCommit &&
 		s.Cfg.AutoGitCommit {
@@ -1197,20 +1201,20 @@ func (s *Service) executeAgentFull(
 		}
 	}
 
-    completedForReport := 0
-    totalForReport := len(plan.Subtasks)
-    
-    if state != nil {
-    	completedForReport =
-    		state.CompletedSubtasks
-    }
-    
-    final.Response = formatAgentTaskReport(
-    	final,
-    	depth,
-    	completedForReport,
-    	totalForReport,
-    )
+	completedForReport := 0
+	totalForReport := len(plan.Subtasks)
+
+	if state != nil {
+		completedForReport =
+			state.CompletedSubtasks
+	}
+
+	final.Response = formatAgentTaskReport(
+		final,
+		depth,
+		completedForReport,
+		totalForReport,
+	)
 
 	final.PreTaskHead = preTaskHead
 	s.lastPreTaskHead = preTaskHead
@@ -1383,14 +1387,14 @@ func (s *Service) planFullOrFallback(
 	if len(clean) > 7 {
 		clean = clean[:7]
 	}
-    plan.Subtasks = clean
-    
-    validated := validateAgentPlan(
-    	&plan,
-    	query,
-    )
-    
-    return s.limitAgentPlan(validated)
+	plan.Subtasks = clean
+
+	validated := validateAgentPlan(
+		&plan,
+		query,
+	)
+
+	return s.limitAgentPlan(validated)
 }
 
 func (s *Service) runReviewer(

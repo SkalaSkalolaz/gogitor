@@ -582,6 +582,35 @@ func stringSet(items []string) map[string]bool {
 	return set
 }
 
+func appendUniqueStrings(
+	base []string,
+	values ...string,
+) []string {
+	if len(values) == 0 {
+		return base
+	}
+
+	seen := make(
+		map[string]struct{},
+		len(base)+len(values),
+	)
+
+	for _, item := range base {
+		seen[item] = struct{}{}
+	}
+
+	for _, item := range values {
+		if _, ok := seen[item]; ok {
+			continue
+		}
+
+		seen[item] = struct{}{}
+		base = append(base, item)
+	}
+
+	return base
+}
+
 func checkpointPathDepth(path string) int {
 	clean := filepath.Clean(path)
 

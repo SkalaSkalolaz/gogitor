@@ -130,6 +130,113 @@ func (r *Runner) Test(ctx context.Context, dir string) (domain.TestsStatus, erro
 	return status, nil
 }
 
+func (r *Runner) TestPackages(
+	ctx context.Context,
+	dir string,
+	packageDirs []string,
+) (domain.TestsStatus, error) {
+	status := domain.TestsStatus{}
+
+	if !hasGoFiles(dir) {
+		status.Skipped = true
+		return status, nil
+	}
+
+	if err := r.PrepareGoModule(ctx, dir); err != nil {
+		return status, err
+	}
+
+	r.ResolveDeps(ctx, dir)
+
+	var outputs []string
+	var coverages []float64
+
+	for _, pkgDir := range packageDirs {
+		pkgDir = filepath.ToSlash(filepath.Clean(pkgDir))
+
+		target := "."
+		if pkgDir != "." {
+			target = "./" + pkgDir
+		}
+
+		out, err := r.run(
+			ctx,
+			dir,
+			"go",
+			"test",
+			"-v",
+			"-cover",
+			target,
+		)
+
+		status.Run = true
+
+		outputs = append(
+			outputs,
+			"PACKAGE "+target+"\n"+trim(out, 6000),
+		)
+
+		if strings.Contains(out, "[no test files]") {
+			continue
+		}
+
+		passed, failed := parseGoTestOutput(out)
+		status.Passed += passed
+		status.Failed += failed
+
+		if coverage, _ := parseGoCoverage(out); coverage > 0 {
+			coverages = append(coverages, coverage)
+		}
+
+		failures := parseGoTestFailures(out)
+		for i := range failures {
+			failures[i].Package = target
+		}
+		status.Failures = append(
+			status.Failures,
+			failures...,
+		)
+
+		if err != nil && failed == 0 {
+			status.Failed++
+
+			if len(failures) == 0 {
+				status.Failures = append(
+					status.Failures,
+					domain.TestFailure{
+						Package: target,
+						Message: trim(out, 4000),
+					},
+				)
+			}
+		}
+
+		if ctx.Err() != nil {
+			return status, ctx.Err()
+		}
+	}
+
+	if len(outputs) == 0 {
+		status.Skipped = true
+		status.Run = false
+	} else {
+		status.Output = trim(
+			strings.Join(outputs, "\n\n"),
+			20000,
+		)
+	}
+
+	if len(coverages) > 0 {
+		var total float64
+		for _, value := range coverages {
+			total += value
+		}
+		status.Coverage = total / float64(len(coverages))
+	}
+
+	return status, nil
+}
+
 func (r *Runner) Lint(ctx context.Context, dir string) (string, error) {
 	if !hasGoFiles(dir) {
 		return "", nil
@@ -342,6 +449,13 @@ func shouldRetryDependencyViaProxy(output string) bool {
 	}
 
 	return false
+}
+
+// IsDependencyFetchError сообщает, похож ли вывод на ошибку
+// получения внешней Go-зависимости, для которой имеет смысл
+// дополнительное диагностическое исследование.
+func IsDependencyFetchError(output string) bool {
+	return shouldRetryDependencyViaProxy(output)
 }
 
 // depsLog вызывает колбэк, если он установлен.

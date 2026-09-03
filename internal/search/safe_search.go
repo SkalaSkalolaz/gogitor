@@ -2,12 +2,12 @@ package search
 
 import (
 	"context"
-    "path/filepath"
-	"os"
-    "encoding/json"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -32,7 +32,7 @@ type SafeSearchConfig struct {
 func DefaultSafeSearchConfig() SafeSearchConfig {
 	return SafeSearchConfig{
 		Enabled:                    false,
-		MaxSearchesPerSession:      3,
+		MaxSearchesPerSession:      5,
 		MaxSourcesPerSearch:        3,
 		MaxContentPerSource:        5000,
 		MaxTotalContent:            15000,
@@ -42,8 +42,11 @@ func DefaultSafeSearchConfig() SafeSearchConfig {
 			"pkg.go.dev",
 			"go.dev",
 			"golang.org",
-			"stackoverflow.com",
 			"github.com",
+			"docs.github.com",
+			"vuln.go.dev",
+			"golangci-lint.run",
+			"stackoverflow.com",
 			"developer.mozilla.org",
 			"en.wikipedia.org",
 			"ru.wikipedia.org",
@@ -265,7 +268,7 @@ func isSafeURL(rawURL string) bool {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return false
 	}
-	
+
 	host := strings.ToLower(u.Hostname())
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "localhost.localdomain" {
 		return false

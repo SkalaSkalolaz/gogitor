@@ -258,163 +258,39 @@ func (s *Service) searchForSubtask(
 	task string,
 	emit func(domain.Event),
 ) (string, error) {
-	sendEvent(emit, domain.EventLog,
-		"Auto-search: looking up reference material for subtask...")
+	kind := classifyAutoResearch(
+		task,
+		"",
+	)
 
-	result, err := s.SafeSearch.Search(ctx, task)
-	if err != nil {
-		sendEvent(emit, domain.EventWarn,
-			fmt.Sprintf("Auto-search failed (non-fatal): %v", err))
-		return "", err
-	}
-
-	formatted := search.FormatForPrompt(result)
-	sendEvent(emit, domain.EventLog,
-		fmt.Sprintf("Auto-search: found %d source(s)", len(result.Sources)))
-	return formatted, nil
+	return s.autoResearch(
+		ctx,
+		AutoResearchRequest{
+			Kind: kind,
+			Task: task,
+		},
+		emit,
+	)
 }
 
 func (s *Service) searchForDependency(
 	ctx context.Context,
-	sandbox string,
+	_ string,
 	importPath string,
 	errorText string,
 	emit func(domain.Event),
 ) (string, error) {
-	if !s.Cfg.AutoSearch {
-		return "", nil
-	}
-
-	if s.SafeSearch == nil {
-		return "", nil
-	}
-
-	importPath = strings.TrimSpace(importPath)
-	if importPath == "" {
-		return "", nil
-	}
-
-	sendEvent(
-		emit,
-		domain.EventLog,
-		"Auto-search: dependency resolution failed; researching package/module...",
-	)
-
-	var b strings.Builder
-
-	fmt.Fprintf(
-		&b,
-		`Find authoritative information about the Go dependency "%s".
-
-The project failed while resolving this dependency.
-
-Determine:
-1. whether "%s" is a valid current Go import path;
-2. which Go module provides that package;
-3. whether the module path differs from the import path;
-4. whether a major-version suffix such as /v2 is required;
-5. which currently valid version should be used;
-6. whether the reported error is caused by an invalid package path,
-   a module/version mismatch, or Git/SSH transport/authentication.
-
-IMPORTANT:
-- Prefer pkg.go.dev, go.dev, the official project repository,
-  or other authoritative technical sources.
-- the official project repository
-- official project documentation
-- Do not invent a module path or version.
-- The search result will be used only as technical evidence for
-  a later code-repair step.
-
-PACKAGE:
-%s
-
-ERROR:
-%s
-`,
-		importPath,
-		importPath,
-		importPath,
-		truncate(errorText, 3000),
-	)
-
-	if data, err := os.ReadFile(
-		filepath.Join(sandbox, "go.mod"),
-	); err == nil {
-		goMod := textutil.TruncateStringBytes(
-			string(data),
-			5000,
-		)
-
-		b.WriteString("\nCURRENT go.mod:\n")
-		b.WriteString(goMod)
-		b.WriteString("\n")
-	}
-
-	question := b.String()
-
-	searchQuery := question
-
-	sqCtx := llm.WithReasoningDisabled(ctx)
-
-	if generated, err := s.LLM.Send(
-		sqCtx,
-		prompts.SearchQuery(question),
-	); err == nil {
-		generated = strings.TrimSpace(generated)
-
-		if generated != "" {
-			searchQuery = generated
-		}
-	}
-
-	sendEvent(
-		emit,
-		domain.EventLog,
-		fmt.Sprintf(
-			"Auto-search: dependency query: %s",
-			truncate(searchQuery, 300),
-		),
-	)
-
-	result, err := s.SafeSearch.Search(
+	return s.autoResearch(
 		ctx,
-		searchQuery,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	formatted := search.FormatForPrompt(result)
-
-	// Не даём одному dependency-research раздувать
-	// repair prompt до полного лимита search subsystem.
-	formatted = textutil.TruncateStringBytes(
-		formatted,
-		12000,
-	)
-
-	if strings.TrimSpace(formatted) == "" {
-		return "", nil
-	}
-
-	var out strings.Builder
-
-	out.WriteString(
-		"AUTO-SEARCH DEPENDENCY RESEARCH:\n",
-	)
-	out.WriteString("Package: ")
-	out.WriteString(importPath)
-	out.WriteString("\n\n")
-	out.WriteString(formatted)
-
-	sendEvent(
+		AutoResearchRequest{
+			Kind:    AutoResearchDependency,
+			Subject: importPath,
+			Error:   errorText,
+			Task: "Resolve the external Go dependency and determine " +
+				"the correct current module/import path and version.",
+		},
 		emit,
-		domain.EventLog,
-		"Auto-search: dependency research added to repair context",
 	)
-
-	return out.String(), nil
 }
 
 // Close освобождает ресурсы сервиса: LLM-диспетчер и файловый watcher проекта.
@@ -1532,6 +1408,22 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	patchPolicy :=
 		s.patchPolicyForOptions(opts)
 
+	patchProtocol := workspace.PatchProtocolForModel(
+		s.Cfg.Provider,
+		s.Cfg.Model,
+		s.Cfg.PatchProtocolMode,
+	)
+
+	sourceSnapshot, snapshotErr :=
+		s.WS.CaptureProjectSnapshot()
+
+	if snapshotErr != nil {
+		result.AddError(fmt.Sprintf(
+			"cannot capture patch source snapshot: %v",
+			snapshotErr,
+		))
+		return result
+	}
 	if opts.AgentDepth == AgentDepthDeep {
 		sendEvent(
 			emit,
@@ -1545,6 +1437,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	defaultPath := defaultPath(query, targetFiles)
 	var lastErrors []string
 	var lastChanges []domain.FileChange
+
+	var initialResearchContext string
+	var initialResearchAttempted bool
 
 	// ─── Новые переменные для управления patch-режимом ──────────────
 	forceFull := false
@@ -1572,6 +1467,28 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	}
 
 	for i := 1; i <= maxIterations; i++ {
+		if patchProtocol == workspace.PatchProtocolReplaceOnly &&
+			forceFull {
+
+			if len(lastErrors) == 0 {
+				lastErrors = []string{
+					"safe patch repair exhausted; refusing full-file fallback for REPLACE_ONLY",
+				}
+			}
+
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				"REPLACE_ONLY patch recovery exhausted; refusing full-file rewrite.",
+			)
+
+			result.Success = false
+			result.Errors = append(
+				result.Errors,
+				lastErrors...,
+			)
+			break
+		}
 		result.Iterations = i
 		result.FilesCreated = nil
 		result.FilesModified = nil
@@ -1611,10 +1528,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
 				if !forceFull {
 					sendEvent(emit, domain.EventLog, "Using patch mode for existing project files")
-					prompt = prompts.CodeModifyDiffForModel(
+					prompt = prompts.CodeModifyDiffForModelWithProtocol(
 						query,
 						originalContext,
 						patchPolicy.String(),
+						patchProtocol.String(),
 					)
 					usePatchPrompt = true
 				} else {
@@ -1638,7 +1556,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			sendEvent(emit, domain.EventLog,
 				fmt.Sprintf("Patch applied but caused error. Requesting patch fix (attempt %d/%d)",
 					patchFixAttempts, maxPatchFixAttempts))
-			prompt = prompts.CodeFixPatch(query, originalContext, lastPatchContent, strings.Join(lastErrors, "\n"))
+			prompt = prompts.CodeFixPatchWithProtocol(
+				query,
+				originalContext,
+				lastPatchContent,
+				strings.Join(lastErrors, "\n"),
+				patchProtocol.String(),
+			)
 			usePatchPrompt = true
 			patchRepairPending = false
 			patchAppliedSuccessfully = false
@@ -1654,8 +1578,49 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			usePatchPrompt = false
 		}
 
-		prompt = s.appendProjectInstructions(prompt)
+		if i == 1 &&
+			!initialResearchAttempted &&
+			s.Cfg.AutoSearch &&
+			shouldAutoResearchCodeTask(query) {
 
+			initialResearchAttempted = true
+
+			researchContext, researchErr :=
+				s.autoResearchForCodeTask(
+					ctx,
+					query,
+					emit,
+				)
+
+			if researchErr != nil {
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					fmt.Sprintf(
+						"Auto-search failed (non-fatal): %v",
+						researchErr,
+					),
+				)
+			} else if strings.TrimSpace(researchContext) != "" {
+				initialResearchContext =
+					researchContext
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Auto-research context added to coding task.",
+				)
+			}
+		}
+
+		if initialResearchContext != "" {
+			prompt =
+				strings.TrimSpace(prompt) +
+					"\n\n" +
+					initialResearchContext
+		}
+
+		prompt = s.appendProjectInstructions(prompt)
 		sendEvent(
 			emit,
 			domain.EventLog,
@@ -1701,14 +1666,24 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		}
 
 		var changes []domain.FileChange
+
 		if usePatchPrompt {
 			changes = codegen.ParseResponseWithPatches(response)
 			patchAttempted = true
 		} else {
-			changes = codegen.ParseResponseWithOptions(response, defaultPath, allowFallback)
+			changes = codegen.ParseResponseWithOptions(
+				response,
+				defaultPath,
+				allowFallback,
+			)
 		}
-		patchModeChanges := hasPatches(changes)
 
+		changes = s.WS.BindSourceSnapshot(
+			changes,
+			sourceSnapshot,
+		)
+
+		patchModeChanges := hasPatches(changes)
 		if len(changes) == 0 {
 			if usePatchPrompt {
 				lastErrors = []string{
@@ -1776,11 +1751,6 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			continue
 		}
 		lastChanges = changes
-
-		// Сохраняем содержимое патча для возможного запроса на исправление.
-		if patchModeChanges {
-			lastPatchContent = formatPatchContent(changes)
-		}
 
 		createdSet := map[string]bool{}
 		modifiedSet := map[string]bool{}
@@ -1850,6 +1820,92 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 			continue
 		}
+		preparedChanges, preflight, preflightErr :=
+			s.WS.PreflightChanges(
+				sandbox,
+				changes,
+				patchPolicy,
+				s.Cfg.FuzzyMinConfidence,
+			)
+
+		if preflightErr != nil {
+			_ = os.RemoveAll(sandbox)
+			lastErrors = []string{preflightErr.Error()}
+
+			if patchModeChanges || usePatchPrompt {
+				if patchFixAttempts < maxPatchFixAttempts {
+					patchRepairPending = true
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						"Patch preflight rejected. Requesting corrected patch.",
+					)
+				} else {
+					forceFull = true
+				}
+			}
+			continue
+		}
+
+		changes = preparedChanges
+
+		if preflight != nil {
+			sendEvent(
+				emit,
+				domain.EventLog,
+				fmt.Sprintf(
+					"Patch preflight: files=%d patch_files=%d blocks=%d changed_lines=%d changed_bytes=%d",
+					preflight.Files,
+					preflight.PatchFiles,
+					preflight.PatchBlocks,
+					preflight.ChangedLines,
+					preflight.ChangedBytes,
+				),
+			)
+		}
+
+		if patchModeChanges && shouldAuditPatch(
+			s.Cfg.PatchAuditorMode,
+			patchProtocol,
+			opts.AgentDepth == AgentDepthDeep,
+		) {
+			audit, auditErr := s.auditPatch(
+				ctx,
+				query,
+				originalContext,
+				changes,
+			)
+
+			if auditErr != nil {
+				_ = os.RemoveAll(sandbox)
+				lastErrors = []string{auditErr.Error()}
+				patchRepairPending = true
+				continue
+			}
+
+			if !audit.Approved {
+				_ = os.RemoveAll(sandbox)
+
+				msg := "Patch Auditor rejected generated patch"
+				if len(audit.CriticalIssues) > 0 {
+					msg += ": " +
+						strings.Join(
+							audit.CriticalIssues,
+							"; ",
+						)
+				}
+
+				lastErrors = []string{msg}
+				patchRepairPending = true
+				continue
+			}
+
+			sendEvent(
+				emit,
+				domain.EventLog,
+				"Patch Auditor approved generated patch",
+			)
+		}
 
 		if err := s.WS.ApplyChangesSmartWithPolicy(
 			sandbox,
@@ -1857,6 +1913,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			patchPolicy,
 			s.Cfg.FuzzyMinConfidence,
 		); err != nil {
+
 			_ = os.RemoveAll(sandbox)
 			lastErrors = []string{err.Error()}
 			if patchModeChanges || usePatchPrompt {
@@ -1955,6 +2012,59 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 
 			continue
+		}
+
+		if !opts.NoTests && patchModeChanges {
+			packageDirs := s.WS.AffectedPackageDirs(
+				sandbox,
+				changes,
+			)
+
+			if len(packageDirs) > 0 {
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Running affected package tests",
+				)
+
+				targeted, targetedErr := s.Runner.TestPackages(
+					ctx,
+					sandbox,
+					packageDirs,
+				)
+
+				if targetedErr != nil ||
+					targeted.Failed > 0 {
+
+					_ = os.RemoveAll(sandbox)
+
+					if targetedErr != nil {
+						lastErrors = []string{
+							targetedErr.Error(),
+						}
+					} else {
+						lastErrors = []string{
+							"affected package tests failed",
+							runner.FormatFeedback(targeted),
+						}
+					}
+
+					if patchModeChanges ||
+						usePatchPrompt {
+
+						if patchFixAttempts <
+							maxPatchFixAttempts {
+
+							patchAppliedSuccessfully = true
+							continue
+						}
+
+						forceFull = true
+					}
+
+					continue
+				}
+			}
 		}
 
 		if !opts.NoTests {

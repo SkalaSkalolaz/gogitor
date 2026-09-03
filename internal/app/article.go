@@ -10,7 +10,6 @@ import (
 	"gogitor/internal/i18n"
 	"gogitor/internal/llm"
 	"gogitor/internal/prompts"
-	"gogitor/internal/search"
 )
 
 // ArticleMode — режим генерации статьи.
@@ -64,6 +63,21 @@ func (s *Service) Article(
 
 	// Определяем жанр и параметры.
 	genre, needWeb, needProject := s.articleClassify(ctx, topic, lang, emit)
+
+	if !needWeb &&
+		s.Cfg.AutoSearch &&
+		shouldAutoResearchArticle(
+			topic,
+			genre,
+		) {
+		needWeb = true
+
+		sendEvent(
+			emit,
+			domain.EventLog,
+			"Auto-search: current external information is required for this article.",
+		)
+	}
 
 	sendEvent(emit, domain.EventLog,
 		fmt.Sprintf("Article mode: genre=%s, web_search=%v, project_context=%v",
@@ -168,23 +182,40 @@ func (s *Service) articleWebSearch(
 	topic string,
 	emit func(domain.Event),
 ) string {
-	if s.SafeSearch == nil {
-		return ""
+	kind := classifyAutoResearch(
+		topic,
+		"",
+	)
+
+	if kind == AutoResearchGeneral {
+		kind = AutoResearchDocumentation
 	}
 
-	sendEvent(emit, domain.EventLog, "Searching web for article context...")
+	research, err :=
+		s.autoResearch(
+			ctx,
+			AutoResearchRequest{
+				Kind:    kind,
+				Task:    "Collect current authoritative information needed to write accurate documentation or article text.",
+				Subject: topic,
+			},
+			emit,
+		)
 
-	result, err := s.SafeSearch.Search(ctx, topic)
 	if err != nil {
-		sendEvent(emit, domain.EventWarn,
-			fmt.Sprintf("Web search failed (non-fatal): %v", err))
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			fmt.Sprintf(
+				"Web search failed (non-fatal): %v",
+				err,
+			),
+		)
+
 		return ""
 	}
 
-	sendEvent(emit, domain.EventLog,
-		fmt.Sprintf("Web search: found %d source(s)", len(result.Sources)))
-
-	return search.FormatForPrompt(result)
+	return research
 }
 
 // articleSimple — генерация короткого текста (один LLM-вызов).

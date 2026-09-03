@@ -240,35 +240,71 @@ func applyOnePatchWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
+	replaceOnly := p.ReplaceOnly
+
+	// Hash проверяется по исходным байтам, до normalizeNewlines.
+	if p.ExpectedSourceHash != "" &&
+		hashBytes([]byte(content)) != p.ExpectedSourceHash {
+		return "", fmt.Errorf("expected source hash does not match current file")
+	}
+
 	search := trimPatchLines(normalizeNewlines(p.Search))
 	replace := trimPatchLines(normalizeNewlines(p.Replace))
+
+	// REPLACE_ONLY: старый SEARCH строит Gogitor,
+	// а не маленькая модель.
+	if replaceOnly && search == "" {
+		if strings.TrimSpace(p.Symbol) == "" {
+			return "", fmt.Errorf("REPLACE_ONLY patch requires Symbol")
+		}
+
+		if p.ExpectedSymbolFingerprint != "" {
+			fp, err := SymbolFingerprint(content, p.Symbol)
+			if err != nil {
+				return "", err
+			}
+			if fp != p.ExpectedSymbolFingerprint {
+				return "", fmt.Errorf(
+					"symbol %q changed since patch generation",
+					p.Symbol,
+				)
+			}
+		}
+
+		start, end, err := findSymbolRange(content, p.Symbol)
+		if err != nil {
+			return "", err
+		}
+
+		search = content[start:end]
+
+		if err := validateReplacementForSymbol(
+			replace,
+			p.Symbol,
+		); err != nil {
+			return "", err
+		}
+	}
 
 	if search == "" {
 		return "", fmt.Errorf("empty SEARCH block")
 	}
 
-	if patchSearchTooLarge(search, policy) {
+	// Для REPLACE_ONLY старое ограничение strict=10 строк
+	// не применяется: полный Symbol может быть больше.
+	if !replaceOnly && patchSearchTooLarge(search, policy) {
 		return "", fmt.Errorf(
 			"strict SEARCH block is too large: %d lines, maximum 10",
 			strings.Count(search, "\n")+1,
 		)
 	}
-
 	if patchRequiresSymbol(p, policy) &&
 		strings.TrimSpace(p.Symbol) == "" {
-		// Пытаемся автоматически определить якорь через AST.
-		autoSymbol, autoErr := detectSymbolForSearch(content, search)
-		if autoErr == nil && autoSymbol != "" {
-			p.Symbol = autoSymbol
-		} else {
-			return "", fmt.Errorf(
-				"strict patch requires Symbol anchor for SEARCH block with %d lines (auto-detection failed: %v)",
-				strings.Count(search, "\n")+1,
-				autoErr,
-			)
-		}
+		return "", fmt.Errorf(
+			"strict patch requires Symbol anchor for SEARCH block with %d lines",
+			strings.Count(search, "\n")+1,
+		)
 	}
-
 	if strings.TrimSpace(p.Symbol) != "" {
 		start, end, err := findSymbolRange(content, p.Symbol)
 		if err != nil {
@@ -449,7 +485,23 @@ func applyPatchText(
 	}
 
 	// ------------------------------------------------------------
-	// 4. FUZZY — только Balanced / Advanced
+	// 4. REBASE — сначала пытаемся найти блок по стабильному
+	// уникальному anchor. Это безопаснее полноценного fuzzy.
+	// Strict режим намеренно пропускает этот этап.
+	// ------------------------------------------------------------
+	if policy != PatchPolicyStrict {
+		if rebased := findRebasedBlock(origLines, searchLines); rebased != nil {
+			return replaceLineRange(
+				origLines,
+				rebased.StartLine,
+				rebased.StartLine+len(searchLines),
+				replace,
+			), true, nil
+		}
+	}
+
+	// ------------------------------------------------------------
+	// 5. FUZZY — только Balanced / Advanced
 	// ------------------------------------------------------------
 	if policy == PatchPolicyStrict {
 		return "", false, nil
@@ -460,9 +512,9 @@ func applyPatchText(
 		return "", false, nil
 	}
 
-    if !hasUniqueExactAnchor(origLines, searchLines) {
-    	return "", false, nil
-    }
+	if !hasUniqueExactAnchor(origLines, searchLines) {
+		return "", false, nil
+	}
 
 	threshold, requiredMargin := fuzzyThresholds(
 		policy,
@@ -1021,10 +1073,13 @@ func PatchConfidence(content, search string) float64 {
 }
 
 func patchRequiresSymbol(p domain.Patch, policy PatchPolicy) bool {
+	if p.ReplaceOnly {
+		return true
+	}
+
 	if policy != PatchPolicyStrict {
 		return false
 	}
-
 	lines := strings.Count(strings.TrimSpace(p.Search), "\n") + 1
 
 	return lines >= 4

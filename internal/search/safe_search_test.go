@@ -18,7 +18,10 @@ func TestSanitizeSearchQuery(t *testing.T) {
 }
 
 func TestSanitizeQueryFromSecrets(t *testing.T) {
-	for _, tc := range []struct{ name, query string; wantThreats bool }{
+	for _, tc := range []struct {
+		name, query string
+		wantThreats bool
+	}{
 		{"password", "connect db password=secret123", true},
 		{"api key", "api_key=sk-1234567890abcdef", true},
 		{"private key", "-----BEGIN PRIVATE KEY-----", true},
@@ -60,7 +63,10 @@ func TestSanitizeWebContent(t *testing.T) {
 }
 
 func TestIsSafeURL(t *testing.T) {
-	for _, tc := range []struct{ url string; want bool }{
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
 		{"https://example.com", true},
 		{"http://example.com", true},
 		{"ftp://example.com", false},

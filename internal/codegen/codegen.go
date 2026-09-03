@@ -2,8 +2,8 @@ package codegen
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
-    "path/filepath"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/security"
@@ -13,6 +13,8 @@ const (
 	patchSearchStart      = "<<<<<<< SEARCH"
 	patchReplaceSeparator = "======="
 	patchReplaceEnd       = ">>>>>>> REPLACE"
+	patchReplaceOnlyStart = "<<<<<<< REPLACE_ONLY"
+	patchReplaceOnlyEnd   = ">>>>>>> REPLACE_ONLY"
 )
 
 func ParseResponseWithOptions(response, fallbackPath string, allowFallback bool) []domain.FileChange {
@@ -180,29 +182,29 @@ func Validate(changes []domain.FileChange, root string) error {
 	if len(changes) == 0 {
 		return fmt.Errorf("no file changes found")
 	}
-    seenPaths := make(map[string]int, len(changes))
-    
-    for i, ch := range changes {
-    	path := strings.TrimSpace(ch.Path)
-    
-    	if path == "" {
-    		return fmt.Errorf(
-    			"empty file path in LLM response",
-    		)
-    	}
-    
-    	normalizedPath := filepath.Clean(path)
-    
-    	if prev, ok := seenPaths[normalizedPath]; ok {
-    		return fmt.Errorf(
-    			"duplicate file change for %q (entries %d and %d)",
-    			path,
-    			prev+1,
-    			i+1,
-    		)
-    	}
-    
-    	seenPaths[normalizedPath] = i
+	seenPaths := make(map[string]int, len(changes))
+
+	for i, ch := range changes {
+		path := strings.TrimSpace(ch.Path)
+
+		if path == "" {
+			return fmt.Errorf(
+				"empty file path in LLM response",
+			)
+		}
+
+		normalizedPath := filepath.Clean(path)
+
+		if prev, ok := seenPaths[normalizedPath]; ok {
+			return fmt.Errorf(
+				"duplicate file change for %q (entries %d and %d)",
+				path,
+				prev+1,
+				i+1,
+			)
+		}
+
+		seenPaths[normalizedPath] = i
 
 		if len(ch.Patches) == 0 {
 			if strings.TrimSpace(ch.Content) == "" {
@@ -210,8 +212,40 @@ func Validate(changes []domain.FileChange, root string) error {
 			}
 		} else {
 			for i, p := range ch.Patches {
+				if p.ReplaceOnly {
+					if strings.TrimSpace(p.Search) != "" {
+						return fmt.Errorf(
+							"REPLACE_ONLY patch %d for file %s must not contain SEARCH",
+							i+1,
+							ch.Path,
+						)
+					}
+
+					if strings.TrimSpace(p.Symbol) == "" {
+						return fmt.Errorf(
+							"REPLACE_ONLY patch %d for file %s requires Symbol",
+							i+1,
+							ch.Path,
+						)
+					}
+
+					if strings.TrimSpace(p.Replace) == "" {
+						return fmt.Errorf(
+							"empty REPLACE_ONLY body %d for file %s",
+							i+1,
+							ch.Path,
+						)
+					}
+
+					continue
+				}
+
 				if strings.TrimSpace(p.Search) == "" {
-					return fmt.Errorf("empty SEARCH block %d for file %s", i+1, ch.Path)
+					return fmt.Errorf(
+						"empty SEARCH block %d for file %s",
+						i+1,
+						ch.Path,
+					)
 				}
 			}
 		}
@@ -219,7 +253,6 @@ func Validate(changes []domain.FileChange, root string) error {
 			return fmt.Errorf("invalid file path %s: %w", ch.Path, err)
 		}
 	}
-
 
 	return nil
 }
@@ -257,8 +290,39 @@ func isReplaceEnd(trimmed string) bool {
 	return upper == "REPLACE" || strings.HasPrefix(upper, "REPLACE")
 }
 
+func isReplaceOnlyStart(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, "<") {
+		return false
+	}
+
+	rest := strings.TrimSpace(
+		strings.TrimLeft(trimmed, "<"),
+	)
+
+	return strings.EqualFold(
+		rest,
+		"REPLACE_ONLY",
+	)
+}
+
+func isReplaceOnlyEnd(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, ">") {
+		return false
+	}
+
+	rest := strings.TrimSpace(
+		strings.TrimLeft(trimmed, ">"),
+	)
+
+	return strings.EqualFold(
+		rest,
+		"REPLACE_ONLY",
+	)
+}
+
 func ParseResponseWithPatches(response string) []domain.FileChange {
 	lines := strings.Split(response, "\n")
+
 	var files []domain.FileChange
 	var current *domain.FileChange
 	var content []string
@@ -266,76 +330,161 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 	inPatch := false
 	inSearch := false
 	inReplace := false
+	inReplaceOnly := false
+
 	var searchLines []string
 	var replaceLines []string
-    var patchSymbol string
+
+	// Symbol, расположенный после --- Patch: ... ---,
+	// ожидает открытия следующего patch block.
+	var pendingSymbol string
+
+	// Symbol, реально принадлежащий текущему patch block.
+	var currentPatchSymbol string
 
 	flushPatch := func() {
 		if !inPatch || current == nil {
 			inPatch = false
 			inSearch = false
 			inReplace = false
+			inReplaceOnly = false
+
 			searchLines = nil
 			replaceLines = nil
+
+			currentPatchSymbol = ""
+
 			return
 		}
+
 		p := domain.Patch{
-			Search:  trimPatch(strings.Join(searchLines, "\n")),
-			Replace: trimPatch(strings.Join(replaceLines, "\n")),
-            Symbol:  patchSymbol,
+			Search: trimPatch(
+				strings.Join(searchLines, "\n"),
+			),
+			Replace: trimPatch(
+				strings.Join(replaceLines, "\n"),
+			),
+			Symbol:      currentPatchSymbol,
+			ReplaceOnly: inReplaceOnly,
 		}
-		if strings.TrimSpace(p.Search) != "" || strings.TrimSpace(p.Replace) != "" {
-			current.Patches = append(current.Patches, p)
+
+		// В REPLACE_ONLY SEARCH принципиально отсутствует.
+		if inReplaceOnly {
+			p.Search = ""
 		}
+
+		if strings.TrimSpace(p.Search) != "" ||
+			strings.TrimSpace(p.Replace) != "" {
+
+			current.Patches =
+				append(
+					current.Patches,
+					p,
+				)
+		}
+
 		inPatch = false
 		inSearch = false
 		inReplace = false
+		inReplaceOnly = false
+
 		searchLines = nil
 		replaceLines = nil
-		patchSymbol = ""
+
+		currentPatchSymbol = ""
 	}
 
 	flushFile := func() {
 		if current == nil {
 			return
 		}
+
 		if len(current.Patches) > 0 {
 			current.PatchMode = true
 			current.Content = ""
 		} else {
-			current.Content = CleanCode(strings.Join(content, "\n"))
+			current.Content =
+				CleanCode(
+					strings.Join(
+						content,
+						"\n",
+					),
+				)
 		}
-		if len(current.Patches) > 0 || strings.TrimSpace(current.Content) != "" {
-			files = append(files, *current)
+
+		if len(current.Patches) > 0 ||
+			strings.TrimSpace(current.Content) != "" {
+
+			files = append(
+				files,
+				*current,
+			)
 		}
+
 		current = nil
 		content = nil
+
+		pendingSymbol = ""
 	}
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		if path := extractMarker(trimmed, "--- Patch:"); path != "" {
+		// ---------------------------------------------------------
+		// PATCH FILE HEADER
+		// ---------------------------------------------------------
+		if path :=
+			extractMarker(
+				trimmed,
+				"--- Patch:",
+			); path != "" {
+
 			flushPatch()
 			flushFile()
+
 			current = &domain.FileChange{
 				Path:      path,
 				PatchMode: true,
 			}
+
 			continue
 		}
 
-        if symbol := extractPatchSymbol(trimmed); symbol != "" {
-        	patchSymbol = symbol
-        	continue
-        }
+		// ---------------------------------------------------------
+		// SYMBOL
+		// ---------------------------------------------------------
+		if symbol :=
+			extractPatchSymbol(trimmed); symbol != "" {
 
-		if path := extractMarker(trimmed, "--- File:"); path != "" {
+			if inPatch {
+				// Теоретически допускаем Symbol внутри блока.
+				currentPatchSymbol = symbol
+			} else {
+				// Нормальный случай:
+				// --- Symbol: main ---
+				// <<<<<<< SEARCH
+				pendingSymbol = symbol
+			}
+
+			continue
+		}
+
+		// ---------------------------------------------------------
+		// FULL FILE HEADER
+		// ---------------------------------------------------------
+		if path :=
+			extractMarker(
+				trimmed,
+				"--- File:",
+			); path != "" {
+
 			flushPatch()
 			flushFile()
+
 			current = &domain.FileChange{
 				Path: path,
 			}
+
 			continue
 		}
 
@@ -343,39 +492,106 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 			continue
 		}
 
+		// ---------------------------------------------------------
+		// PATCH CONTENT
+		// ---------------------------------------------------------
 		if current.PatchMode || inPatch {
+
 			switch {
+
+			// REPLACE_ONLY
+			case isReplaceOnlyStart(trimmed):
+				flushPatch()
+
+				inPatch = true
+				inSearch = false
+				inReplace = false
+				inReplaceOnly = true
+
+				currentPatchSymbol = pendingSymbol
+				pendingSymbol = ""
+
+				continue
+
+			// SEARCH
 			case isSearchMarker(trimmed):
 				flushPatch()
+
 				inPatch = true
 				inSearch = true
 				inReplace = false
+				inReplaceOnly = false
+
+				// Критический момент:
+				// Symbol фиксируется именно здесь.
+				currentPatchSymbol = pendingSymbol
+				pendingSymbol = ""
+
 				continue
-			case isReplaceSeparator(trimmed) && inPatch && inSearch:
+
+			// SEARCH -> REPLACE
+			case isReplaceSeparator(trimmed) &&
+				inPatch &&
+				inSearch:
+
 				inSearch = false
 				inReplace = true
+
 				continue
-			case isReplaceEnd(trimmed) && inPatch && inReplace:
+
+			// REPLACE_ONLY end
+			case isReplaceOnlyEnd(trimmed) &&
+				inPatch &&
+				inReplaceOnly:
+
 				flushPatch()
+
+				continue
+
+			// обычный REPLACE end
+			case isReplaceEnd(trimmed) &&
+				inPatch &&
+				inReplace:
+
+				flushPatch()
+
 				continue
 			}
 
 			if inPatch {
+
 				if inSearch {
-					searchLines = append(searchLines, line)
-				} else if inReplace {
-					replaceLines = append(replaceLines, line)
+					searchLines =
+						append(
+							searchLines,
+							line,
+						)
+
+				} else if inReplace ||
+					inReplaceOnly {
+
+					replaceLines =
+						append(
+							replaceLines,
+							line,
+						)
 				}
+
 				continue
 			}
+
 			continue
 		}
 
-		content = append(content, line)
+		content = append(
+			content,
+			line,
+		)
 	}
 
 	flushPatch()
 	flushFile()
+
 	return files
 }
 

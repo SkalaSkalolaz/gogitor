@@ -47,6 +47,8 @@ type Config struct {
 	DepsMode                     string                          `json:"deps_mode"`
 	ConfirmApply                 bool                            `json:"confirm_apply"`
 	FuzzyMinConfidence           float64                         `json:"fuzzy_min_confidence"`
+	PatchProtocolMode            string                          `json:"patch_protocol_mode"`
+	PatchAuditorMode             string                          `json:"patch_auditor_mode"`
 	ComputerEnabled              bool                            `json:"computer_enabled"`
 	ComputerAllowSudo            bool                            `json:"computer_allow_sudo"`
 	ComputerConfirmHigh          bool                            `json:"computer_confirm_high"`
@@ -85,10 +87,12 @@ func Default() *Config {
 		AutoSearch:                   false,
 		AgentModelProfile:            "auto",
 		AgentDeepComplexityThreshold: 6,
-        AgentModelCapabilities:       defaultAgentModelCapabilities(),
+		AgentModelCapabilities:       defaultAgentModelCapabilities(),
 		DepsMode:                     "auto",
 		ConfirmApply:                 false,
 		FuzzyMinConfidence:           0,
+		PatchProtocolMode:            "auto",
+		PatchAuditorMode:             "auto",
 		ComputerEnabled:              false,
 		ComputerAllowSudo:            false,
 		ComputerConfirmHigh:          true,
@@ -341,6 +345,13 @@ func (c *Config) loadEnv() {
 	if v := os.Getenv("GOGITOR_CONFIRM_APPLY"); v != "" {
 		c.ConfirmApply = parseBool(v)
 	}
+	if v := os.Getenv("GOGITOR_PATCH_PROTOCOL"); v != "" {
+		c.PatchProtocolMode = strings.TrimSpace(v)
+	}
+
+	if v := os.Getenv("GOGITOR_PATCH_AUDITOR"); v != "" {
+		c.PatchAuditorMode = strings.TrimSpace(v)
+	}
 	if v := os.Getenv("GOGITOR_COMPUTER_ENABLED"); v != "" {
 		c.ComputerEnabled = parseBool(v)
 	}
@@ -482,6 +493,15 @@ func (c *Config) loadLocal() {
 	if v, ok := local["fuzzy_min_confidence"].(float64); ok && v > 0 {
 		c.FuzzyMinConfidence = v
 	}
+	if v, ok := local["patch_protocol_mode"].(string); ok &&
+		strings.TrimSpace(v) != "" {
+		c.PatchProtocolMode = strings.TrimSpace(v)
+	}
+
+	if v, ok := local["patch_auditor_mode"].(string); ok &&
+		strings.TrimSpace(v) != "" {
+		c.PatchAuditorMode = strings.TrimSpace(v)
+	}
 	if v, ok := local["computer_enabled"].(bool); ok {
 		c.ComputerEnabled = v
 	}
@@ -522,6 +542,26 @@ func (c *Config) Validate() error {
 		return fmt.Errorf(
 			"unsupported provider %q; supported: ollama, openai+http(s)://..., openai-compatible+http(s)://..., or http(s) URL for Ollama-compatible server",
 			c.Provider,
+		)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.PatchProtocolMode)) {
+	case "", "auto",
+		"search_replace", "search-replace",
+		"replace_only", "replace-only":
+	default:
+		return fmt.Errorf(
+			"invalid patch_protocol_mode %q; use auto, search_replace, or replace_only",
+			c.PatchProtocolMode,
+		)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.PatchAuditorMode)) {
+	case "", "auto", "off", "always":
+	default:
+		return fmt.Errorf(
+			"invalid patch_auditor_mode %q; use auto, off, or always",
+			c.PatchAuditorMode,
 		)
 	}
 	return nil

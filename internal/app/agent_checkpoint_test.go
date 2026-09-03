@@ -3,12 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
-	"gogitor/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
-	// "gogitor/internal/security"
 	"testing"
+
+	"gogitor/internal/config"
+	"gogitor/internal/workspace"
 )
 
 func TestProjectInstructions(t *testing.T) {
@@ -113,16 +114,20 @@ func TestRollbackAgentCheckpointRestoresActualTree(
 		t.Fatal(err)
 	}
 
-	checkpointDir := t.TempDir()
+	svc := &Service{
+		Cfg: &config.Config{
+			WorkDir: root,
+		},
+		WS: workspace.New(root),
+	}
+	defer svc.WS.Close()
 
-	if err := copyDir(
+	checkpointDir, err := svc.WS.PrepareSandbox(
 		context.Background(),
-		root,
-		checkpointDir,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-
 	// Меняем существующий файл.
 	if err := os.WriteFile(
 		original,
@@ -162,12 +167,6 @@ func TestRollbackAgentCheckpointRestoresActualTree(
 
 	if err := os.Remove(deleted); err != nil {
 		t.Fatal(err)
-	}
-
-	svc := &Service{
-		Cfg: &config.Config{
-			WorkDir: root,
-		},
 	}
 
 	cp := &agentCheckpoint{
