@@ -742,65 +742,160 @@ func (w *Workspace) AffectedPackageDirs(dir string, changes []domain.FileChange)
 	return out
 }
 
-// findRebasedBlock relocates a patch by a unique stable line anchor before the
-// more permissive fuzzy matcher is considered.
-func findRebasedBlock(origLines, searchLines []string) *fuzzyMatch {
-	if len(searchLines) == 0 || len(searchLines) > len(origLines) {
+// findRebasedBlock relocates an exact patch block by stable unique anchors.
+//
+// REBASE не является fuzzy matching.
+//
+// Его задача — найти ТОТ ЖЕ САМЫЙ SEARCH-блок,
+// который был перемещён в другое место файла.
+//
+// Допускаются только различия, уже предусмотренные
+// normalizeLineForCompare(), например:
+//   - tabs vs spaces;
+//   - лишние пробелы в начале/конце строки.
+//
+// Содержательные отличия строк REBASE не допускает.
+// Если содержимое изменилось, управление должно перейти
+// в обычный fuzzy matcher, где действуют его собственные
+// confidence и ambiguity thresholds.
+func findRebasedBlock(
+	origLines,
+	searchLines []string,
+) *fuzzyMatch {
+	if len(searchLines) == 0 ||
+		len(searchLines) > len(origLines) {
 		return nil
 	}
 
+	// Нормализованная строка -> все её позиции.
 	frequency := make(map[string][]int)
+
 	for i, line := range origLines {
 		key := normalizeLineForCompare(line)
+
 		if strings.TrimSpace(key) == "" {
 			continue
 		}
-		frequency[key] = append(frequency[key], i)
+
+		frequency[key] = append(
+			frequency[key],
+			i,
+		)
 	}
 
 	type candidate struct {
 		start int
 		sim   float64
 	}
-	var candidates []candidate
 
-	for rel, line := range searchLines {
-		key := normalizeLineForCompare(line)
+	// Несколько anchor-строк могут указывать на один
+	// и тот же StartLine. Это один кандидат.
+	candidatesByStart := make(map[int]candidate)
+
+	for rel, searchLine := range searchLines {
+		key := normalizeLineForCompare(searchLine)
+
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+
 		positions := frequency[key]
+
+		// Для REBASE anchor обязан быть уникальным.
 		if len(positions) != 1 {
 			continue
 		}
+
 		start := positions[0] - rel
-		if start < 0 || start+len(searchLines) > len(origLines) {
+
+		if start < 0 ||
+			start+len(searchLines) > len(origLines) {
 			continue
 		}
-		sim := lineSimilarity(origLines[start:start+len(searchLines)], searchLines)
-		if sim < 0.75 {
+
+		actual := origLines[start : start+len(searchLines)]
+
+		sim := lineSimilarity(
+			actual,
+			searchLines,
+		)
+
+		// КРИТИЧЕСКОЕ ПРАВИЛО:
+		//
+		// REBASE принимает только полностью совпадающий
+		// после нормализации блок.
+		//
+		// Если sim = 0.67, 0.75, 0.90 и т.п.,
+		// это уже НЕ REBASE.
+		//
+		// Такой случай должен попасть в FUZZY,
+		// где Balanced потребует confidence >= 0.82.
+		if sim < 1.0 {
 			continue
 		}
-		candidates = append(candidates, candidate{start: start, sim: sim})
+
+		existing, exists :=
+			candidatesByStart[start]
+
+		if !exists ||
+			sim > existing.sim {
+
+			candidatesByStart[start] =
+				candidate{
+					start: start,
+					sim:   sim,
+				}
+		}
 	}
 
-	if len(candidates) == 0 {
+	if len(candidatesByStart) == 0 {
 		return nil
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].sim != candidates[j].sim {
-			return candidates[i].sim > candidates[j].sim
-		}
-		return candidates[i].start < candidates[j].start
-	})
+
+	candidates :=
+		make(
+			[]candidate,
+			0,
+			len(candidatesByStart),
+		)
+
+	for _, c := range candidatesByStart {
+		candidates = append(
+			candidates,
+			c,
+		)
+	}
+
+	sort.Slice(
+		candidates,
+		func(i, j int) bool {
+			if candidates[i].sim != candidates[j].sim {
+				return candidates[i].sim >
+					candidates[j].sim
+			}
+
+			return candidates[i].start <
+				candidates[j].start
+		},
+	)
+
+	best := candidates[0]
+
+	secondBest := 0.0
 
 	if len(candidates) > 1 {
-		margin := candidates[0].sim - candidates[1].sim
-		if margin < 0.10 {
+		secondBest = candidates[1].sim
+
+		// Два действительно разных места с одинаково
+		// хорошим совпадением означают неоднозначность.
+		if best.sim-secondBest < 0.10 {
 			return nil
 		}
 	}
 
 	return &fuzzyMatch{
-		StartLine:  candidates[0].start,
-		Similarity: candidates[0].sim,
-		SecondBest: 0,
+		StartLine:  best.start,
+		Similarity: best.sim,
+		SecondBest: secondBest,
 	}
 }

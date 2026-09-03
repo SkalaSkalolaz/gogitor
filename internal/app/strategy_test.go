@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"gogitor/internal/config"
+	"gogitor/internal/workspace"
 )
 
 func TestDeepAgentUsesStrictPatchPolicy(
@@ -58,8 +59,10 @@ func TestNormalizeAgentDepth(
 					"normalizeAgentDepth(%q) = %v, want %v",
 					tt.in,
 					got,
+					tt.want,
 				)
 			}
+
 		})
 	}
 }

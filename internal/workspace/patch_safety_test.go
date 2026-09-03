@@ -232,6 +232,158 @@ func TestFindRebasedBlock(t *testing.T) {
 	}
 }
 
+func TestFindRebasedBlock_MultipleAnchorsSameBlock(
+	t *testing.T,
+) {
+	orig := []string{
+		"package main",
+		"",
+		"func A() {",
+		"\tprintln(\"a\")",
+		"}",
+		"",
+		"func B() {",
+		"\tprintln(\"b\")",
+		"\tprintln(\"c\")",
+		"}",
+	}
+
+	search := []string{
+		"func B() {",
+		"\tprintln(\"b\")",
+		"\tprintln(\"c\")",
+		"}",
+	}
+
+	m := findRebasedBlock(
+		orig,
+		search,
+	)
+
+	if m == nil {
+		t.Fatal(
+			"expected rebased block",
+		)
+	}
+
+	if m.StartLine != 6 {
+		t.Fatalf(
+			"StartLine = %d, want 6",
+			m.StartLine,
+		)
+	}
+
+	if m.Similarity != 1.0 {
+		t.Fatalf(
+			"Similarity = %.2f, want 1.0",
+			m.Similarity,
+		)
+	}
+}
+
+func TestFindRebasedBlock_WhitespaceChange(
+	t *testing.T,
+) {
+	orig := []string{
+		"package main",
+		"",
+		"func B() {",
+		"    println(\"b\")",
+		"    println(\"c\")",
+		"}",
+	}
+
+	search := []string{
+		"func B() {",
+		"\tprintln(\"b\")",
+		"\tprintln(\"c\")",
+		"}",
+	}
+
+	m := findRebasedBlock(
+		orig,
+		search,
+	)
+
+	if m == nil {
+		t.Fatal(
+			"expected rebased block despite indentation difference",
+		)
+	}
+
+	if m.StartLine != 2 {
+		t.Fatalf(
+			"StartLine = %d, want 2",
+			m.StartLine,
+		)
+	}
+}
+
+func TestFindRebasedBlock_RejectsAmbiguousLocations(
+	t *testing.T,
+) {
+	orig := []string{
+		"package main",
+		"",
+		"func A() {",
+		"\tprintln(\"same\")",
+		"}",
+		"",
+		"func B() {",
+		"\tprintln(\"same\")",
+		"}",
+	}
+
+	search := []string{
+		"\tprintln(\"same\")",
+		"}",
+	}
+
+	m := findRebasedBlock(
+		orig,
+		search,
+	)
+
+	if m != nil {
+		t.Fatalf(
+			"expected ambiguous REBASE to be rejected, got %+v",
+			m,
+		)
+	}
+}
+
+func TestFindRebasedBlock_RejectsWeakMatch(
+	t *testing.T,
+) {
+	orig := []string{
+		"package main",
+		"",
+		"func B() {",
+		"\tprintln(\"different\")",
+		"\tprintln(\"another\")",
+		"}",
+	}
+
+	search := []string{
+		"func B() {",
+		"\tprintln(\"b\")",
+		"\tprintln(\"c\")",
+		"}",
+	}
+
+	m := findRebasedBlock(
+		orig,
+		search,
+	)
+
+	if m != nil {
+		t.Fatalf(
+			"expected weak REBASE match to be rejected, got %+v",
+			m,
+		)
+	}
+}
+
 func TestAffectedPackageDirs(t *testing.T) {
 	ws := New(t.TempDir())
 	got := ws.AffectedPackageDirs(ws.Root, []domain.FileChange{
