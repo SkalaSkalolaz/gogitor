@@ -508,74 +508,37 @@ func (s *Service) executeAgentFull(
 		)
 
 		markPlan(i+1, domain.PlanRunning, "")
-
-        var subtaskCheckpoint *agentCheckpoint
-        
-        subtaskCreated := map[string]bool{}
-        subtaskModified := map[string]bool{}
-        subtaskPatched := map[string]bool{}
-        subtaskFullRewritten := map[string]bool{}
-        
-        if !opts.DryRun {
-        	subtaskCheckpoint, err =
-        		s.createAgentCheckpoint(ctx)
-        
-        	if err != nil {
-        		final.Success = false
-        
-        		final.AddError(
-        			fmt.Sprintf(
-        				"cannot create checkpoint for subtask %d: %v",
-        				i+1,
-        				err,
-        			),
-        		)
-        
-        		rollback(
-        			"cannot create subtask checkpoint",
-        		)
-        
-        		return final
-        	}
-        }
-
-        rollbackSubtask := func(reason string) {
-        if opts.DryRun ||
-        subtaskCheckpoint == nil {
-        return
-        }
-        sendEvent(
-        emit,
-        domain.EventWarn,
-        "Subtask rollback: "+reason,
-        )
-        // Откатываем только файлы, созданные/изменённые ТЕКУЩЕЙ подзадачей.
-        // Файлы предыдущих подзадач сохраняются.
-        // Это гарантирует, что успешные изменения предыдущих шагов не теряются.
-        err := s.rollbackAgentCheckpoint(
-        subtaskCheckpoint,
-        sortedKeys(subtaskCreated),
-        sortedKeys(subtaskModified),
-        )
-
-
-        	if err != nil {
-        		final.AddWarning(
-        			fmt.Sprintf(
-        				"subtask rollback failed: %v",
-        				err,
-        			),
-        		)
-        	} else {
-        		final.AddWarning(
-        			"current subtask changes were rolled back; previous subtasks preserved",
-        		)
-        	}
-        
-        	subtaskCheckpoint.cleanup()
-        	subtaskCheckpoint = nil
-        }
-
+		rollbackSubtask := func(reason string) {
+			if opts.DryRun || checkpoint == nil {
+				return
+			}
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				"Subtask rollback: "+reason,
+			)
+			// checkpoint — скользящий: он уже содержит состояние
+			// после последней успешной подзадачи. Откат к нему
+			// убирает только изменения текущей подзадачи.
+			err := s.rollbackAgentCheckpoint(
+				checkpoint,
+				nil, // created — не используется (совместимость)
+				nil, // modified — не используется (совместимость)
+			)
+			if err != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"subtask rollback failed: %v",
+						err,
+					),
+				)
+			} else {
+				final.AddWarning(
+					"current subtask changes were rolled back; " +
+						"previous subtasks preserved",
+				)
+			}
+		}
 		subOpts := opts
 		subOpts.NoCommit = true
 		subOpts.ProgressItem = i + 1
@@ -648,21 +611,11 @@ func (s *Service) executeAgentFull(
 		subCtx := agent.WithRole(ctx, agent.RoleCoder)
 		subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
 		subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
-        recordSubtaskFiles := func(res domain.Result) {
-        	addResultFiles(
-        		res,
-        		subtaskCreated,
-        		subtaskModified,
-        		subtaskPatched,
-        		subtaskFullRewritten,
-        	)
-        
-        	addFiles(res)
-        }
+
 
 		res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
 		final.Iterations += res.Iterations
-		recordSubtaskFiles(res)
+        addFiles(res)
 
 		if !res.Success {
 			markPlan(i+1, domain.PlanFailed, truncate(strings.Join(res.Errors, "; "), 200))
@@ -739,9 +692,9 @@ func (s *Service) executeAgentFull(
 				issues := strings.Join(review.CriticalIssues, "; ")
 				sendEvent(emit, domain.EventWarn, "Reviewer found critical issues: "+issues)
 				fixTask := buildReviewFixTask(sub.Task, review)
-				fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
-				final.Iterations += fixRes.Iterations
-				recordSubtaskFiles(fixRes)
+    			fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
+    			final.Iterations += fixRes.Iterations
+    			addFiles(fixRes)
 				if !fixRes.Success {
 					markPlan(i+1, domain.PlanFailed, "fix after reviewer failed")
 					final.Success = false
@@ -764,20 +717,14 @@ func (s *Service) executeAgentFull(
 				domain.EventAgent,
 				"current stage: quality gates",
 			)
-            // Собираем список изменённых файлов для текущей подзадачи
-            changedFiles := make([]string, 0)
-            for f := range subtaskCreated {
-	            changedFiles = append(changedFiles, f)
-            }
-            for f := range subtaskModified {
-	            changedFiles = append(changedFiles, f)
-            }
-            for f := range subtaskPatched {
-	            changedFiles = append(changedFiles, f)
-            }
-            for f := range subtaskFullRewritten {
-	            changedFiles = append(changedFiles, f)
-            }
+    		// Собираем список изменённых файлов из результата подзадачи.
+    		changedFiles := make([]string, 0,
+    			len(res.FilesCreated)+len(res.FilesModified)+
+    				len(res.FilesPatched)+len(res.FilesFullRewritten))
+    		changedFiles = append(changedFiles, res.FilesCreated...)
+    		changedFiles = append(changedFiles, res.FilesModified...)
+    		changedFiles = append(changedFiles, res.FilesPatched...)
+    		changedFiles = append(changedFiles, res.FilesFullRewritten...)
             gate := s.runAgentDeepQualityGates(
 	            ctx,
 	            emit,
@@ -856,38 +803,93 @@ func (s *Service) executeAgentFull(
 
 		}
 
+		// ─── Скользящий чекпоинт ──────────────────────────
+		// Все проверки пройдены. Фиксируем текущее состояние
+		// проекта как новую безопасную точку.
+		if !opts.DryRun && checkpoint != nil {
+			if cpErr := s.updateAgentCheckpoint(
+				ctx,
+				checkpoint,
+			); cpErr != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"checkpoint update failed after subtask %d: %v",
+						i+1,
+						cpErr,
+					),
+				)
+			}
+		}
+
+		// ─── Промежуточный git-коммит (только normal) ─────
+		// Deep-режим сохраняет атомарность: коммит создаётся
+		// только один раз в самом конце.
+		if depth == AgentDepthNormal &&
+			!opts.DryRun &&
+			!opts.NoCommit &&
+			s.Cfg.AutoGitCommit {
+
+			commitMsg := fmt.Sprintf(
+				"[agent] subtask %d/%d: %s",
+				i+1,
+				len(plan.Subtasks),
+				truncate(sub.Task, 60),
+			)
+			if hash, cErr := s.Git.AutoCommit(
+				ctx,
+				commitMsg,
+			); cErr != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"subtask %d git commit failed: %v",
+						i+1,
+						cErr,
+					),
+				)
+			} else if hash != "" {
+				state.SubtaskCommits = append(
+					state.SubtaskCommits,
+					hash,
+				)
+				sendEvent(
+					emit,
+					domain.EventLog,
+					fmt.Sprintf(
+						"Subtask %d/%d committed: %s",
+						i+1,
+						len(plan.Subtasks),
+						hash,
+					),
+				)
+			}
+		}
+
+		// ─── Статус и сохранение состояния ────────────────
 		markPlan(
 			i+1,
 			itemStatus,
 			itemNote,
 		)
-
-        completedSubtasks = i + 1
-        
-        state.CompletedSubtasks =
-        	completedSubtasks
-        
-        state.CurrentSubtask =
-        	completedSubtasks
-        
-        if session != nil {
-        	if err := saveAgentState(
-        		session,
-        		state,
-        	); err != nil {
-        		final.AddWarning(
-        			fmt.Sprintf(
-        				"cannot save agent progress: %v",
-        				err,
-        			),
-        		)
-        	}
-        }
-        
-        if subtaskCheckpoint != nil {
-        	subtaskCheckpoint.cleanup()
-        	subtaskCheckpoint = nil
-        }
+		completedSubtasks = i + 1
+		state.CompletedSubtasks =
+			completedSubtasks
+		state.CurrentSubtask =
+			completedSubtasks
+		if session != nil {
+			if err := saveAgentState(
+				session,
+				state,
+			); err != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"cannot save agent progress: %v",
+						err,
+					),
+				)
+			}
+		}
+		// Подзадачный чекпоинт больше не создаётся —
+		// очистка не требуется.
 
 	}
 

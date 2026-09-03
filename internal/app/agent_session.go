@@ -47,6 +47,7 @@ type agentSessionState struct {
 	GitCommit         string     `json:"git_commit,omitempty"`
 	UndoCommit        string     `json:"undo_commit,omitempty"`
 	ResumedFrom       string     `json:"resumed_from,omitempty"`
+    SubtaskCommits []string `json:"subtask_commits,omitempty"`
 }
 
 func (r agentGateReport) toDomain() domain.QualityGateStatus {

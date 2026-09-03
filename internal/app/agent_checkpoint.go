@@ -543,6 +543,37 @@ func (s *Service) rollbackAgentCheckpoint(
 	return nil
 }
 
+// updateAgentCheckpoint реализует механизм «скользящего чекпоинта».
+func (s *Service) updateAgentCheckpoint(
+	ctx context.Context,
+	cp *agentCheckpoint,
+) error {
+	if cp == nil || cp.Dir == "" {
+		return nil
+	}
+
+	// 1. Создаём свежую копию проекта через существующий механизм.
+	newDir, err := s.WS.PrepareSandbox(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare new checkpoint snapshot: %w", err)
+	}
+
+	// 2. Удаляем старый чекпоинт.
+	oldDir := cp.Dir
+	if err := os.RemoveAll(oldDir); err != nil {
+		_ = os.RemoveAll(newDir)
+		return fmt.Errorf("remove old checkpoint: %w", err)
+	}
+
+	// 3. Переименовываем новый снимок на место старого.
+	if err := os.Rename(newDir, oldDir); err != nil {
+		_ = os.RemoveAll(newDir)
+		return fmt.Errorf("rename checkpoint dir: %w", err)
+	}
+
+	return nil
+}
+
 func stringSet(items []string) map[string]bool {
 	set := make(map[string]bool, len(items))
 	for _, item := range items {
