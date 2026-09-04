@@ -80,6 +80,15 @@ func TestStrictPatchRejectsLargeSearch(t *testing.T) {
 	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !strings.Contains(
+		err.Error(),
+		"patch_error_code=strict_search_too_large",
+	) {
+		t.Fatalf(
+			"expected strict_search_too_large error code, got: %v",
+			err,
+		)
+	}
 }
 
 func TestStrictPatchDoesNotUseFuzzy(t *testing.T) {

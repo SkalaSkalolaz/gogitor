@@ -9,6 +9,100 @@ import (
 	"gogitor/internal/domain"
 )
 
+func TestApplyPatchTextCoreRejectsNoOpPatch(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+}
+`
+
+	search := `println("hello")`
+
+	updated, matched, err :=
+		applyPatchTextCore(
+			content,
+			search,
+			search,
+			PatchPolicyStrict,
+			0,
+			domain.DefaultDiffMatchingConfig(),
+			nil,
+		)
+
+	if err == nil {
+		t.Fatal(
+			"expected no-op patch error",
+		)
+	}
+
+	if matched {
+		t.Fatal(
+			"no-op patch must not be reported as matched",
+		)
+	}
+
+	if updated != "" {
+		t.Fatalf(
+			"updated = %q, want empty",
+			updated,
+		)
+	}
+
+	code :=
+		domain.PatchErrorCodeFromError(err)
+
+	if code != domain.PatchErrorNoOpPatch {
+		t.Fatalf(
+			"error code = %q, want %q",
+			code,
+			domain.PatchErrorNoOpPatch,
+		)
+	}
+}
+
+func TestApplyPatchTextCoreExactNoOp(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+}
+`
+
+	updated, matched, err :=
+		applyPatchTextCore(
+			content,
+			`println("hello")`,
+			`println("hello")`,
+			PatchPolicyStrict,
+			0,
+			domain.DefaultDiffMatchingConfig(),
+			nil,
+		)
+
+	if err == nil {
+		t.Fatal(
+			"expected no-op error",
+		)
+	}
+
+	if matched {
+		t.Fatal(
+			"expected matched=false",
+		)
+	}
+
+	if updated != "" {
+		t.Fatal(
+			"expected empty updated content",
+		)
+	}
+}
+
 func TestPatchProtocolForModel(t *testing.T) {
 	tests := []struct {
 		provider string
@@ -475,6 +569,144 @@ func main() {
 		t.Fatalf(
 			"patch count = %d, want 2",
 			len(got),
+		)
+	}
+}
+
+func TestSemanticScopeAllowsNewCalledUnexportedFunction(t *testing.T) {
+	before := `package main
+
+func main() {
+	println("old")
+}
+`
+
+	after := `package main
+
+func main() {
+	registerRoutes()
+}
+
+func registerRoutes() {
+	println("new")
+}
+`
+
+	patches := []domain.Patch{{
+		Symbol: "main",
+		Search: `func main() {
+	println("old")
+}`,
+		Replace: `func main() {
+	registerRoutes()
+}`,
+	}}
+
+	if err := validateSemanticScope(
+		before,
+		after,
+		patches,
+		"main.go",
+	); err != nil {
+		t.Fatalf(
+			"expected new called helper to be allowed: %v",
+			err,
+		)
+	}
+}
+
+func TestSemanticScopeRejectsNewUncalledFunction(t *testing.T) {
+	before := `package main
+
+func main() {
+	println("old")
+}
+`
+
+	after := `package main
+
+func main() {
+	println("old")
+}
+
+func helper() {
+	println("new")
+}
+`
+
+	patches := []domain.Patch{{
+		Symbol: "main",
+		Search: `func main() {
+	println("old")
+}`,
+		Replace: `func main() {
+	println("old")
+}`,
+	}}
+
+	err := validateSemanticScope(
+		before,
+		after,
+		patches,
+		"main.go",
+	)
+
+	if err == nil {
+		t.Fatal(
+			"expected uncalled new helper to be rejected",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"func:helper",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+}
+
+func TestSemanticScopeRejectsNewExportedFunction(t *testing.T) {
+	before := `package main
+
+func main() {
+	registerRoutes()
+}
+`
+
+	after := `package main
+
+func main() {
+	RegisterRoutes()
+}
+
+func RegisterRoutes() {
+	println("new")
+}
+`
+
+	patches := []domain.Patch{{
+		Symbol: "main",
+		Search: `func main() {
+	registerRoutes()
+}`,
+		Replace: `func main() {
+	RegisterRoutes()
+}`,
+	}}
+
+	err := validateSemanticScope(
+		before,
+		after,
+		patches,
+		"main.go",
+	)
+
+	if err == nil {
+		t.Fatal(
+			"expected exported new helper to be rejected",
 		)
 	}
 }

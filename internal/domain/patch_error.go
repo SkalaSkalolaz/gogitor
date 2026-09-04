@@ -18,8 +18,17 @@ const (
 	// PatchErrorStrictSymbolRequired означает,
 	// что strict policy требует Symbol для SEARCH-блока.
 	PatchErrorStrictSymbolRequired PatchErrorCode = "strict_symbol_required"
-    PatchErrorSymbolNotFound PatchErrorCode = "symbol_not_found"
 
+	// PatchErrorStrictSearchTooLarge означает,
+	// что SEARCH-блок превышает strict-лимит.
+	PatchErrorStrictSearchTooLarge PatchErrorCode = "strict_search_too_large"
+
+	PatchErrorSymbolNotFound PatchErrorCode = "symbol_not_found"
+
+	// PatchErrorNoOpPatch означает, что SEARCH/REPLACE
+	// формально сопоставились, но итоговый файл фактически
+	// не изменился.
+	PatchErrorNoOpPatch PatchErrorCode = "no_op_patch"
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -123,9 +132,13 @@ func PatchErrorCodeFromText(
 	case PatchErrorStrictSymbolRequired:
 		return PatchErrorStrictSymbolRequired
 
-    case PatchErrorSymbolNotFound:
-    	return PatchErrorSymbolNotFound
+	case PatchErrorStrictSearchTooLarge:
+		return PatchErrorStrictSearchTooLarge
 
+	case PatchErrorSymbolNotFound:
+		return PatchErrorSymbolNotFound
+	case PatchErrorNoOpPatch:
+		return PatchErrorNoOpPatch
 	default:
 		return ""
 	}

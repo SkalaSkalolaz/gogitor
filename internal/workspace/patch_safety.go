@@ -488,54 +488,115 @@ func estimateChangedLines(before, after string) int {
 	return oldMiddle + newMiddle
 }
 
-func validateSemanticScope(before, after string, patches []domain.Patch, path string) error {
+func validateSemanticScope(
+	before,
+	after string,
+	patches []domain.Patch,
+	path string,
+) error {
 	if len(patches) == 0 || !isGoPath(path) {
 		return nil
 	}
 
 	allowed := make(map[string]bool)
+
 	for _, p := range patches {
 		if symbol := normalizePatchSymbol(p.Symbol); symbol != "" {
 			allowed[declarationKey(symbol)] = true
 		}
 	}
+
 	if len(allowed) == 0 {
 		return nil
 	}
 
 	beforeDecls, err := goDeclarationFingerprints(before)
 	if err != nil {
-		return fmt.Errorf("semantic scope %s: parse before: %w", path, err)
+		return fmt.Errorf(
+			"semantic scope %s: parse before: %w",
+			path,
+			err,
+		)
 	}
+
 	afterDecls, err := goDeclarationFingerprints(after)
 	if err != nil {
-		return fmt.Errorf("semantic scope %s: parse after: %w", path, err)
+		return fmt.Errorf(
+			"semantic scope %s: parse after: %w",
+			path,
+			err,
+		)
+	}
+
+	calls, err := goDeclarationCalls(after)
+	if err != nil {
+		return fmt.Errorf(
+			"semantic scope %s: parse calls: %w",
+			path,
+			err,
+		)
+	}
+
+	// Разрешаем ограниченный класс новых приватных helper-функций:
+	//
+	//   func main() {
+	//       registerRoutes()
+	//   }
+	//
+	//   func registerRoutes() {
+	//       ...
+	//   }
+	//
+	// registerRoutes() не является исходным Symbol,
+	// но является непосредственной частью требуемого
+	// структурного рефакторинга.
+	for key := range afterDecls {
+		if newScopedFunctionAllowed(
+			key,
+			beforeDecls,
+			afterDecls,
+			allowed,
+			calls,
+		) {
+			allowed[key] = true
+		}
 	}
 
 	var unexpected []string
+
 	all := make(map[string]bool, len(beforeDecls)+len(afterDecls))
-	for k := range beforeDecls {
-		all[k] = true
+
+	for key := range beforeDecls {
+		all[key] = true
 	}
-	for k := range afterDecls {
-		all[k] = true
+
+	for key := range afterDecls {
+		all[key] = true
 	}
-	for k := range all {
-		if beforeDecls[k] == afterDecls[k] {
+
+	for key := range all {
+		if beforeDecls[key] == afterDecls[key] {
 			continue
 		}
-		if !allowed[k] {
-			unexpected = append(unexpected, k)
+
+		if !allowed[key] {
+			unexpected = append(
+				unexpected,
+				key,
+			)
 		}
 	}
 
 	if len(unexpected) > 0 {
 		sort.Strings(unexpected)
+
 		return fmt.Errorf(
-			"semantic scope %s: unrelated declarations changed: %s",
-			path, strings.Join(unexpected, ", "),
+			"patch_error_code=semantic_scope: semantic scope %s: unrelated declarations changed: %s",
+			path,
+			strings.Join(unexpected, ", "),
 		)
 	}
+
 	return nil
 }
 
@@ -692,18 +753,14 @@ func goDeclarationFingerprints(content string) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
+
 		case *ast.FuncDecl:
-			if d.Name == nil {
+			key := goFuncDeclarationKey(d)
+			if key == "" {
 				continue
 			}
-			name := d.Name.Name
-			if d.Recv != nil && len(d.Recv.List) > 0 {
-				if recv := receiverTypeName(d.Recv.List[0].Type); recv != "" {
-					name = recv + "." + name
-				}
-			}
-			out["func:"+name] = nodeFingerprint(fset, d)
 
+			out[key] = nodeFingerprint(fset, d)
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				switch s := spec.(type) {
@@ -723,6 +780,122 @@ func goDeclarationFingerprints(content string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func goFuncDeclarationKey(d *ast.FuncDecl) string {
+	if d == nil || d.Name == nil {
+		return ""
+	}
+
+	name := d.Name.Name
+
+	if d.Recv != nil && len(d.Recv.List) > 0 {
+		if recv := receiverTypeName(d.Recv.List[0].Type); recv != "" {
+			name = recv + "." + name
+		}
+	}
+
+	return "func:" + name
+}
+
+func goDeclarationCalls(content string) (map[string]map[string]bool, error) {
+	fset := token.NewFileSet()
+
+	file, err := parser.ParseFile(
+		fset,
+		"calls.go",
+		[]byte(content),
+		parser.ParseComments,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]map[string]bool)
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name == nil || fn.Body == nil {
+			continue
+		}
+
+		key := goFuncDeclarationKey(fn)
+		if key == "" {
+			continue
+		}
+
+		called := make(map[string]bool)
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			switch expr := call.Fun.(type) {
+			case *ast.Ident:
+				if expr.Name != "" {
+					called[expr.Name] = true
+				}
+
+			case *ast.SelectorExpr:
+				if expr.Sel != nil && expr.Sel.Name != "" {
+					called[expr.Sel.Name] = true
+				}
+			}
+
+			return true
+		})
+
+		out[key] = called
+	}
+
+	return out, nil
+}
+
+func newScopedFunctionAllowed(
+	key string,
+	beforeDecls map[string]string,
+	afterDecls map[string]string,
+	allowed map[string]bool,
+	calls map[string]map[string]bool,
+) bool {
+	if !strings.HasPrefix(key, "func:") {
+		return false
+	}
+
+	// Функция должна быть действительно новой.
+	if _, existedBefore := beforeDecls[key]; existedBefore {
+		return false
+	}
+
+	if _, existsAfter := afterDecls[key]; !existsAfter {
+		return false
+	}
+
+	// Новая публичная функция автоматически запрещена.
+	if isExportedDeclarationKey(key) {
+		return false
+	}
+
+	name := strings.TrimPrefix(key, "func:")
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+
+	if name == "" {
+		return false
+	}
+
+	// Разрешаем только тогда, когда новая функция реально
+	// вызывается одним из уже разрешённых Symbol.
+	for parent := range allowed {
+		if calls[parent] != nil && calls[parent][name] {
+			return true
+		}
+	}
+
+	return false
 }
 
 func nodeFingerprint(fset *token.FileSet, node ast.Node) string {

@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestCodeFixPatch_NoOpRepairGuidance(
+	t *testing.T,
+) {
+	prompt := CodeFixPatch(
+		"change main",
+		"package main\nfunc main() {}",
+		"bad patch",
+		"patch_error_code=no_op_patch: patch produced no effective change",
+	)
+
+	for _, want := range []string{
+		"ERROR CODE: no_op_patch",
+		"Do NOT return an identical SEARCH and REPLACE pair.",
+		"REPLACE must actually change the requested code.",
+		"CURRENT PROJECT SOURCE",
+		"resulting patch produces a real source-code change",
+	} {
+
+		if !strings.Contains(
+			strings.ToLower(prompt),
+			strings.ToLower(want),
+		) {
+			t.Fatalf(
+				"prompt does not contain %q",
+				want,
+			)
+		}
+
+	}
+}
+
 func TestCodeModifyDiffForModelWithProtocol_ReplaceOnly(
 	t *testing.T,
 ) {

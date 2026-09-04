@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestPatchErrorCodeNoOpPatch(t *testing.T) {
+	err := NewPatchError(
+		PatchErrorNoOpPatch,
+		"patch produced no effective change",
+	)
+
+	code := PatchErrorCodeFromError(err)
+
+	if code != PatchErrorNoOpPatch {
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			PatchErrorNoOpPatch,
+		)
+	}
+}
+
 func TestPatchError(t *testing.T) {
 	err := NewPatchError(
 		PatchErrorDuplicateFileChange,

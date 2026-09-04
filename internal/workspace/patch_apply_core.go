@@ -285,16 +285,19 @@ func applyOnePatchWithPolicyCoreChecked(
 		trace.emit(
 			"LIMIT",
 			"REJECT",
-			"SEARCH block too large: %d lines",
+			"error_code=strict_search_too_large SEARCH block too large: %d lines",
 			patchLineCount(search),
 		)
 
-		return "", fmt.Errorf(
-			"strict SEARCH block is too large: %d lines, maximum 10",
-			patchLineCount(search),
+		return "", domain.NewPatchError(
+			domain.PatchErrorStrictSearchTooLarge,
+			fmt.Sprintf(
+				"strict SEARCH block is too large: %d lines, maximum 10",
+				patchLineCount(search),
+			),
 		)
+
 	}
-
 	if patchRequiresSymbol(
 		p,
 		policy,
@@ -445,6 +448,35 @@ func applyOnePatchWithPolicyCoreChecked(
 	return updated, nil
 }
 
+// finishPatchResult проверяет, привёл ли успешно найденный
+// SEARCH/REPLACE к реальному изменению содержимого.
+//
+// Это отдельная защита от no-op patch:
+// SEARCH и REPLACE могут быть формально валидными,
+// но итоговый файл может остаться полностью неизменным.
+func finishPatchResult(
+	original string,
+	updated string,
+	trace *patchTrace,
+) (string, bool, error) {
+	if updated == original {
+		if trace != nil {
+			trace.emit(
+				"APPLY",
+				"REJECT",
+				"error_code=no_op_patch replacement produced no effective change",
+			)
+		}
+
+		return "", false, domain.NewPatchError(
+			domain.PatchErrorNoOpPatch,
+			"patch produced no effective change",
+		)
+	}
+
+	return updated, true, nil
+}
+
 // applyPatchTextCore — единственная реализация SEARCH → REPLACE.
 //
 // Порядок:
@@ -507,12 +539,18 @@ func applyPatchTextCore(
 			trace.startLine,
 		)
 
-		return strings.Replace(
+		updated := strings.Replace(
 			content,
 			search,
 			replace,
 			1,
-		), true, nil
+		)
+
+		return finishPatchResult(
+			content,
+			updated,
+			trace,
+		)
 	}
 
 	if count > 1 {
@@ -565,12 +603,18 @@ func applyPatchTextCore(
 			trace.startLine,
 		)
 
-		return replaceLineRange(
+		updated := replaceLineRange(
 			origLines,
 			relaxed[0],
 			relaxed[0]+len(searchLines),
 			replace,
-		), true, nil
+		)
+
+		return finishPatchResult(
+			content,
+			updated,
+			trace,
+		)
 	}
 
 	if len(relaxed) > 1 {
@@ -612,13 +656,18 @@ func applyPatchTextCore(
 			"matches=1 start=%d",
 			trace.startLine,
 		)
-
-		return replaceLineRange(
+		updated := replaceLineRange(
 			origLines,
 			normalized[0],
 			normalized[0]+len(searchLines),
 			replace,
-		), true, nil
+		)
+
+		return finishPatchResult(
+			content,
+			updated,
+			trace,
+		)
 	}
 
 	if len(normalized) > 1 {
@@ -660,13 +709,18 @@ func applyPatchTextCore(
 				trace.startLine,
 				rebased.Similarity,
 			)
-
-			return replaceLineRange(
+			updated := replaceLineRange(
 				origLines,
 				rebased.StartLine,
 				rebased.StartLine+len(searchLines),
 				replace,
-			), true, nil
+			)
+
+			return finishPatchResult(
+				content,
+				updated,
+				trace,
+			)
 		}
 
 		trace.emit(
@@ -761,13 +815,19 @@ func applyPatchTextCore(
 					astMatch.Similarity,
 					margin,
 				)
-
-				return replaceLineRange(
+				updated := replaceLineRange(
 					origLines,
 					astMatch.StartLine,
 					astMatch.StartLine+len(searchLines),
 					replace,
-				), true, nil
+				)
+
+				return finishPatchResult(
+					content,
+					updated,
+					trace,
+				)
+
 			}
 		}
 	}
@@ -898,12 +958,18 @@ func applyPatchTextCore(
 		margin,
 	)
 
-	return replaceLineRange(
+	updated := replaceLineRange(
 		origLines,
 		fuzzy.StartLine,
 		fuzzy.StartLine+len(searchLines),
 		replace,
-	), true, nil
+	)
+
+	return finishPatchResult(
+		content,
+		updated,
+		trace,
+	)
 }
 
 // patchLineCount используется core-алгоритмом и не зависит от trace.

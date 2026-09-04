@@ -1179,6 +1179,29 @@ ORIGINAL TASK:
 	b.WriteString(errors)
 	b.WriteString("\n\n")
 
+	if strings.Contains(
+		errors,
+		"patch_error_code=strict_search_too_large",
+	) {
+		b.WriteString(`TARGETED REPAIR: SEARCH BLOCK TOO LARGE
+    
+    The previous SEARCH block exceeded Gogitor's strict 10-line limit.
+    
+    Repair rules:
+    1. Do NOT increase or bypass the 10-line limit.
+    2. Do NOT return a complete file.
+    3. Keep the same target file.
+    4. Preserve the Symbol anchor whenever it is valid.
+    5. Split the logical modification into multiple SEARCH/REPLACE blocks.
+    6. Each SEARCH block must contain at most 10 lines.
+    7. One patch block must contain one logical modification.
+    8. Keep all blocks for the same file under one --- Patch: path --- section.
+    9. Do NOT emit multiple --- Patch: path --- sections for the same file.
+    10. Copy every SEARCH block verbatim from CURRENT PROJECT SOURCE.
+    11. The resulting combined patch must implement the original task completely.
+    
+    `)
+	}
 	if guidance := patchRepairGuidance(errors); guidance != "" {
 		b.WriteString("PATCH ERROR CLASSIFICATION:\n")
 		b.WriteString(guidance)
@@ -1278,6 +1301,30 @@ func patchRepairGuidance(
 		)
 
 	switch code {
+	case domain.PatchErrorStrictSearchTooLarge:
+		return `ERROR CODE: strict_search_too_large
+    
+    MANDATORY CORRECTION:
+    1. The previous SEARCH block exceeded the strict 10-line limit.
+    2. Do NOT increase or bypass the 10-line limit.
+    3. Split the logical modification into multiple SEARCH/REPLACE blocks.
+    4. Each SEARCH block must contain at most 10 lines.
+    5. Keep all blocks for the same file under ONE Patch header.
+    6. Do NOT return multiple Patch headers for the same file.
+    7. Copy SEARCH blocks verbatim from CURRENT PROJECT SOURCE.
+    8. Preserve the Symbol anchor when it belongs to the changed function.
+    9. Do NOT return a complete file.
+    10. Preserve the full intent of the original task.
+    
+    REQUIRED FORM:
+    --- Patch: path/to/file.go ---
+    --- Symbol: FunctionName ---
+    <<<<<<< SEARCH
+    exact existing source
+    =======
+    correct replacement source
+    >>>>>>> REPLACE`
+
 	case domain.PatchErrorStrictSymbolRequired:
 		return `ERROR CODE: strict_symbol_required
 
@@ -1303,39 +1350,63 @@ exact existing source
 correct replacement source
 >>>>>>> REPLACE`
 
-    case domain.PatchErrorSymbolNotFound:
-    	return `ERROR CODE: symbol_not_found
+	case domain.PatchErrorSymbolNotFound:
+		return `ERROR CODE: symbol_not_found
     
-    MANDATORY CORRECTION:
-    1. The previous patch specified a Symbol that does not exist in the CURRENT PROJECT SOURCE.
-    2. NEVER invent a Symbol such as ImportBlock, ImportSection, FileImports, or any other synthetic name.
-    3. A Symbol MUST be an actual Go function, method, or other supported AST declaration present in CURRENT PROJECT SOURCE.
-    4. Re-read CURRENT PROJECT SOURCE and verify the Symbol before returning the patch.
-    5. If the requested change is in an import block, DO NOT use a Symbol for the import block.
-    6. For an import-block change under strict policy, keep SEARCH to 1-3 lines so it does not require a Symbol.
-    7. For a function or method change, use the actual function/method name as Symbol.
-    8. Keep separate logical changes as separate SEARCH/REPLACE blocks under ONE Patch header for the same file.
-    9. NEVER return a complete file.
-    10. NEVER repeat the invalid Symbol.
+MANDATORY CORRECTION:
+1. The previous patch specified a Symbol that does not exist in the CURRENT PROJECT SOURCE.
+2. NEVER invent a Symbol such as ImportBlock, ImportSection, FileImports, or any other synthetic name.
+3. A Symbol MUST be an actual Go function, method, or other supported AST declaration present in CURRENT PROJECT SOURCE.
+4. Re-read CURRENT PROJECT SOURCE and verify the Symbol before returning the patch.
+5. If the requested change is in an import block, DO NOT use a Symbol for the import block.
+6. For an import-block change under strict policy, keep SEARCH to 1-3 lines so it does not require a Symbol.
+7. For a function or method change, use the actual function/method name as Symbol.
+8. Keep separate logical changes as separate SEARCH/REPLACE blocks under ONE Patch header for the same file.
+9. NEVER return a complete file.
+10. NEVER repeat the invalid Symbol.
+
+IMPORT CHANGE EXAMPLE:
+--- Patch: path/to/file.go ---
+<<<<<<< SEARCH
+import "existing/package"
+=======
+import (
+    "existing/package"
+    "new/package"
+)
+>>>>>>> REPLACE
+
+FUNCTION CHANGE EXAMPLE:
+--- Symbol: ActualFunctionName ---
+<<<<<<< SEARCH
+exact existing function fragment
+=======
+correct replacement fragment
+>>>>>>> REPLACE`
+
+	case domain.PatchErrorNoOpPatch:
+		return `ERROR CODE: no_op_patch
     
-    IMPORT CHANGE EXAMPLE:
-    --- Patch: path/to/file.go ---
-    <<<<<<< SEARCH
-    import "existing/package"
-    =======
-    import (
-        "existing/package"
-        "new/package"
-    )
-    >>>>>>> REPLACE
-    
-    FUNCTION CHANGE EXAMPLE:
-    --- Symbol: ActualFunctionName ---
-    <<<<<<< SEARCH
-    exact existing function fragment
-    =======
-    correct replacement fragment
-    >>>>>>> REPLACE`
+MANDATORY CORRECTION:
+1. The previous patch produced no effective change to the file.
+2. Do NOT return an identical SEARCH and REPLACE pair.
+3. SEARCH must be copied VERBATIM from CURRENT PROJECT SOURCE.
+4. REPLACE must actually change the requested code.
+5. Re-read CURRENT PROJECT SOURCE before constructing the replacement patch.
+6. Preserve the original task intent.
+7. Keep the patch minimal.
+8. Do not return a complete file.
+9. Do not modify unrelated code.
+10. If the requested change is inside a function or method, use the actual Symbol name.
+11. If the requested change requires multiple independent modifications in one file, use ONE Patch header with multiple SEARCH/REPLACE blocks.
+12. Verify that the resulting patch produces a real source-code change before returning it.
+
+FINAL CHECK:
+- SEARCH exists in CURRENT PROJECT SOURCE.
+- REPLACE is different from SEARCH where the requested change requires a modification.
+- The resulting file must actually change.
+- No unrelated changes are included.
+- Do not return a complete file.`
 
 	case domain.PatchErrorDuplicateFileChange:
 		return `ERROR CODE: duplicate_file_change
