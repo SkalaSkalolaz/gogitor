@@ -115,7 +115,7 @@ func Default() *Config {
 			"ornith-1.5:9b":    "strict",
 			"qwen3.8:27b":      "balanced",
 			"gemma4:26b":       "balanced",
-			"gpt-oss:20b":      "strict",
+			"gpt-oss:20b":      "balanced",
 			"gemma4:31b-cloud": "advanced",
 			"openai-compatible+http://localhost:8000/v1": "advanced",
 			"llama3": "balanced",
