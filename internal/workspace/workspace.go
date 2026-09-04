@@ -326,7 +326,8 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 					err,
 				)
 			}
-			updated, err := applyPatchesWithPolicyTraced(
+
+			updated, err := applyPatchesWithPolicyCore(
 				string(original),
 				ch.Patches,
 				policy,

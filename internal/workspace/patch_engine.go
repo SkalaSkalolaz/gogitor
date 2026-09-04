@@ -205,7 +205,7 @@ func applyPatchesWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	return applyPatchesWithPolicyTraced(
+	return applyPatchesWithPolicyCore(
 		content,
 		patches,
 		policy,
@@ -233,7 +233,7 @@ func applyOnePatchWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	return applyOnePatchWithPolicyTraced(
+	return applyOnePatchWithPolicyCore(
 		content,
 		p,
 		policy,
@@ -304,7 +304,7 @@ func applyPatchText(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, bool, error) {
-	return applyPatchTextTraced(
+	return applyPatchTextCore(
 		content,
 		search,
 		replace,

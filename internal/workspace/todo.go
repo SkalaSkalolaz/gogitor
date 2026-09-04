@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"bufio"
-	"os"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"

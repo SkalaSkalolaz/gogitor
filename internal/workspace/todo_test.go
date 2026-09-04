@@ -7,7 +7,10 @@ import (
 )
 
 func TestLineCommentStart(t *testing.T) {
-	for _, tc := range []struct{ name, line string; want int }{
+	for _, tc := range []struct {
+		name, line string
+		want       int
+	}{
 		{"at start", "// comment", 0},
 		{"after code", "code // comment", 5},
 		{"no comment", "no comment here", -1},

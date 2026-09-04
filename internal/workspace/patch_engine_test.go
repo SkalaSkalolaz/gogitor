@@ -82,8 +82,8 @@ func main() {
 `
 
 	patch := domain.Patch{
-		Symbol:  "main",
-		Search:  `func main() {
+		Symbol: "main",
+		Search: `func main() {
 	fmt.Println("helo")
 }`,
 		Replace: `func main() {

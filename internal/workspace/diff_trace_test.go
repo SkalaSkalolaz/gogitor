@@ -9,6 +9,91 @@ import (
 	"gogitor/internal/domain"
 )
 
+func TestDiffTraceDoesNotChangePatchResult(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+}
+
+`
+
+	patch := domain.Patch{
+		Search:  `println("hello")`,
+		Replace: `println("world")`,
+	}
+
+	// Trace OFF.
+	withoutTrace, err :=
+		applyOnePatchWithPolicy(
+			content,
+			patch,
+			PatchPolicyBalanced,
+			0,
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"trace-off patch failed: %v",
+			err,
+		)
+	}
+
+	// Trace ON.
+	var trace []string
+
+	ws := New(t.TempDir())
+
+	ws.SetDiffTraceSink(
+		func(message string) {
+			trace = append(
+				trace,
+				message,
+			)
+		},
+	)
+
+	withTrace, err :=
+		applyOnePatchWithPolicyCore(
+			content,
+			patch,
+			PatchPolicyBalanced,
+			0,
+			newPatchTrace(
+				ws.getDiffTraceSink(),
+				"TEST",
+				"main.go",
+				1,
+				1,
+				PatchPolicyBalanced,
+				patch,
+			),
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"trace-on patch failed: %v",
+			err,
+		)
+	}
+
+	if withoutTrace != withTrace {
+		t.Fatalf(
+			"DIFF result changed when tracing was enabled:\nwithout=%q\nwith=%q",
+			withoutTrace,
+			withTrace,
+		)
+	}
+
+	if len(trace) == 0 {
+		t.Fatal(
+			"expected trace events when tracing is enabled",
+		)
+	}
+}
+
 func TestDiffTraceExactMatch(t *testing.T) {
 	root := t.TempDir()
 	sandbox := t.TempDir()
