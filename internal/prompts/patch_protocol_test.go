@@ -137,3 +137,60 @@ func TestCodeModifyDiffForModelWithProtocol_OverrideIsCaseInsensitive(
 		)
 	}
 }
+
+func TestCodeFixPatch_StrictSymbolRepairGuidance(
+	t *testing.T,
+) {
+	prompt := CodeFixPatch(
+		"change main",
+		"package main\nfunc main() {}",
+		"bad patch",
+		"patch_error_code=strict_symbol_required: strict patch requires Symbol anchor for SEARCH block with 7 lines",
+	)
+
+	for _, want := range []string{
+		"ERROR CODE: strict_symbol_required",
+		"Symbol line BEFORE the SEARCH marker",
+		"Do not return the same patch without a Symbol",
+		"Verify the Symbol name from CURRENT PROJECT SOURCE",
+	} {
+		if !strings.Contains(
+			prompt,
+			want,
+		) {
+			t.Fatalf(
+				"prompt does not contain %q",
+				want,
+			)
+		}
+	}
+}
+
+func TestCodeFixPatch_DuplicateFileRepairGuidance(
+	t *testing.T,
+) {
+	prompt := CodeFixPatch(
+		"change main and helper",
+		"package main",
+		"bad patch",
+		`patch_error_code=duplicate_file_change: duplicate file change for "main.go" (entries 1 and 2)`,
+	)
+
+	for _, want := range []string{
+		"ERROR CODE: duplicate_file_change",
+		"Return EXACTLY ONE --- Patch: path/to/file.go --- header for each file.",
+		"one file needs multiple independent modifications",
+		"multiple SEARCH/REPLACE blocks under that same header",
+		"Do NOT repeat the same file path",
+	} {
+		if !strings.Contains(
+			prompt,
+			want,
+		) {
+			t.Fatalf(
+				"prompt does not contain %q",
+				want,
+			)
+		}
+	}
+}

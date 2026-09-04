@@ -1632,6 +1632,33 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				strings.Join(lastErrors, "\n"),
 				patchProtocol.String(),
 			)
+
+			if s.Cfg.DiffTrace {
+				errorCode :=
+					domain.PatchErrorCodeFromText(
+						strings.Join(
+							lastErrors,
+							"\n",
+						),
+					)
+
+				if errorCode != "" {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=REPAIR stage=CLASSIFY decision=TARGETED error_code=%s",
+							errorCode,
+						),
+					)
+				} else {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						"[DIFF] phase=REPAIR stage=CLASSIFY decision=GENERIC",
+					)
+				}
+			}
 			usePatchPrompt = true
 			patchRepairPending = false
 			patchAppliedSuccessfully = false
@@ -1836,14 +1863,29 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				reason = strings.ReplaceAll(reason, "\n", " ")
 				reason = strings.ReplaceAll(reason, "\r", " ")
 
-				sendEvent(
-					emit,
-					domain.EventLog,
-					fmt.Sprintf(
-						"[DIFF] phase=VALIDATION stage=VALIDATE decision=REJECT reason=%s",
-						reason,
-					),
-				)
+				errorCode :=
+					domain.PatchErrorCodeFromError(err)
+
+				if errorCode != "" {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VALIDATION stage=VALIDATE decision=REJECT error_code=%s reason=%s",
+							errorCode,
+							reason,
+						),
+					)
+				} else {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VALIDATION stage=VALIDATE decision=REJECT reason=%s",
+							reason,
+						),
+					)
+				}
 			}
 
 			if patchModeChanges || usePatchPrompt {
@@ -1961,6 +2003,34 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			errMsg := preflightErr.Error()
 			lastErrors = []string{errMsg}
 
+			if s.Cfg.DiffTrace {
+				errorCode :=
+					domain.PatchErrorCodeFromText(errMsg)
+
+				if errorCode != "" {
+					displayReason := strings.TrimSpace(errMsg)
+					displayReason = strings.ReplaceAll(
+						displayReason,
+						"\n",
+						" ",
+					)
+					displayReason = strings.ReplaceAll(
+						displayReason,
+						"\r",
+						" ",
+					)
+
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=PREFLIGHT stage=PREFLIGHT decision=REJECT error_code=%s reason=%s",
+							errorCode,
+							displayReason,
+						),
+					)
+				}
+			}
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
 					patchRepairPending = true

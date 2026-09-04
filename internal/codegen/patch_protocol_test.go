@@ -225,3 +225,48 @@ func TestValidateRejectsEmptyReplaceOnlyBody(
 		)
 	}
 }
+
+func TestValidateDuplicateFileChangeReturnsCode(
+	t *testing.T,
+) {
+	changes := []domain.FileChange{
+		{
+			Path: "main.go",
+			Patches: []domain.Patch{
+				{
+					Search:  "old1",
+					Replace: "new1",
+				},
+			},
+		},
+		{
+			Path: "main.go",
+			Patches: []domain.Patch{
+				{
+					Search:  "old2",
+					Replace: "new2",
+				},
+			},
+		},
+	}
+
+	err := Validate(
+		changes,
+		"/tmp/project",
+	)
+
+	if err == nil {
+		t.Fatal(
+			"expected duplicate file change error",
+		)
+	}
+
+	if code := domain.PatchErrorCodeFromError(err); code != domain.PatchErrorDuplicateFileChange {
+
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			domain.PatchErrorDuplicateFileChange,
+		)
+	}
+}

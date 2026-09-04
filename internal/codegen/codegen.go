@@ -196,14 +196,16 @@ func Validate(changes []domain.FileChange, root string) error {
 		normalizedPath := filepath.Clean(path)
 
 		if prev, ok := seenPaths[normalizedPath]; ok {
-			return fmt.Errorf(
-				"duplicate file change for %q (entries %d and %d)",
-				path,
-				prev+1,
-				i+1,
+			return domain.NewPatchError(
+				domain.PatchErrorDuplicateFileChange,
+				fmt.Sprintf(
+					"duplicate file change for %q (entries %d and %d)",
+					path,
+					prev+1,
+					i+1,
+				),
 			)
 		}
-
 		seenPaths[normalizedPath] = i
 
 		if len(ch.Patches) == 0 {

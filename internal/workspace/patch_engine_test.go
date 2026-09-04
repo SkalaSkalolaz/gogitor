@@ -43,6 +43,15 @@ func main() {
 	if !strings.Contains(err.Error(), "requires Symbol") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
+	if code := domain.PatchErrorCodeFromError(err); code != domain.PatchErrorStrictSymbolRequired {
+
+		t.Fatalf(
+			"error code = %q, want %q",
+			code,
+			domain.PatchErrorStrictSymbolRequired,
+		)
+	}
 }
 
 func TestStrictPatchRejectsLargeSearch(t *testing.T) {

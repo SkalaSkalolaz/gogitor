@@ -279,9 +279,12 @@ func applyOnePatchWithPolicyCore(
 			"strict patch requires Symbol",
 		)
 
-		return "", fmt.Errorf(
-			"strict patch requires Symbol anchor for SEARCH block with %d lines",
-			patchLineCount(search),
+		return "", domain.NewPatchError(
+			domain.PatchErrorStrictSymbolRequired,
+			fmt.Sprintf(
+				"strict patch requires Symbol anchor for SEARCH block with %d lines",
+				patchLineCount(search),
+			),
 		)
 	}
 
