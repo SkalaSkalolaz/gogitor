@@ -153,12 +153,25 @@ func (w *Workspace) BindSourceSnapshot(
 		}
 
 		for j := range out[i].Patches {
-			if strings.TrimSpace(out[i].Patches[j].Symbol) == "" {
+			// Один и тот же hash относится ко всему исходному
+			// FileChange и не меняется после применения предыдущих
+			// patch-блоков.
+			out[i].Patches[j].ExpectedSourceHash = hash
+
+			symbol := strings.TrimSpace(
+				out[i].Patches[j].Symbol,
+			)
+
+			if symbol == "" {
 				continue
 			}
-			fp, err := SymbolFingerprint(string(data), out[i].Patches[j].Symbol)
+
+			fp, err := SymbolFingerprint(
+				string(data),
+				symbol,
+			)
+
 			if err == nil {
-				out[i].Patches[j].ExpectedSourceHash = hash
 				out[i].Patches[j].ExpectedSymbolFingerprint = fp
 			}
 		}
@@ -281,12 +294,13 @@ func (w *Workspace) PreflightChanges(
 				return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, resolveErr)
 			}
 			ch.Patches[pi] = resolved
-			updated, err := applyOnePatchWithPolicyCore(
+			updated, err := applyOnePatchWithPolicyCoreChecked(
 				current,
 				resolved,
 				policy,
 				minConfidenceOverride,
 				w.getDiffMatchingConfig(),
+				pi == 0,
 				newPatchTrace(
 					w.getDiffTraceSink(),
 					"PREFLIGHT",

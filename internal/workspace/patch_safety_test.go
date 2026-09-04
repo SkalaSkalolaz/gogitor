@@ -402,3 +402,79 @@ func TestAffectedPackageDirs(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightChanges_AllowsMultiplePatchesWithSameSourceHash(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	content := `package main
+
+func main() {
+	println("hello")
+	println("world")
+}
+`
+
+	path := filepath.Join(
+		root,
+		"main.go",
+	)
+
+	if err := os.WriteFile(
+		path,
+		[]byte(content),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := New(root)
+
+	hash :=
+		hashBytes([]byte(content))
+
+	changes := []domain.FileChange{
+		{
+			Path:            "main.go",
+			ExpectedPresent: true,
+			SourceHash:      hash,
+			Patches: []domain.Patch{
+				{
+					Search:             `println("hello")`,
+					Replace:            `println("hi")`,
+					ExpectedSourceHash: hash,
+				},
+				{
+					Search:             `println("world")`,
+					Replace:            `println("bye")`,
+					ExpectedSourceHash: hash,
+				},
+			},
+		},
+	}
+
+	prepared, _, err :=
+		ws.PreflightChanges(
+			root,
+			changes,
+			PatchPolicyBalanced,
+			0,
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"preflight failed: %v",
+			err,
+		)
+	}
+
+	got := prepared[0].Patches
+
+	if len(got) != 2 {
+		t.Fatalf(
+			"patch count = %d, want 2",
+			len(got),
+		)
+	}
+}

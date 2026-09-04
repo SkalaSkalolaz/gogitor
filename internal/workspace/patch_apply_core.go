@@ -42,17 +42,16 @@ func applyPatchesWithPolicyCore(
 			patchLineCount(p.Search),
 			patchLineCount(p.Replace),
 		)
-
 		updated, err :=
-			applyOnePatchWithPolicyCore(
+			applyOnePatchWithPolicyCoreChecked(
 				content,
 				p,
 				policy,
 				minConfidenceOverride,
 				matching,
+				i == 0,
 				trace,
 			)
-
 		if err != nil {
 			return "", fmt.Errorf(
 				"patch %d: %w",
@@ -75,6 +74,26 @@ func applyOnePatchWithPolicyCore(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 	matching domain.DiffMatchingConfig,
+	trace *patchTrace,
+) (string, error) {
+	return applyOnePatchWithPolicyCoreChecked(
+		content,
+		p,
+		policy,
+		minConfidenceOverride,
+		matching,
+		true,
+		trace,
+	)
+}
+
+func applyOnePatchWithPolicyCoreChecked(
+	content string,
+	p domain.Patch,
+	policy PatchPolicy,
+	minConfidenceOverride float64,
+	matching domain.DiffMatchingConfig,
+	verifySourceHash bool,
 	trace *patchTrace,
 ) (string, error) {
 	matching =
@@ -104,26 +123,34 @@ func applyOnePatchWithPolicyCore(
 	// ------------------------------------------------------------
 	// SOURCE HASH
 	// ------------------------------------------------------------
+
 	if p.ExpectedSourceHash != "" {
-		if hashBytes([]byte(content)) != p.ExpectedSourceHash {
+		if verifySourceHash {
+			if hashBytes([]byte(content)) != p.ExpectedSourceHash {
+				trace.emit(
+					"SOURCE",
+					"REJECT",
+					"expected source hash does not match original file",
+				)
+
+				return "", fmt.Errorf(
+					"expected source hash does not match original file",
+				)
+			}
+
 			trace.emit(
 				"SOURCE",
-				"REJECT",
-				"expected source hash does not match current file",
+				"OK",
+				"source_hash=verified",
 			)
-
-			return "", fmt.Errorf(
-				"expected source hash does not match current file",
+		} else {
+			trace.emit(
+				"SOURCE",
+				"OK",
+				"source_hash=already-verified",
 			)
 		}
-
-		trace.emit(
-			"SOURCE",
-			"OK",
-			"source_hash=verified",
-		)
 	}
-
 	search := trimPatchLines(
 		normalizeNewlines(p.Search),
 	)

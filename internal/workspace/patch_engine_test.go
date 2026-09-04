@@ -161,3 +161,125 @@ func main() {
 		)
 	}
 }
+
+func TestApplyPatchesWithPolicyCore_AllowsMultiplePatchesWithSameSourceHash(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+	println("world")
+}
+`
+
+	sourceHash :=
+		hashBytes([]byte(content))
+
+	patches := []domain.Patch{
+		{
+			Search:             `println("hello")`,
+			Replace:            `println("hi")`,
+			ExpectedSourceHash: sourceHash,
+		},
+		{
+			Search:             `println("world")`,
+			Replace:            `println("bye")`,
+			ExpectedSourceHash: sourceHash,
+		},
+	}
+
+	updated, err :=
+		applyPatchesWithPolicyCore(
+			content,
+			patches,
+			PatchPolicyBalanced,
+			0,
+			domain.DefaultDiffMatchingConfig(),
+			"TEST",
+			"main.go",
+			nil,
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"multiple patches with shared source hash failed: %v",
+			err,
+		)
+	}
+
+	if !strings.Contains(
+		updated,
+		`println("hi")`,
+	) {
+		t.Fatal(
+			"first patch was not applied",
+		)
+	}
+
+	if !strings.Contains(
+		updated,
+		`println("bye")`,
+	) {
+		t.Fatal(
+			"second patch was not applied",
+		)
+	}
+}
+
+func TestApplyPatchesWithPolicyCoreRejectsWrongInitialSourceHash(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+}
+`
+
+	wrongHash :=
+		hashBytes(
+			[]byte("different source"),
+		)
+
+	patches := []domain.Patch{
+		{
+			Search:             `println("hello")`,
+			Replace:            `println("world")`,
+			ExpectedSourceHash: wrongHash,
+		},
+		{
+			Search:             `println("world")`,
+			Replace:            `println("bye")`,
+			ExpectedSourceHash: wrongHash,
+		},
+	}
+
+	_, err :=
+		applyPatchesWithPolicyCore(
+			content,
+			patches,
+			PatchPolicyBalanced,
+			0,
+			domain.DefaultDiffMatchingConfig(),
+			"TEST",
+			"main.go",
+			nil,
+		)
+
+	if err == nil {
+		t.Fatal(
+			"expected initial source hash mismatch",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"source hash",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+}
