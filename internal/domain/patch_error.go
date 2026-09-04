@@ -18,6 +18,8 @@ const (
 	// PatchErrorStrictSymbolRequired означает,
 	// что strict policy требует Symbol для SEARCH-блока.
 	PatchErrorStrictSymbolRequired PatchErrorCode = "strict_symbol_required"
+    PatchErrorSymbolNotFound PatchErrorCode = "symbol_not_found"
+
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -120,6 +122,9 @@ func PatchErrorCodeFromText(
 
 	case PatchErrorStrictSymbolRequired:
 		return PatchErrorStrictSymbolRequired
+
+    case PatchErrorSymbolNotFound:
+    	return PatchErrorSymbolNotFound
 
 	default:
 		return ""

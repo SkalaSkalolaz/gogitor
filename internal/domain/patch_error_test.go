@@ -75,3 +75,20 @@ func TestPatchErrorCodeFromUnknownText(t *testing.T) {
 		)
 	}
 }
+
+func TestPatchErrorCodeSymbolNotFound(t *testing.T) {
+	err := NewPatchError(
+		PatchErrorSymbolNotFound,
+		`symbol "ImportBlock" not found`,
+	)
+
+	code := PatchErrorCodeFromError(err)
+
+	if code != PatchErrorSymbolNotFound {
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			PatchErrorSymbolNotFound,
+		)
+	}
+}

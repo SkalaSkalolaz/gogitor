@@ -194,3 +194,30 @@ func TestCodeFixPatch_DuplicateFileRepairGuidance(
 		}
 	}
 }
+
+func TestCodeFixPatch_SymbolNotFoundRepairGuidance(
+	t *testing.T,
+) {
+	prompt := CodeFixPatch(
+		"modify imports and main",
+		"package main",
+		"bad patch",
+		`patch_error_code=symbol_not_found: symbol "ImportBlock" not found`,
+	)
+
+	for _, want := range []string{
+		"ERROR CODE: symbol_not_found",
+		"NEVER invent a Symbol",
+		"Import-block changes are NOT Go function/method symbols",
+		"keep SEARCH to 1-3 lines",
+		"use the actual function or method name as Symbol",
+		"ONE Patch header",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf(
+				"prompt does not contain %q",
+				want,
+			)
+		}
+	}
+}

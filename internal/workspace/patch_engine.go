@@ -531,13 +531,15 @@ func findSymbolRange(content, symbol string) (int, int, error) {
 		}
 	}
 
-	if len(matches) == 0 {
-		return 0, 0, fmt.Errorf(
-			"symbol %q not found",
-			symbol,
-		)
-	}
-
+    if len(matches) == 0 {
+    	return 0, 0, domain.NewPatchError(
+    		domain.PatchErrorSymbolNotFound,
+    		fmt.Sprintf(
+    			"symbol %q not found",
+    			symbol,
+    		),
+    	)
+    }
 	if len(matches) > 1 {
 		return 0, 0, fmt.Errorf(
 			"symbol %q is ambiguous (%d matches)",

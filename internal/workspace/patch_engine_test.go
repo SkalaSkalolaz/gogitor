@@ -128,3 +128,36 @@ func TestPatchPolicyForModel_SubstringOverridePrefersSpecificMatch(t *testing.T)
 		)
 	}
 }
+
+func TestFindSymbolRangeReturnsSymbolNotFoundCode(
+	t *testing.T,
+) {
+	content := `package main
+
+func main() {
+	println("hello")
+}
+`
+
+	_, _, err := findSymbolRange(
+		content,
+		"ImportBlock",
+	)
+
+	if err == nil {
+		t.Fatal(
+			"expected symbol-not-found error",
+		)
+	}
+
+	code :=
+		domain.PatchErrorCodeFromError(err)
+
+	if code != domain.PatchErrorSymbolNotFound {
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			domain.PatchErrorSymbolNotFound,
+		)
+	}
+}
