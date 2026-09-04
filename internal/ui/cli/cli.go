@@ -40,6 +40,7 @@ var commonFlagSpecs = []flagSpec{
 	{Name: "max-context"},
 	{Name: "debug", Bool: true},
 	{Name: "raw", Bool: true},
+	{Name: "diff-trace", Bool: true},
 	{Name: "pretty", Bool: true},
 	{Name: "auto-search", Bool: true},
 	{Name: "help", Short: "h", Bool: true},
@@ -67,6 +68,7 @@ type commonFlags struct {
 	githubURL       *string
 	githubKey       *string
 	debug           *bool
+	diffTrace       *bool
 	raw             *bool
 	pretty          *bool
 	help            *bool
@@ -944,6 +946,7 @@ func registerCommonFlags(fs *flag.FlagSet, cfg *config.Config) commonFlags {
 		githubURL:       fs.String("github", cfg.GitHubURL, "GitHub repository URL (https://github.com/user/repo)"),
 		githubKey:       fs.String("key-github", cfg.GitHubToken, "GitHub token (classic PAT ghp_... or fine-grained github_pat_...)"),
 		debug:           fs.Bool("debug", cfg.Debug, "enable debug logging"),
+		diffTrace:       fs.Bool("diff-trace", cfg.DiffTrace, "show detailed DIFF patch diagnostics"),
 		raw:             fs.Bool("raw", cfg.Raw, "output only result content (for pipes/redirection)"),
 		pretty:          fs.Bool("pretty", false, "force human-readable output even when stdout is not a terminal"),
 		help:            fs.Bool("help", false, "show help"),
@@ -1024,6 +1027,10 @@ func applyCommonFlags(f commonFlags, cfg *config.Config) {
 		if *f.debug {
 			cfg.LogLevel = "debug"
 		}
+	}
+
+	if f.diffTrace != nil {
+		cfg.DiffTrace = *f.diffTrace
 	}
 	if f.raw != nil {
 		cfg.Raw = *f.raw
@@ -1387,6 +1394,7 @@ Common flags:
 --allow-sudo         (computer) allow sudo commands
 -o, --output <file>  save result to file (type by extension: .md, .txt, .go, .json)
 --debug              enable debug logging
+--diff-trace         show detailed DIFF patch matching/apply diagnostics
 --raw                output only result content (for pipes/redirection)
 --pretty             force human-readable output
 -h, --help           show help

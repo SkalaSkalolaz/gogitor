@@ -18,6 +18,118 @@ type helpTopic struct {
 // helpTopics — все разделы точечной помощи.
 var helpTopics = []helpTopic{
 	{
+		Name:    "diff-trace",
+		Aliases: []string{":diff-trace", "diff-trace"},
+		En: `## :diff-trace — DIFF Diagnostics
+    
+    ### Syntax
+    
+    :diff-trace
+    :diff-trace on
+    :diff-trace off
+    :diff-trace status
+    
+    ### Description
+    
+    Controls detailed diagnostics for DIFF patch application.
+    
+    When enabled, Gogitor shows how each patch was resolved and applied.
+    
+    ### Displayed information
+    
+    | Stage | Description |
+    |------|-------------|
+    | PARSE | Patch received from LLM response |
+    | SOURCE | Source hash/fingerprint validation |
+    | SYMBOL | Symbol anchor resolution |
+    | EXACT | Exact SEARCH match |
+    | RELAXED | Whitespace/indentation tolerant match |
+    | NORMALIZED | Indentation-normalized match |
+    | REBASE | Stable anchor relocation |
+    | FUZZY | Similarity-based fallback |
+    | APPLY | Actual patch application |
+    | PREFLIGHT | In-memory safety validation |
+    | SANDBOX_APPLY | Patch application in sandbox |
+    | BUILD | Build result after patch |
+    | TARGETED_TESTS | Tests for affected packages |
+    | FULL_TESTS | Full test suite |
+    | ROOT_APPLY | Final copy into project |
+    
+    ### Decisions
+    
+    - OK — stage accepted
+    - MISS — no match
+    - REJECT — stage rejected the patch
+    - SKIP — stage intentionally skipped
+    - RUN — stage started
+    
+    ### Examples
+    
+    :diff-trace on
+    :diff-trace status
+    :diff-trace off
+    
+    ### CLI
+    
+    gogitor code "fix the bug" --diff-trace
+    `,
+		Ru: `## :diff-trace — Диагностика DIFF
+    
+    ### Синтаксис
+    
+    :diff-trace
+    :diff-trace on
+    :diff-trace off
+    :diff-trace status
+    
+    ### Описание
+    
+    Включает подробную диагностику применения DIFF-вставок.
+    
+    После включения Gogitor показывает, каким способом был найден
+    SEARCH-блок, почему он был принят или отклонён и что произошло
+    на этапах preflight, sandbox, build и tests.
+    
+    ### Этапы
+    
+    | Этап | Описание |
+    |------|----------|
+    | PARSE | Получение patch из ответа LLM |
+    | SOURCE | Проверка source hash/fingerprint |
+    | SYMBOL | Поиск Symbol anchor |
+    | EXACT | Точное совпадение |
+    | RELAXED | Поиск с допуском whitespace |
+    | NORMALIZED | Поиск с нормализацией отступов |
+    | REBASE | Перебазирование по стабильному anchor |
+    | FUZZY | Нечёткий поиск |
+    | APPLY | Применение patch |
+    | PREFLIGHT | Безопасная предварительная проверка |
+    | SANDBOX_APPLY | Применение в sandbox |
+    | BUILD | Результат сборки |
+    | TARGETED_TESTS | Тесты изменённых пакетов |
+    | FULL_TESTS | Полный набор тестов |
+    | ROOT_APPLY | Перенос изменений в рабочее дерево |
+    
+    ### Статусы
+    
+    - OK — этап принят
+    - MISS — совпадение не найдено
+    - REJECT — этап отклонил patch
+    - SKIP — этап пропущен
+    - RUN — этап выполняется
+    
+    ### Примеры
+    
+    :diff-trace on
+    :diff-trace status
+    :diff-trace off
+    
+    ### CLI
+    
+    gogitor code "исправь ошибку" --diff-trace
+    `,
+	},
+	{
 		Name:    "load",
 		Aliases: []string{":load", "load"},
 		En: `## :load — Load Task from File
@@ -1562,7 +1674,7 @@ Requires a previous code task to have been executed.
 :help task-diff — то же самое`,
 	},
 }
-		
+
 // HelpForCommand возвращает точечную помощь по команде.
 // Если команда не найдена, возвращает список доступных разделов.
 func HelpForCommand(cmd string) domain.Result {

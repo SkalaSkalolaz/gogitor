@@ -17,7 +17,7 @@ import (
 	"gogitor/internal/ui/tui"
 )
 
-const Version = "1.1.8"
+const Version = "1.1.9"
 
 
 func main() {
@@ -200,6 +200,13 @@ func parseGlobalFlags(args []string, cfg *config.Config) ([]string, bool) {
 				cfg.AutoSearch = true
 			}
 			i++
+        case "--diff-trace":
+        	if hasVal {
+        		cfg.DiffTrace = parseBool(val)
+        	} else {
+        		cfg.DiffTrace = true
+        	}
+        	i++
 		case "--reasoning":
 			if hasVal {
 				cfg.ReasoningEnabled = parseBool(val)

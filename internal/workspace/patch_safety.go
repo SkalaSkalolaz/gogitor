@@ -282,7 +282,22 @@ func (w *Workspace) PreflightChanges(
 			}
 			ch.Patches[pi] = resolved
 
-			updated, err := applyOnePatchWithPolicy(current, resolved, policy, minConfidenceOverride)
+            updated, err := applyOnePatchWithPolicyTraced(
+            	current,
+            	resolved,
+            	policy,
+            	minConfidenceOverride,
+            	newPatchTrace(
+            		w.getDiffTraceSink(),
+            		"PREFLIGHT",
+            		ch.Path,
+            		pi+1,
+            		len(ch.Patches),
+            		policy,
+            		resolved,
+            	),
+            )
+
 			if err != nil {
 				return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, err)
 			}
@@ -331,6 +346,13 @@ func (w *Workspace) PreflightChanges(
 
 		report.ChangedLines += changedLines
 		report.ChangedBytes += changedBytes
+        w.diffTracef(
+        	"phase=PREFLIGHT file=%s stage=SUMMARY decision=OK patch_blocks=%d changed_lines=%d changed_bytes=%d",
+        	ch.Path,
+        	len(ch.Patches),
+        	changedLines,
+        	changedBytes,
+        )
 	}
 
 	return prepared, report, nil

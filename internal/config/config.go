@@ -49,6 +49,7 @@ type Config struct {
 	FuzzyMinConfidence           float64                         `json:"fuzzy_min_confidence"`
 	PatchProtocolMode            string                          `json:"patch_protocol_mode"`
 	PatchAuditorMode             string                          `json:"patch_auditor_mode"`
+	DiffTrace                    bool                            `json:"diff_trace"`
 	ComputerEnabled              bool                            `json:"computer_enabled"`
 	ComputerAllowSudo            bool                            `json:"computer_allow_sudo"`
 	ComputerConfirmHigh          bool                            `json:"computer_confirm_high"`
@@ -93,6 +94,7 @@ func Default() *Config {
 		FuzzyMinConfidence:           0,
 		PatchProtocolMode:            "auto",
 		PatchAuditorMode:             "auto",
+		DiffTrace:                    false,
 		ComputerEnabled:              false,
 		ComputerAllowSudo:            false,
 		ComputerConfirmHigh:          true,

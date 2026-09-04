@@ -32,10 +32,10 @@ type SafeSearchConfig struct {
 func DefaultSafeSearchConfig() SafeSearchConfig {
 	return SafeSearchConfig{
 		Enabled:                    false,
-		MaxSearchesPerSession:      5,
-		MaxSourcesPerSearch:        3,
+		MaxSearchesPerSession:      15,
+		MaxSourcesPerSearch:        5,
 		MaxContentPerSource:        5000,
-		MaxTotalContent:            15000,
+		MaxTotalContent:            25000,
 		MinIntervalBetweenSearches: 5 * time.Second,
 		RequestTimeout:             10 * time.Second,
 		AllowedDomains: []string{

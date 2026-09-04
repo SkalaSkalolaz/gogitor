@@ -24,6 +24,7 @@ type Workspace struct {
 
 	mu              sync.Mutex
 	applyMu         sync.Mutex
+	diffTraceSink   DiffTraceSink
 	idx             *index.Index
 	lastRefresh     time.Time
 	watcher         *fsnotify.Watcher
@@ -325,12 +326,14 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 					err,
 				)
 			}
-
-			updated, err := applyPatchesWithPolicy(
+			updated, err := applyPatchesWithPolicyTraced(
 				string(original),
 				ch.Patches,
 				policy,
 				minConfidenceOverride,
+				"SANDBOX_APPLY",
+				ch.Path,
+				w.getDiffTraceSink(),
 			)
 			if err != nil {
 				return fmt.Errorf(
@@ -363,6 +366,12 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 				)
 			}
 
+			w.diffTracef(
+				"phase=SANDBOX_APPLY file=%s stage=WRITE decision=OK bytes=%d patches=%d",
+				ch.Path,
+				len(updated),
+				len(ch.Patches),
+			)
 			ensureExecutablePath(target)
 			continue
 		}
@@ -475,12 +484,26 @@ func (w *Workspace) CopyToRootSafe(sandboxDir string, changes []domain.FileChang
 			restore()
 			return fmt.Errorf("cannot write temp file %s: %w", ch.Path, err)
 		}
+
 		if err := os.Rename(tmp, dst); err != nil {
 			_ = os.Remove(tmp)
 			restore()
-			return fmt.Errorf("cannot replace root file %s: %w", ch.Path, err)
+			return fmt.Errorf(
+				"cannot replace root file %s: %w",
+				ch.Path,
+				err,
+			)
 		}
+
 		ensureExecutablePath(dst)
+		if len(ch.Patches) > 0 {
+			w.diffTracef(
+				"phase=ROOT_APPLY file=%s stage=COPY decision=OK mode=DIFF bytes=%d",
+				ch.Path,
+				len(data),
+			)
+		}
+
 	}
 	for _, ch := range changes {
 		dst, err := security.SafeJoin(w.Root, ch.Path)

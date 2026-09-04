@@ -162,6 +162,7 @@ var commandSuggestions = []string{
 	":fix",
 	":history",
 	":task-diff",
+	":diff-trace",
 	":agent",
 	":agent deep",
 	":agent interview",
@@ -220,6 +221,12 @@ var reasoningSubcommandSuggestions = []string{
 	"on",
 	"off",
 	"router",
+}
+
+var diffTraceSubcommandSuggestions = []string{
+	"on",
+	"off",
+	"status",
 }
 
 type eventMsg domain.Event
@@ -638,6 +645,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyProgressEvent(e)
 			return m, listenEvents(m.events)
 
+		case domain.EventLog:
+			if strings.HasPrefix(e.Message, "[DIFF]") {
+				m.appendEntry(
+					e.Message,
+					logDiffMeta,
+				)
+			} else {
+				m.appendLog(
+					fmt.Sprintf("[%s] %s", e.Type, e.Message),
+				)
+			}
 		default:
 			m.appendLog(fmt.Sprintf("[%s] %s", e.Type, e.Message))
 		}
@@ -1771,6 +1789,35 @@ func (m *model) updateSuggestions() {
 		if len(m.suggestions) == 1 && m.suggestions[0] == strings.TrimSpace(value) {
 			m.suggestions = nil
 		}
+		return
+	}
+
+	if first == ":diff-trace" &&
+		(len(fields) > 1 || strings.HasSuffix(value, " ")) {
+
+		if len(fields) > 2 {
+			return
+		}
+
+		prefix := ""
+		if len(fields) > 1 {
+			prefix = fields[1]
+		}
+
+		for _, sub := range diffTraceSubcommandSuggestions {
+			if strings.HasPrefix(sub, prefix) {
+				m.suggestions = append(
+					m.suggestions,
+					":diff-trace "+sub,
+				)
+			}
+		}
+
+		if len(m.suggestions) == 1 &&
+			m.suggestions[0] == strings.TrimSpace(value) {
+			m.suggestions = nil
+		}
+
 		return
 	}
 

@@ -205,22 +205,15 @@ func applyPatchesWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	content = normalizeNewlines(content)
-
-	for i, p := range patches {
-		updated, err := applyOnePatchWithPolicy(
-			content,
-			p,
-			policy,
-			minConfidenceOverride,
-		)
-		if err != nil {
-			return "", fmt.Errorf("patch %d: %w", i+1, err)
-		}
-		content = updated
-	}
-
-	return content, nil
+	return applyPatchesWithPolicyTraced(
+		content,
+		patches,
+		policy,
+		minConfidenceOverride,
+		"",
+		"",
+		nil,
+	)
 }
 
 // applyOnePatch оставляем как compatibility wrapper,
@@ -240,119 +233,13 @@ func applyOnePatchWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	replaceOnly := p.ReplaceOnly
-
-	// Hash проверяется по исходным байтам, до normalizeNewlines.
-	if p.ExpectedSourceHash != "" &&
-		hashBytes([]byte(content)) != p.ExpectedSourceHash {
-		return "", fmt.Errorf("expected source hash does not match current file")
-	}
-
-	search := trimPatchLines(normalizeNewlines(p.Search))
-	replace := trimPatchLines(normalizeNewlines(p.Replace))
-
-	// REPLACE_ONLY: старый SEARCH строит Gogitor,
-	// а не маленькая модель.
-	if replaceOnly && search == "" {
-		if strings.TrimSpace(p.Symbol) == "" {
-			return "", fmt.Errorf("REPLACE_ONLY patch requires Symbol")
-		}
-
-		if p.ExpectedSymbolFingerprint != "" {
-			fp, err := SymbolFingerprint(content, p.Symbol)
-			if err != nil {
-				return "", err
-			}
-			if fp != p.ExpectedSymbolFingerprint {
-				return "", fmt.Errorf(
-					"symbol %q changed since patch generation",
-					p.Symbol,
-				)
-			}
-		}
-
-		start, end, err := findSymbolRange(content, p.Symbol)
-		if err != nil {
-			return "", err
-		}
-
-		search = content[start:end]
-
-		if err := validateReplacementForSymbol(
-			replace,
-			p.Symbol,
-		); err != nil {
-			return "", err
-		}
-	}
-
-	if search == "" {
-		return "", fmt.Errorf("empty SEARCH block")
-	}
-
-	// Для REPLACE_ONLY старое ограничение strict=10 строк
-	// не применяется: полный Symbol может быть больше.
-	if !replaceOnly && patchSearchTooLarge(search, policy) {
-		return "", fmt.Errorf(
-			"strict SEARCH block is too large: %d lines, maximum 10",
-			strings.Count(search, "\n")+1,
-		)
-	}
-	if patchRequiresSymbol(p, policy) &&
-		strings.TrimSpace(p.Symbol) == "" {
-		return "", fmt.Errorf(
-			"strict patch requires Symbol anchor for SEARCH block with %d lines",
-			strings.Count(search, "\n")+1,
-		)
-	}
-	if strings.TrimSpace(p.Symbol) != "" {
-		start, end, err := findSymbolRange(content, p.Symbol)
-		if err != nil {
-			return "", err
-		}
-
-		local := content[start:end]
-
-		updatedLocal, matched, err := applyPatchText(
-			local,
-			search,
-			replace,
-			policy,
-			minConfidenceOverride,
-		)
-		if err == nil && matched {
-			return content[:start] + updatedLocal + content[end:], nil
-		}
-
-		if err != nil {
-			return "", fmt.Errorf(
-				"symbol %q: %w",
-				p.Symbol,
-				err,
-			)
-		}
-
-		return "", fmt.Errorf(
-			"SEARCH block not found inside symbol %q",
-			p.Symbol,
-		)
-	}
-
-	updated, matched, err := applyPatchText(
+	return applyOnePatchWithPolicyTraced(
 		content,
-		search,
-		replace,
+		p,
 		policy,
 		minConfidenceOverride,
+		nil,
 	)
-	if err != nil {
-		return "", err
-	}
-	if !matched {
-		return "", fmt.Errorf("SEARCH block not found")
-	}
-
-	return updated, nil
 }
 
 // detectSymbolForSearch ищет функцию/метод, содержащий SEARCH-блок,
@@ -417,197 +304,14 @@ func applyPatchText(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, bool, error) {
-	// ------------------------------------------------------------
-	// 1. EXACT
-	// ------------------------------------------------------------
-	count := strings.Count(content, search)
-
-	if count == 1 {
-		return strings.Replace(content, search, replace, 1), true, nil
-	}
-
-	if count > 1 {
-		return "", false, fmt.Errorf(
-			"SEARCH block is ambiguous (%d exact matches)",
-			count,
-		)
-	}
-
-	origLines := strings.Split(content, "\n")
-	searchLines := strings.Split(search, "\n")
-
-	// ------------------------------------------------------------
-	// 2. RELAXED: tabs/spaces + indentation + trailing whitespace
-	// ------------------------------------------------------------
-	relaxed := findRelaxedMatches(
-		origLines,
-		searchLines,
-	)
-
-	if len(relaxed) == 1 {
-		return replaceLineRange(
-			origLines,
-			relaxed[0],
-			relaxed[0]+len(searchLines),
-			replace,
-		), true, nil
-	}
-
-	if len(relaxed) > 1 {
-		return "", false, fmt.Errorf(
-			"SEARCH block is ambiguous (%d relaxed matches)",
-			len(relaxed),
-		)
-	}
-
-	// ------------------------------------------------------------
-	// 3. NORMALIZED: полностью игнорируем indentation
-	// ------------------------------------------------------------
-	normalized := findNormalizedMatches(
-		origLines,
-		searchLines,
-	)
-
-	if len(normalized) == 1 {
-		return replaceLineRange(
-			origLines,
-			normalized[0],
-			normalized[0]+len(searchLines),
-			replace,
-		), true, nil
-	}
-
-	if len(normalized) > 1 {
-		return "", false, fmt.Errorf(
-			"SEARCH block is ambiguous (%d normalized matches)",
-			len(normalized),
-		)
-	}
-
-	// ------------------------------------------------------------
-	// 4. REBASE — сначала пытаемся найти блок по стабильному
-	// уникальному anchor. Это безопаснее полноценного fuzzy.
-	// Strict режим намеренно пропускает этот этап.
-	// ------------------------------------------------------------
-	if policy != PatchPolicyStrict {
-		if rebased := findRebasedBlock(origLines, searchLines); rebased != nil {
-			return replaceLineRange(
-				origLines,
-				rebased.StartLine,
-				rebased.StartLine+len(searchLines),
-				replace,
-			), true, nil
-		}
-	}
-
-	// ------------------------------------------------------------
-	// 5. FUZZY — только Balanced / Advanced
-	// ------------------------------------------------------------
-	if policy == PatchPolicyStrict {
-		return "", false, nil
-	}
-
-	// Одинокая fuzzy-строка слишком легко совпадает случайно.
-	if len(searchLines) < 2 {
-		return "", false, nil
-	}
-
-	if !hasUniqueExactAnchor(origLines, searchLines) {
-		return "", false, nil
-	}
-
-	threshold, requiredMargin := fuzzyThresholds(
+	return applyPatchTextTraced(
+		content,
+		search,
+		replace,
 		policy,
 		minConfidenceOverride,
+		nil,
 	)
-
-	// ------------------------------------------------------------
-	// 5a. AST-AWARE FUZZY
-	// ------------------------------------------------------------
-	astFuzzy := findASTAwareBlock(
-		origLines,
-		searchLines,
-	)
-
-	if astFuzzy != nil {
-		if astFuzzy.Similarity < threshold {
-			return "", false, fmt.Errorf(
-				"AST-aware fuzzy SEARCH rejected: confidence %.2f below threshold %.2f",
-				astFuzzy.Similarity,
-				threshold,
-			)
-		}
-
-		margin := astFuzzy.Similarity -
-			astFuzzy.SecondBest
-
-		if astFuzzy.SecondBest <= 0 {
-			margin = astFuzzy.Similarity
-		}
-
-		if margin < requiredMargin {
-			return "", false, fmt.Errorf(
-				"AST-aware fuzzy SEARCH rejected: ambiguous candidates (best %.2f, second %.2f, margin %.2f, required %.2f)",
-				astFuzzy.Similarity,
-				astFuzzy.SecondBest,
-				margin,
-				requiredMargin,
-			)
-		}
-
-		return replaceLineRange(
-			origLines,
-			astFuzzy.StartLine,
-			astFuzzy.StartLine+len(searchLines),
-			replace,
-		), true, nil
-	}
-
-	// ------------------------------------------------------------
-	// 5b. LEGACY FUZZY
-	// ------------------------------------------------------------
-	fuzzy := findClosestBlockWithMargin(
-		origLines,
-		searchLines,
-		0.60,
-	)
-
-	if fuzzy == nil {
-		return "", false, nil
-	}
-
-	if fuzzy.Similarity < threshold {
-		return "", false, fmt.Errorf(
-			"fuzzy SEARCH rejected: confidence %.2f below threshold %.2f",
-			fuzzy.Similarity,
-			threshold,
-		)
-	}
-
-	margin := fuzzy.Similarity -
-		fuzzy.SecondBest
-
-	if fuzzy.SecondBest <= 0 {
-		margin = fuzzy.Similarity
-	}
-
-	if margin < requiredMargin {
-		return "", false, fmt.Errorf(
-			"fuzzy SEARCH rejected: ambiguous candidates (best %.2f, second %.2f, margin %.2f, required %.2f)",
-			fuzzy.Similarity,
-			fuzzy.SecondBest,
-			margin,
-			requiredMargin,
-		)
-	}
-
-	return replaceLineRange(
-		origLines,
-		fuzzy.StartLine,
-		fuzzy.StartLine+len(searchLines),
-		replace,
-	), true, nil
-
 }
 
 func hasUniqueExactAnchor(

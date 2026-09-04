@@ -517,6 +517,65 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		return HelpForCommand(strings.TrimPrefix(cmd, ":"))
 	}
 	switch cmd {
+	case ":diff-trace":
+		status := "off"
+		if s.Cfg.DiffTrace {
+			status = "on"
+		}
+
+		if len(args) == 0 {
+			return domain.Result{
+				Success: true,
+				Mode:    "command",
+				Response: i18n.T(
+					"DIFF trace: %s",
+					status,
+				),
+			}
+		}
+
+		switch strings.ToLower(args[0]) {
+		case "on", "true", "1":
+			s.Cfg.DiffTrace = true
+
+			return domain.Result{
+				Success: true,
+				Mode:    "command",
+				Response: i18n.T(
+					"DIFF trace enabled.",
+				),
+			}
+
+		case "off", "false", "0":
+			s.Cfg.DiffTrace = false
+
+			return domain.Result{
+				Success: true,
+				Mode:    "command",
+				Response: i18n.T(
+					"DIFF trace disabled.",
+				),
+			}
+
+		case "status":
+			return domain.Result{
+				Success: true,
+				Mode:    "command",
+				Response: i18n.T(
+					"DIFF trace: %s",
+					status,
+				),
+			}
+
+		default:
+			return domain.Result{
+				Success: false,
+				Mode:    "command",
+				Errors: []string{
+					"usage: :diff-trace [on|off|status|help]",
+				},
+			}
+		}
 	case ":reasoning":
 		if len(args) > 0 {
 			// ➕ НОВОЕ: обработка ":reasoning router [on|off]"
@@ -1333,6 +1392,9 @@ func (s *Service) SearchAnswer(ctx context.Context, query string, emit func(doma
 func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
 
+	stopDiffTrace := s.installDiffTrace(emit)
+	defer stopDiffTrace()
+
 	if isRemovedWorkflowMode(opts.Mode) {
 		return domain.Result{
 			Success: false,
@@ -1678,6 +1740,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			)
 		}
 
+		if s.Cfg.DiffTrace && usePatchPrompt {
+			emitParsedDiffTrace(
+				emit,
+				changes,
+				i,
+			)
+		}
+
 		changes = s.WS.BindSourceSnapshot(
 			changes,
 			sourceSnapshot,
@@ -1988,6 +2058,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					}
 				}
 			}
+			if patchModeChanges && s.Cfg.DiffTrace {
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"[DIFF] phase=VERIFY stage=BUILD decision=REJECT",
+				)
+			}
 
 			_ = os.RemoveAll(sandbox)
 
@@ -2012,6 +2089,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 
 			continue
+		}
+
+		if patchModeChanges && s.Cfg.DiffTrace {
+			sendEvent(
+				emit,
+				domain.EventLog,
+				"[DIFF] phase=VERIFY stage=BUILD decision=OK",
+			)
 		}
 
 		if !opts.NoTests && patchModeChanges {
@@ -2068,41 +2153,98 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		}
 
 		if !opts.NoTests {
-			sendEvent(emit, domain.EventLog, "Running go test")
-			tests, err := s.Runner.Test(ctx, sandbox)
+			if patchModeChanges && s.Cfg.DiffTrace {
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"[DIFF] phase=VERIFY stage=FULL_TESTS decision=RUN",
+				)
+			}
+
+			sendEvent(
+				emit,
+				domain.EventLog,
+				"Running go test",
+			)
+
+			tests, err := s.Runner.Test(
+				ctx,
+				sandbox,
+			)
+
 			result.Tests = tests
+
+			// Сначала фиксируем результат тестов,
+			// пока tests находится в этой области видимости.
+			if patchModeChanges && s.Cfg.DiffTrace {
+				decision := "OK"
+				if err != nil || tests.Failed > 0 {
+					decision = "REJECT"
+				}
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					fmt.Sprintf(
+						"[DIFF] phase=VERIFY stage=FULL_TESTS decision=%s passed=%d failed=%d",
+						decision,
+						tests.Passed,
+						tests.Failed,
+					),
+				)
+			}
+
 			if err != nil {
 				_ = os.RemoveAll(sandbox)
+
 				if ctx.Err() != nil {
 					result.AddError(ctx.Err().Error())
 					break
 				}
-				lastErrors = []string{formatTestFeedback(tests, err)}
-				// ─── ИЗМЕНЕНО: патч применился, build прошёл, но тесты упали ──
+
+				lastErrors = []string{
+					formatTestFeedback(tests, err),
+				}
+
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
-						sendEvent(emit, domain.EventWarn,
-							"Patch applied, build passed, but tests failed. Will request patch fix.")
+
+						sendEvent(
+							emit,
+							domain.EventWarn,
+							"Patch applied, build passed, but tests failed. Will request patch fix.",
+						)
 					} else {
 						forceFull = true
 					}
 				}
+
 				continue
 			}
+
 			if tests.Failed > 0 {
 				_ = os.RemoveAll(sandbox)
-				lastErrors = []string{"tests failed", runner.FormatFeedback(tests)}
-				// ─── ИЗМЕНЕНО: аналогично ──────────────────────────────
+
+				lastErrors = []string{
+					"tests failed",
+					runner.FormatFeedback(tests),
+				}
+
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
-						sendEvent(emit, domain.EventWarn,
-							"Patch applied, build passed, but tests failed. Will request patch fix.")
+
+						sendEvent(
+							emit,
+							domain.EventWarn,
+							"Patch applied, build passed, but tests failed. Will request patch fix.",
+						)
 					} else {
 						forceFull = true
 					}
 				}
+
 				continue
 			}
 		}

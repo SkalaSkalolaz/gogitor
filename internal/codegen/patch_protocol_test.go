@@ -95,10 +95,12 @@ func TestValidateRejectsReplaceOnlyWithSearch(t *testing.T) {
 		}},
 	}}
 
-	if err := Validate(
+	err := Validate(
 		changes,
 		"/tmp/project",
-	); err == nil {
+	)
+
+	if err == nil {
 		t.Fatal(
 			"expected REPLACE_ONLY with SEARCH to be rejected",
 		)
@@ -126,10 +128,12 @@ func TestValidateRejectsReplaceOnlyWithoutSymbol(
 		}},
 	}}
 
-	if err := Validate(
+	err := Validate(
 		changes,
 		"/tmp/project",
-	); err == nil {
+	)
+
+	if err == nil {
 		t.Fatal(
 			"expected REPLACE_ONLY without Symbol to be rejected",
 		)
@@ -200,10 +204,12 @@ func TestValidateRejectsEmptyReplaceOnlyBody(
 		}},
 	}}
 
-	if err := Validate(
+	err := Validate(
 		changes,
 		"/tmp/project",
-	); err == nil {
+	)
+
+	if err == nil {
 		t.Fatal(
 			"expected empty REPLACE_ONLY body rejection",
 		)
