@@ -25,7 +25,7 @@ type Workspace struct {
 	mu              sync.Mutex
 	applyMu         sync.Mutex
 	diffTraceSink   DiffTraceSink
-    diffMatching domain.DiffMatchingConfig
+	diffMatching    domain.DiffMatchingConfig
 	idx             *index.Index
 	lastRefresh     time.Time
 	watcher         *fsnotify.Watcher
@@ -334,7 +334,7 @@ func (w *Workspace) ApplyChangesSmartWithPolicy(
 				ch.Patches,
 				policy,
 				minConfidenceOverride,
-                w.getDiffMatchingConfig(),
+				w.getDiffMatchingConfig(),
 				"SANDBOX_APPLY",
 				ch.Path,
 				w.getDiffTraceSink(),
@@ -775,4 +775,10 @@ func (w *Workspace) getDiffMatchingConfig() domain.DiffMatchingConfig {
 	w.mu.Unlock()
 
 	return cfg.Normalized()
+}
+
+// DiffMatchingConfig возвращает фактические параметры,
+// используемые patch engine.
+func (w *Workspace) DiffMatchingConfig() domain.DiffMatchingConfig {
+	return w.getDiffMatchingConfig()
 }

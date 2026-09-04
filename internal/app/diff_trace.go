@@ -87,6 +87,32 @@ func emitParsedDiffTrace(
 	}
 }
 
+// ✅ ПРАВИЛЬНО:
+func emitDiffMatchingConfigTrace(
+	emit func(domain.Event),
+	cfg domain.DiffMatchingConfig,
+) {
+	if emit == nil {
+		return
+	}
+	cfg = cfg.Normalized()
+	sendEvent(
+		emit,
+		domain.EventLog,
+		fmt.Sprintf(
+			"[DIFF] matching-config ast_weight=%.2f line_weight=%.2f ast_min_structure=%.2f base=%.2f balanced=%.2f/%.2f advanced=%.2f/%.2f",
+			cfg.ASTWeight,
+			cfg.LineWeight,
+			cfg.ASTMinStructure,
+			cfg.FuzzyBaseThreshold,
+			cfg.BalancedThreshold,
+			cfg.BalancedMargin,
+			cfg.AdvancedThreshold,
+			cfg.AdvancedMargin,
+		),
+	)
+}
+
 func diffLineCount(s string) int {
 	s = strings.TrimSpace(
 		strings.ReplaceAll(s, "\r\n", "\n"),

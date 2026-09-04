@@ -207,17 +207,17 @@ func New(cfg *config.Config, log *slog.Logger) *Service {
 	safeCfg := search.DefaultSafeSearchConfig()
 	safeCfg.Enabled = cfg.AutoSearch
 	safeSearcher := search.NewSafeSearcher(searcher, safeCfg)
-    ws := workspace.New(cfg.WorkDir)
-    
-    ws.SetDiffMatchingConfig(
-    	cfg.DiffMatching,
-    )
+	ws := workspace.New(cfg.WorkDir)
+
+	ws.SetDiffMatchingConfig(
+		cfg.DiffMatching,
+	)
 	svc := &Service{
 		Cfg:        cfg,
 		Log:        log,
 		LLM:        dispatcher,
 		Agents:     dispatcher,
-        WS: ws,
+		WS:         ws,
 		Runner:     newRunnerWithDeps(cfg, log),
 		Git:        git.New(cfg.WorkDir, log),
 		GitHub:     github.NewClient(cfg.GitHubToken, log),
@@ -1580,6 +1580,8 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		var prompt string
 		allowFallback := false
 		usePatchPrompt := false
+		diffMatchingConfigLogged := false
+
 		if i == 1 {
 			// Проверяем, существуют ли целевые файлы.
 			// Если ни один целевой файл не существует, патч-режим не нужен.
@@ -1643,6 +1645,18 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 			prompt = prompts.CodeFix(query, contextForFix, strings.Join(lastErrors, "\n"))
 			usePatchPrompt = false
+		}
+
+		if usePatchPrompt &&
+			s.Cfg.DiffTrace &&
+			!diffMatchingConfigLogged {
+
+			emitDiffMatchingConfigTrace(
+				emit,
+				s.Cfg.DiffMatching,
+			)
+
+			diffMatchingConfigLogged = true
 		}
 
 		if i == 1 &&
@@ -4322,9 +4336,9 @@ func (s *Service) switchWorkDir(newDir string) {
 	}
 
 	s.WS = workspace.New(newDir)
-    s.WS.SetDiffMatchingConfig(
-    	s.Cfg.DiffMatching,
-    )
+	s.WS.SetDiffMatchingConfig(
+		s.Cfg.DiffMatching,
+	)
 	s.Stats = loadLLMStats(newDir)
 }
 
