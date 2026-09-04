@@ -3458,6 +3458,8 @@ func helpTextEn() string {
 - **:save <file>** — Save last result to file (.md, .txt, .go, .json)
 - **:reasoning** — Show current thinking mode state
 - **:reasoning on/off** — Enable/disable thinking mode
+- **:diff-trace** — Show the state of DIFF insertion diagnostics
+- **:diff-trace on/off** — Enable/disable DIFF insertion diagnostics
 
 ## Code & Analysis
 - **:code <task>** — Create or modify code
@@ -3573,6 +3575,8 @@ func helpTextRu() string {
 - **:save <файл>** — Сохранить результат в файл (.md, .txt, .go, .json)
 - **:reasoning** — Показать состояние режима размышления
 - **:reasoning on/off** — Включить/выключить режим размышления
+- **:diff-trace** — Показать состояние диагностики применения DIFF-вставок
+- **:diff-trace on/off** — Включить.выключить диагностику применения DIFF-вставок
 
 ## Код и Анализ
 - **:code <задача>** — Создать или изменить код
