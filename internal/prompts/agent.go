@@ -130,12 +130,16 @@ RULES:
 - missing error handling in non-critical paths;
 - theoretical performance concerns;
 - missing features not explicitly required by the subtask.
-5. Do NOT mark "missing required part" as critical unless you can point to a specific file or function that is explicitly required by the subtask text and is clearly absent from the change summary. However, if the subtask explicitly says "Create <filename>" or "Создать <filename>", and that file is absent from the CHANGE SUMMARY, this IS a critical issue and you MUST set approved=false.
-6. If you are unsure whether something is critical, approve and add it as a suggestion instead.
-7. Suggestions may contain non-blocking improvements but must never block approval.
-8. When in doubt, approve.
-9. Keep each suggestion string under 200 characters.
-10. Maximum 5 suggestions.
+5. NEVER suggest removing imports that are actively used in the provided code snippet.
+6. NEVER suggest using deprecated packages. For example, always prefer "io" and "os" over the deprecated "io/ioutil".
+7. NEVER suggest adding dummy variables (like "var _ = ...") or blank imports just to silence linters.
+8. Base your review STRICTLY on the visible code context. Do not hallucinate missing functions, variables, or usages.
+9. Do NOT mark "missing required part" as critical unless you can point to a specific file or function that is explicitly required by the subtask text and is clearly absent from the change summary. However, if the subtask explicitly says "Create <filename>" or "Создать <filename>", and that file is absent from the CHANGE SUMMARY, this IS a critical issue and you MUST set approved=false.
+10. If you are unsure whether something is critical, approve and add it as a suggestion instead.
+11. Suggestions may contain non-blocking improvements but must never block approval.
+12. When in doubt, approve.
+13. Keep each suggestion string under 200 characters.
+14. Maximum 5 suggestions.
 `)
 	if strings.TrimSpace(memory) != "" {
 		b.WriteString("\nPROJECT MEMORY:\n")

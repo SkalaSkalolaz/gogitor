@@ -469,6 +469,13 @@ RULES FOR REPLACE:
 - Do not include SEARCH/REPLACE markers inside REPLACE.
 `)
 
+	b.WriteString(`
+CRITICAL FORMATTING RULES:
+1. Do NOT wrap patches in markdown code blocks (no ` + "```go" + ` or ` + "```" + ` around the patches).
+2. You MUST use the exact literal markers on their own lines: ` + "`<<<<<<< SEARCH`" + `, ` + "`=======`" + `, and ` + "`>>>>>>> REPLACE`" + `.
+3. Do NOT include any conversational text, explanations, or thoughts before or after the patch blocks.
+4. Return ONLY the raw patch blocks. If you output markdown formatting, the patch will fail to apply.
+`)
 	// НОВОЕ: Примеры формата
 	b.WriteString(`
 EXAMPLES:

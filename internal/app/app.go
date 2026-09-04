@@ -1898,17 +1898,28 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				s.Cfg.FuzzyMinConfidence,
 			)
 
+
 		if preflightErr != nil {
 			_ = os.RemoveAll(sandbox)
-			lastErrors = []string{preflightErr.Error()}
+			
+			errMsg := preflightErr.Error()
+			lastErrors = []string{errMsg}
 
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
 					patchRepairPending = true
+					
+					// Обрезаем длинные ошибки для аккуратного вывода в TUI,
+					// чтобы не ломать верстку интерфейса.
+					displayErr := errMsg
+					if len(displayErr) > 150 {
+						displayErr = displayErr[:150] + "..."
+					}
+					
 					sendEvent(
 						emit,
 						domain.EventWarn,
-						"Patch preflight rejected. Requesting corrected patch.",
+						fmt.Sprintf("Patch preflight rejected (%s). Requesting corrected patch.", displayErr),
 					)
 				} else {
 					forceFull = true
@@ -1916,7 +1927,6 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 			continue
 		}
-
 		changes = preparedChanges
 
 		if preflight != nil {
