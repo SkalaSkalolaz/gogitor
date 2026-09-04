@@ -178,14 +178,33 @@ func (m patchMatchResult) Margin() float64 {
 	return m.Confidence - m.SecondBest
 }
 
-func fuzzyThresholds(policy PatchPolicy, override float64) (threshold, margin float64) {
+func fuzzyThresholds(
+	policy PatchPolicy,
+	override float64,
+) (threshold, margin float64) {
+	return fuzzyThresholdsWithConfig(
+		policy,
+		override,
+		domain.DefaultDiffMatchingConfig(),
+	)
+}
+
+func fuzzyThresholdsWithConfig(
+	policy PatchPolicy,
+	override float64,
+	matching domain.DiffMatchingConfig,
+) (threshold, margin float64) {
+	matching = matching.Normalized()
+
 	switch policy {
 	case PatchPolicyAdvanced:
-		threshold = 0.85
-		margin = 0.05
+		threshold = matching.AdvancedThreshold
+		margin = matching.AdvancedMargin
+
 	case PatchPolicyBalanced:
-		threshold = 0.82
-		margin = 0.08
+		threshold = matching.BalancedThreshold
+		margin = matching.BalancedMargin
+
 	default:
 		// Strict mode никогда не применяет fuzzy автоматически.
 		threshold = 1.01
@@ -205,15 +224,16 @@ func applyPatchesWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	return applyPatchesWithPolicyCore(
-		content,
-		patches,
-		policy,
-		minConfidenceOverride,
-		"",
-		"",
-		nil,
-	)
+    return applyPatchesWithPolicyCore(
+    	content,
+    	patches,
+    	policy,
+    	minConfidenceOverride,
+    	domain.DefaultDiffMatchingConfig(),
+    	"",
+    	"",
+    	nil,
+    )
 }
 
 // applyOnePatch оставляем как compatibility wrapper,
@@ -233,13 +253,14 @@ func applyOnePatchWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-	return applyOnePatchWithPolicyCore(
-		content,
-		p,
-		policy,
-		minConfidenceOverride,
-		nil,
-	)
+    return applyOnePatchWithPolicyCore(
+    	content,
+    	p,
+    	policy,
+    	minConfidenceOverride,
+    	domain.DefaultDiffMatchingConfig(),
+    	nil,
+    )
 }
 
 // detectSymbolForSearch ищет функцию/метод, содержащий SEARCH-блок,
@@ -304,14 +325,15 @@ func applyPatchText(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, bool, error) {
-	return applyPatchTextCore(
-		content,
-		search,
-		replace,
-		policy,
-		minConfidenceOverride,
-		nil,
-	)
+    return applyPatchTextCore(
+    	content,
+    	search,
+    	replace,
+    	policy,
+    	minConfidenceOverride,
+    	domain.DefaultDiffMatchingConfig(),
+    	nil,
+    )
 }
 
 func hasUniqueExactAnchor(

@@ -1,6 +1,10 @@
 package workspace
 
-import "testing"
+import (
+	"testing"
+
+    "gogitor/internal/domain"
+)
 
 func TestFindASTAwareBlock_LiteralChange(t *testing.T) {
 	orig := []string{
@@ -54,6 +58,19 @@ func TestFindASTAwareBlock_LiteralChange(t *testing.T) {
 		)
 	}
 }
+
+func findASTAwareBlock(
+	origLines,
+	searchLines []string,
+) *fuzzyMatch {
+	return findASTAwareBlockWithConfig(
+		origLines,
+		searchLines,
+		domain.DefaultDiffMatchingConfig(),
+	)
+}
+
+
 
 func TestFindASTAwareBlock_RejectsDifferentStatementKind(
 	t *testing.T,
@@ -195,6 +212,47 @@ func TestFindASTAwareBlock_IdentifierChangesKeepStructure(
 		t.Fatalf(
 			"StartLine = %d, want 3",
 			match.StartLine,
+		)
+	}
+}
+
+func TestFindASTAwareBlockWithConfigUsesWeights(
+	t *testing.T,
+) {
+	orig := []string{
+		"if ready {",
+		"\tvalue := compute(x)",
+		"\tprintln(value)",
+		"}",
+	}
+
+	search := []string{
+		"if ready {",
+		"\tresult := compute(x)",
+		"\tprintln(result)",
+		"}",
+	}
+
+	cfg := domain.DefaultDiffMatchingConfig()
+	cfg.ASTWeight = 0.40
+	cfg.LineWeight = 0.60
+	cfg = cfg.Normalized()
+
+	match := findASTAwareBlockWithConfig(
+		orig,
+		search,
+		cfg,
+	)
+
+	if match == nil {
+		t.Fatal(
+			"expected AST-aware match",
+		)
+	}
+
+	if match.Similarity <= 0 {
+		t.Fatal(
+			"expected positive similarity",
 		)
 	}
 }

@@ -8,11 +8,10 @@ import (
 	"go/token"
 	"sort"
 	"strings"
+
+    "gogitor/internal/domain"
 )
 
-// astFuzzyMinStructure — минимальная структурная близость.
-// Чем выше значение, тем консервативнее AST-aware fuzzy.
-const astFuzzyMinStructure = 0.82
 
 type astFragmentShape struct {
 	NodeCounts  map[string]int
@@ -21,10 +20,13 @@ type astFragmentShape struct {
 	TopLevelKinds []string
 }
 
-func findASTAwareBlock(
+func findASTAwareBlockWithConfig(
 	origLines,
 	searchLines []string,
+	matching domain.DiffMatchingConfig,
 ) *fuzzyMatch {
+    matching =
+    	matching.Normalized()
 	if len(searchLines) == 0 ||
 		len(searchLines) > len(origLines) {
 		return nil
@@ -161,20 +163,16 @@ func findASTAwareBlock(
 		// --------------------------------------------------------
 		// Это внутренний AST safety gate.
 		// --------------------------------------------------------
-		if structuralSim <
-			astFuzzyMinStructure {
-			continue
-		}
-
+        if structuralSim <
+        	matching.ASTMinStructure {
+        	continue
+        }
 		// --------------------------------------------------------
 		// ФИНАЛЬНАЯ ОЦЕНКА.
 		// --------------------------------------------------------
-		const structuralWeight = 0.85
-		const lineWeight = 0.15
-
-		confidence :=
-			structuralSim*structuralWeight +
-				lineSim*lineWeight
+        confidence :=
+        	structuralSim*matching.ASTWeight +
+        		lineSim*matching.LineWeight
 
 		current, exists :=
 			candidatesByStart[start]

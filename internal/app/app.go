@@ -207,12 +207,17 @@ func New(cfg *config.Config, log *slog.Logger) *Service {
 	safeCfg := search.DefaultSafeSearchConfig()
 	safeCfg.Enabled = cfg.AutoSearch
 	safeSearcher := search.NewSafeSearcher(searcher, safeCfg)
+    ws := workspace.New(cfg.WorkDir)
+    
+    ws.SetDiffMatchingConfig(
+    	cfg.DiffMatching,
+    )
 	svc := &Service{
 		Cfg:        cfg,
 		Log:        log,
 		LLM:        dispatcher,
 		Agents:     dispatcher,
-		WS:         workspace.New(cfg.WorkDir),
+        WS: ws,
 		Runner:     newRunnerWithDeps(cfg, log),
 		Git:        git.New(cfg.WorkDir, log),
 		GitHub:     github.NewClient(cfg.GitHubToken, log),
@@ -1797,8 +1802,35 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				continue
 			}
 		}
+
+		if usePatchPrompt && s.Cfg.DiffTrace {
+			sendEvent(
+				emit,
+				domain.EventLog,
+				fmt.Sprintf(
+					"[DIFF] phase=VALIDATION stage=VALIDATE decision=RUN files=%d",
+					len(changes),
+				),
+			)
+		}
+
 		if err := codegen.Validate(changes, s.Cfg.WorkDir); err != nil {
 			lastErrors = []string{err.Error()}
+
+			if usePatchPrompt && s.Cfg.DiffTrace {
+				reason := strings.TrimSpace(err.Error())
+				reason = strings.ReplaceAll(reason, "\n", " ")
+				reason = strings.ReplaceAll(reason, "\r", " ")
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					fmt.Sprintf(
+						"[DIFF] phase=VALIDATION stage=VALIDATE decision=REJECT reason=%s",
+						reason,
+					),
+				)
+			}
 
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
@@ -1819,6 +1851,17 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 
 			continue
+		}
+
+		if usePatchPrompt && s.Cfg.DiffTrace {
+			sendEvent(
+				emit,
+				domain.EventLog,
+				fmt.Sprintf(
+					"[DIFF] phase=VALIDATION stage=VALIDATE decision=OK files=%d",
+					len(changes),
+				),
+			)
 		}
 		lastChanges = changes
 
@@ -1898,24 +1941,23 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				s.Cfg.FuzzyMinConfidence,
 			)
 
-
 		if preflightErr != nil {
 			_ = os.RemoveAll(sandbox)
-			
+
 			errMsg := preflightErr.Error()
 			lastErrors = []string{errMsg}
 
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
 					patchRepairPending = true
-					
+
 					// Обрезаем длинные ошибки для аккуратного вывода в TUI,
 					// чтобы не ломать верстку интерфейса.
 					displayErr := errMsg
 					if len(displayErr) > 150 {
 						displayErr = displayErr[:150] + "..."
 					}
-					
+
 					sendEvent(
 						emit,
 						domain.EventWarn,
@@ -2115,7 +2157,26 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				changes,
 			)
 
-			if len(packageDirs) > 0 {
+			if len(packageDirs) == 0 {
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						"[DIFF] phase=VERIFY stage=TARGETED_TESTS decision=SKIP reason=no affected Go packages",
+					)
+				}
+			} else {
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TARGETED_TESTS decision=RUN packages=%s",
+							strings.Join(packageDirs, ","),
+						),
+					)
+				}
+
 				sendEvent(
 					emit,
 					domain.EventLog,
@@ -2130,6 +2191,35 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 				if targetedErr != nil ||
 					targeted.Failed > 0 {
+
+					if s.Cfg.DiffTrace {
+						reason := "tests failed"
+
+						if targetedErr != nil {
+							reason = targetedErr.Error()
+							reason = strings.ReplaceAll(
+								reason,
+								"\n",
+								" ",
+							)
+							reason = strings.ReplaceAll(
+								reason,
+								"\r",
+								" ",
+							)
+						}
+
+						sendEvent(
+							emit,
+							domain.EventLog,
+							fmt.Sprintf(
+								"[DIFF] phase=VERIFY stage=TARGETED_TESTS decision=REJECT passed=%d failed=%d reason=%s",
+								targeted.Passed,
+								targeted.Failed,
+								reason,
+							),
+						)
+					}
 
 					_ = os.RemoveAll(sandbox)
 
@@ -2159,9 +2249,21 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 					continue
 				}
+
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TARGETED_TESTS decision=OK passed=%d failed=%d coverage=%.1f",
+							targeted.Passed,
+							targeted.Failed,
+							targeted.Coverage,
+						),
+					)
+				}
 			}
 		}
-
 		if !opts.NoTests {
 			if patchModeChanges && s.Cfg.DiffTrace {
 				sendEvent(
@@ -4220,6 +4322,9 @@ func (s *Service) switchWorkDir(newDir string) {
 	}
 
 	s.WS = workspace.New(newDir)
+    s.WS.SetDiffMatchingConfig(
+    	s.Cfg.DiffMatching,
+    )
 	s.Stats = loadLLMStats(newDir)
 }
 

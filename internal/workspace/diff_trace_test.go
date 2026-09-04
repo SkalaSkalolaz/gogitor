@@ -61,6 +61,7 @@ func main() {
 			patch,
 			PatchPolicyBalanced,
 			0,
+			domain.DefaultDiffMatchingConfig(),
 			newPatchTrace(
 				ws.getDiffTraceSink(),
 				"TEST",

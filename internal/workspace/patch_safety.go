@@ -281,12 +281,12 @@ func (w *Workspace) PreflightChanges(
 				return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, resolveErr)
 			}
 			ch.Patches[pi] = resolved
-
 			updated, err := applyOnePatchWithPolicyCore(
 				current,
 				resolved,
 				policy,
 				minConfidenceOverride,
+				w.getDiffMatchingConfig(),
 				newPatchTrace(
 					w.getDiffTraceSink(),
 					"PREFLIGHT",

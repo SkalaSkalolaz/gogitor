@@ -17,6 +17,7 @@ func applyPatchesWithPolicyCore(
 	patches []domain.Patch,
 	policy PatchPolicy,
 	minConfidenceOverride float64,
+	matching domain.DiffMatchingConfig,
 	phase string,
 	file string,
 	sink DiffTraceSink,
@@ -48,6 +49,7 @@ func applyPatchesWithPolicyCore(
 				p,
 				policy,
 				minConfidenceOverride,
+				matching,
 				trace,
 			)
 
@@ -72,8 +74,11 @@ func applyOnePatchWithPolicyCore(
 	p domain.Patch,
 	policy PatchPolicy,
 	minConfidenceOverride float64,
+	matching domain.DiffMatchingConfig,
 	trace *patchTrace,
 ) (string, error) {
+	matching =
+		matching.Normalized()
 	if trace == nil {
 		trace = newPatchTrace(
 			nil,
@@ -318,9 +323,9 @@ func applyOnePatchWithPolicyCore(
 				replace,
 				policy,
 				minConfidenceOverride,
+				matching,
 				trace,
 			)
-
 		if err != nil {
 			trace.emit(
 				"APPLY",
@@ -373,9 +378,9 @@ func applyOnePatchWithPolicyCore(
 			replace,
 			policy,
 			minConfidenceOverride,
+			matching,
 			trace,
 		)
-
 	if err != nil {
 		trace.emit(
 			"APPLY",
@@ -426,8 +431,11 @@ func applyPatchTextCore(
 	replace string,
 	policy PatchPolicy,
 	minConfidenceOverride float64,
+	matching domain.DiffMatchingConfig,
 	trace *patchTrace,
 ) (string, bool, error) {
+	matching =
+		matching.Normalized()
 	if trace == nil {
 		trace = newPatchTrace(
 			nil,
@@ -654,17 +662,19 @@ func applyPatchTextCore(
 			"strict policy",
 		)
 	} else {
+
 		threshold, requiredMargin :=
-			fuzzyThresholds(
+			fuzzyThresholdsWithConfig(
 				policy,
 				minConfidenceOverride,
+				matching,
 			)
 
-		astMatch := findASTAwareBlock(
+		astMatch := findASTAwareBlockWithConfig(
 			origLines,
 			searchLines,
+			matching,
 		)
-
 		if astMatch == nil {
 			trace.emit(
 				"AST_FUZZY",
@@ -769,15 +779,16 @@ func applyPatchTextCore(
 	}
 
 	threshold, requiredMargin :=
-		fuzzyThresholds(
+		fuzzyThresholdsWithConfig(
 			policy,
 			minConfidenceOverride,
+			matching,
 		)
 
 	fuzzy := findClosestBlockWithMargin(
 		origLines,
 		searchLines,
-		0.60,
+		matching.FuzzyBaseThreshold,
 	)
 
 	if fuzzy == nil {

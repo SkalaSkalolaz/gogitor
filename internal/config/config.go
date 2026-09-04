@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	
+	"gogitor/internal/domain"
 )
 
 // AgentModelCapability содержит настройки конкретной модели
@@ -50,6 +52,7 @@ type Config struct {
 	PatchProtocolMode            string                          `json:"patch_protocol_mode"`
 	PatchAuditorMode             string                          `json:"patch_auditor_mode"`
 	DiffTrace                    bool                            `json:"diff_trace"`
+    DiffMatching                 domain.DiffMatchingConfig       `json:"diff_matching"`
 	ComputerEnabled              bool                            `json:"computer_enabled"`
 	ComputerAllowSudo            bool                            `json:"computer_allow_sudo"`
 	ComputerConfirmHigh          bool                            `json:"computer_confirm_high"`
@@ -95,6 +98,7 @@ func Default() *Config {
 		PatchProtocolMode:            "auto",
 		PatchAuditorMode:             "auto",
 		DiffTrace:                    false,
+        DiffMatching:                 domain.DefaultDiffMatchingConfig(),
 		ComputerEnabled:              false,
 		ComputerAllowSudo:            false,
 		ComputerConfirmHigh:          true,
@@ -246,9 +250,13 @@ func Load() (*Config, error) {
 		cfg.loadLocal()
 		return cfg, err
 	}
-	cfg.loadEnv()
-	cfg.loadLocal()
-	return cfg, nil
+    cfg.loadEnv()
+    cfg.loadLocal()
+    
+    cfg.DiffMatching =
+    	cfg.DiffMatching.Normalized()
+    
+    return cfg, nil
 }
 
 func (c *Config) loadEnv() {
@@ -531,6 +539,8 @@ func (c *Config) loadLocal() {
 }
 
 func (c *Config) Validate() error {
+    c.DiffMatching =
+    	c.DiffMatching.Normalized()
 	if c.LLMTimeout <= 0 {
 		c.LLMTimeout = 300
 	}
