@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	
+
 	"gogitor/internal/domain"
 )
 
@@ -22,6 +22,24 @@ type AgentModelCapability struct {
 	MaxSubtasks    int    `json:"max_subtasks,omitempty"`
 }
 
+// AgentTimeoutConfig содержит временные лимиты Agent по ролям.
+// Все значения задаются в секундах.
+type AgentTimeoutConfig struct {
+	SessionSec             int `json:"session_sec"`
+	SessionLargeContextSec int `json:"session_large_context_sec"`
+	SessionHugeContextSec  int `json:"session_huge_context_sec"`
+
+	RouterSec   int `json:"router_sec"`
+	PlannerSec  int `json:"planner_sec"`
+	CoderSec    int `json:"coder_sec"`
+	ReviewerSec int `json:"reviewer_sec"`
+	TesterSec   int `json:"tester_sec"`
+	VerifierSec int `json:"verifier_sec"`
+	SecuritySec int `json:"security_sec"`
+	SearcherSec int `json:"searcher_sec"`
+	DocsSec     int `json:"docs_sec"`
+}
+
 type Config struct {
 	Provider                     string                          `json:"provider"`
 	Model                        string                          `json:"model"`
@@ -32,6 +50,8 @@ type Config struct {
 	DryRun                       bool                            `json:"dry_run"`
 	LLMTimeout                   int                             `json:"llm_timeout"`
 	MaxIterations                int                             `json:"max_iterations"`
+	AgentTimeouts                AgentTimeoutConfig              `json:"agent_timeouts"`
+	RunnerTimeout                int                             `json:"runner_timeout"`
 	AutoGitCommit                bool                            `json:"auto_git_commit"`
 	GitAutoInit                  bool                            `json:"git_auto_init"`
 	MultiAgent                   bool                            `json:"multi_agent_enabled"`
@@ -52,7 +72,7 @@ type Config struct {
 	PatchProtocolMode            string                          `json:"patch_protocol_mode"`
 	PatchAuditorMode             string                          `json:"patch_auditor_mode"`
 	DiffTrace                    bool                            `json:"diff_trace"`
-    DiffMatching                 domain.DiffMatchingConfig       `json:"diff_matching"`
+	DiffMatching                 domain.DiffMatchingConfig       `json:"diff_matching"`
 	ComputerEnabled              bool                            `json:"computer_enabled"`
 	ComputerAllowSudo            bool                            `json:"computer_allow_sudo"`
 	ComputerConfirmHigh          bool                            `json:"computer_confirm_high"`
@@ -74,13 +94,29 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		Provider:                     "ollama",
-		Model:                        "gemma3:4b",
-		OllamaURL:                    "http://localhost:11434",
-		LogLevel:                     "info",
-		Debug:                        false,
-		DryRun:                       false,
-		LLMTimeout:                   3000,
+		Provider:   "ollama",
+		Model:      "gemma3:4b",
+		OllamaURL:  "http://localhost:11434",
+		LogLevel:   "info",
+		Debug:      false,
+		DryRun:     false,
+		LLMTimeout: 3600,
+		AgentTimeouts: AgentTimeoutConfig{
+			SessionSec:             3600,  // 60 минут
+			SessionLargeContextSec: 10800, // 180 минут
+			SessionHugeContextSec:  14400, // 240 минут
+
+			RouterSec:   600,   // 10 минут
+			PlannerSec:  3600,  // 60 минут
+			CoderSec:    10800, // до 180 минут
+			ReviewerSec: 1800,  // 30 минут
+			TesterSec:   1800,  // 30 минут
+			VerifierSec: 3600,  // 60 минут
+			SecuritySec: 900,   // 15 минут
+			SearcherSec: 600,   // 10 минут
+			DocsSec:     900,   // 15 минут
+		},
+		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
 		AutoGitCommit:                true,
 		GitAutoInit:                  true,
@@ -98,7 +134,7 @@ func Default() *Config {
 		PatchProtocolMode:            "auto",
 		PatchAuditorMode:             "auto",
 		DiffTrace:                    false,
-        DiffMatching:                 domain.DefaultDiffMatchingConfig(),
+		DiffMatching:                 domain.DefaultDiffMatchingConfig(),
 		ComputerEnabled:              false,
 		ComputerAllowSudo:            false,
 		ComputerConfirmHigh:          true,
@@ -232,31 +268,55 @@ func defaultAgentModelCapabilities() map[string]AgentModelCapability {
 
 func Load() (*Config, error) {
 	cfg := Default()
+
 	data, err := os.ReadFile(Path())
+
 	if err == nil {
 		if jerr := json.Unmarshal(data, cfg); jerr != nil {
 			cfg.loadEnv()
 			cfg.loadLocal()
-			return cfg, fmt.Errorf("invalid config %s: %w", Path(), jerr)
+
+			return cfg, fmt.Errorf(
+				"invalid config %s: %w",
+				Path(),
+				jerr,
+			)
+		}
+
+		if merr := mergeMissingDefaultsIntoConfigFile(
+			Path(),
+			data,
+		); merr != nil {
+			// Нефатально: значения defaults уже есть
+			// в cfg, поэтому работа программы возможна.
 		}
 	} else if os.IsNotExist(err) {
 		if serr := cfg.Save(); serr != nil {
 			cfg.loadEnv()
 			cfg.loadLocal()
-			return cfg, fmt.Errorf("created default config in memory, but cannot write %s: %w", Path(), serr)
+
+			return cfg, fmt.Errorf(
+				"created default config in memory, but cannot write %s: %w",
+				Path(),
+				serr,
+			)
 		}
 	} else {
 		cfg.loadEnv()
 		cfg.loadLocal()
+
 		return cfg, err
 	}
-    cfg.loadEnv()
-    cfg.loadLocal()
-    
-    cfg.DiffMatching =
-    	cfg.DiffMatching.Normalized()
-    
-    return cfg, nil
+
+	cfg.loadEnv()
+	cfg.loadLocal()
+
+	cfg.normalizeTimeouts()
+
+	cfg.DiffMatching =
+		cfg.DiffMatching.Normalized()
+
+	return cfg, nil
 }
 
 func (c *Config) loadEnv() {
@@ -538,12 +598,155 @@ func (c *Config) loadLocal() {
 	}
 }
 
-func (c *Config) Validate() error {
-    c.DiffMatching =
-    	c.DiffMatching.Normalized()
-	if c.LLMTimeout <= 0 {
-		c.LLMTimeout = 300
+func (c *Config) normalizeTimeouts() {
+	defaults := Default().AgentTimeouts
+
+	if c.AgentTimeouts.SessionSec <= 0 {
+		c.AgentTimeouts.SessionSec =
+			defaults.SessionSec
 	}
+
+	if c.AgentTimeouts.SessionLargeContextSec <= 0 {
+		c.AgentTimeouts.SessionLargeContextSec =
+			defaults.SessionLargeContextSec
+	}
+
+	if c.AgentTimeouts.SessionHugeContextSec <= 0 {
+		c.AgentTimeouts.SessionHugeContextSec =
+			defaults.SessionHugeContextSec
+	}
+
+	if c.AgentTimeouts.RouterSec <= 0 {
+		c.AgentTimeouts.RouterSec =
+			defaults.RouterSec
+	}
+
+	if c.AgentTimeouts.PlannerSec <= 0 {
+		c.AgentTimeouts.PlannerSec =
+			defaults.PlannerSec
+	}
+
+	if c.AgentTimeouts.CoderSec <= 0 {
+		c.AgentTimeouts.CoderSec =
+			defaults.CoderSec
+	}
+
+	if c.AgentTimeouts.ReviewerSec <= 0 {
+		c.AgentTimeouts.ReviewerSec =
+			defaults.ReviewerSec
+	}
+
+	if c.AgentTimeouts.TesterSec <= 0 {
+		c.AgentTimeouts.TesterSec =
+			defaults.TesterSec
+	}
+
+	if c.AgentTimeouts.VerifierSec <= 0 {
+		c.AgentTimeouts.VerifierSec =
+			defaults.VerifierSec
+	}
+
+	if c.AgentTimeouts.SecuritySec <= 0 {
+		c.AgentTimeouts.SecuritySec =
+			defaults.SecuritySec
+	}
+
+	if c.AgentTimeouts.SearcherSec <= 0 {
+		c.AgentTimeouts.SearcherSec =
+			defaults.SearcherSec
+	}
+
+	if c.AgentTimeouts.DocsSec <= 0 {
+		c.AgentTimeouts.DocsSec =
+			defaults.DocsSec
+	}
+
+	if c.RunnerTimeout <= 0 {
+		c.RunnerTimeout = 600
+	}
+
+	if c.LLMTimeout <= 0 {
+		c.LLMTimeout = 3600
+	}
+
+	// Не допускаем уменьшения лимита при переходе
+	// на больший context window.
+	if c.AgentTimeouts.SessionLargeContextSec <
+		c.AgentTimeouts.SessionSec {
+
+		c.AgentTimeouts.SessionLargeContextSec =
+			c.AgentTimeouts.SessionSec
+	}
+
+	if c.AgentTimeouts.SessionHugeContextSec <
+		c.AgentTimeouts.SessionLargeContextSec {
+
+		c.AgentTimeouts.SessionHugeContextSec =
+			c.AgentTimeouts.SessionLargeContextSec
+	}
+}
+
+func mergeMissingDefaultsIntoConfigFile(
+	path string,
+	data []byte,
+) error {
+	var current map[string]json.RawMessage
+
+	if err := json.Unmarshal(data, &current); err != nil {
+		return err
+	}
+
+	defaultsData, err := json.Marshal(Default())
+	if err != nil {
+		return err
+	}
+
+	var defaults map[string]json.RawMessage
+
+	if err := json.Unmarshal(
+		defaultsData,
+		&defaults,
+	); err != nil {
+		return err
+	}
+
+	changed := false
+
+	for key, value := range defaults {
+		if _, exists := current[key]; exists {
+			continue
+		}
+
+		current[key] = value
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	merged, err := json.MarshalIndent(
+		current,
+		"",
+		"  ",
+	)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(
+		path,
+		merged,
+		0o600,
+	)
+}
+
+func (c *Config) Validate() error {
+	c.DiffMatching =
+		c.DiffMatching.Normalized()
+
+	c.normalizeTimeouts()
+
 	if c.MaxIterations <= 0 {
 		c.MaxIterations = 3
 	}

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -71,12 +74,23 @@ func TestValidate(t *testing.T) {
 			t.Error("expected error")
 		}
 	})
+
 	t.Run("negative timeout fixed", func(t *testing.T) {
 		cfg := Default()
 		cfg.LLMTimeout = -1
-		_ = cfg.Validate()
-		if cfg.LLMTimeout != 300 {
-			t.Errorf("LLMTimeout = %d, want 300", cfg.LLMTimeout)
+
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf(
+				"Validate() failed: %v",
+				err,
+			)
+		}
+
+		if cfg.LLMTimeout != 3600 {
+			t.Errorf(
+				"LLMTimeout = %d, want 3600",
+				cfg.LLMTimeout,
+			)
 		}
 	})
 }
@@ -118,5 +132,254 @@ func TestParseBool(t *testing.T) {
 		if got := parseBool(tc.in); got != tc.want {
 			t.Errorf("parseBool(%q) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestDefaultAgentTimeouts(t *testing.T) {
+	cfg := Default()
+
+	if cfg.LLMTimeout != 3600 {
+		t.Fatalf(
+			"LLMTimeout = %d, want 3600",
+			cfg.LLMTimeout,
+		)
+	}
+
+	if cfg.AgentTimeouts.SessionSec != 3600 {
+		t.Fatalf(
+			"SessionSec = %d, want 3600",
+			cfg.AgentTimeouts.SessionSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.SessionLargeContextSec != 10800 {
+		t.Fatalf(
+			"SessionLargeContextSec = %d, want 10800",
+			cfg.AgentTimeouts.SessionLargeContextSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.SessionHugeContextSec != 14400 {
+		t.Fatalf(
+			"SessionHugeContextSec = %d, want 14400",
+			cfg.AgentTimeouts.SessionHugeContextSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.RouterSec != 600 {
+		t.Fatalf(
+			"RouterSec = %d, want 600",
+			cfg.AgentTimeouts.RouterSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.VerifierSec != 3600 {
+		t.Fatalf(
+			"VerifierSec = %d, want 3600",
+			cfg.AgentTimeouts.VerifierSec,
+		)
+	}
+
+	if cfg.RunnerTimeout != 600 {
+		t.Fatalf(
+			"RunnerTimeout = %d, want 600",
+			cfg.RunnerTimeout,
+		)
+	}
+}
+
+func TestLoadCreatesDefaultConfigWithTimeouts(
+	t *testing.T,
+) {
+	home := t.TempDir()
+
+	t.Setenv("HOME", home)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf(
+			"Load() failed: %v",
+			err,
+		)
+	}
+
+	if cfg.AgentTimeouts.SessionSec != 3600 {
+		t.Fatalf(
+			"loaded SessionSec = %d, want 3600",
+			cfg.AgentTimeouts.SessionSec,
+		)
+	}
+
+	path := filepath.Join(
+		home,
+		".gogitor",
+		"config.json",
+	)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf(
+			"cannot read generated config: %v",
+			err,
+		)
+	}
+
+	var disk Config
+
+	if err := json.Unmarshal(
+		data,
+		&disk,
+	); err != nil {
+		t.Fatalf(
+			"generated config is invalid JSON: %v",
+			err,
+		)
+	}
+
+	if disk.AgentTimeouts.SessionHugeContextSec != 14400 {
+		t.Fatalf(
+			"disk SessionHugeContextSec = %d, want 14400",
+			disk.AgentTimeouts.SessionHugeContextSec,
+		)
+	}
+
+	if disk.RunnerTimeout != 600 {
+		t.Fatalf(
+			"disk RunnerTimeout = %d, want 600",
+			disk.RunnerTimeout,
+		)
+	}
+}
+
+func TestLoadMigratesMissingTimeoutConfig(
+	t *testing.T,
+) {
+	home := t.TempDir()
+
+	t.Setenv("HOME", home)
+
+	dir := filepath.Join(home, ".gogitor")
+
+	if err := os.MkdirAll(
+		dir,
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(
+		dir,
+		"config.json",
+	)
+
+	oldConfig := `{
+  "provider": "ollama",
+  "model": "qwen3.8:27b",
+  "llm_timeout": 3000
+}`
+
+	if err := os.WriteFile(
+		path,
+		[]byte(oldConfig),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf(
+			"Load() failed: %v",
+			err,
+		)
+	}
+
+	if cfg.Model != "qwen3.8:27b" {
+		t.Fatalf(
+			"model = %q, want qwen3.8:27b",
+			cfg.Model,
+		)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]json.RawMessage
+
+	if err := json.Unmarshal(
+		data,
+		&raw,
+	); err != nil {
+		t.Fatalf(
+			"migrated config is invalid JSON: %v",
+			err,
+		)
+	}
+
+	if _, ok := raw["agent_timeouts"]; !ok {
+		t.Fatal(
+			"agent_timeouts was not added",
+		)
+	}
+
+	if _, ok := raw["runner_timeout"]; !ok {
+		t.Fatal(
+			"runner_timeout was not added",
+		)
+	}
+}
+
+func TestValidateNormalizesTimeouts(t *testing.T) {
+	cfg := Default()
+
+	cfg.LLMTimeout = -1
+	cfg.RunnerTimeout = -1
+
+	cfg.AgentTimeouts.SessionSec = -1
+	cfg.AgentTimeouts.RouterSec = -1
+	cfg.AgentTimeouts.VerifierSec = -1
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf(
+			"Validate() failed: %v",
+			err,
+		)
+	}
+
+	if cfg.LLMTimeout != 3600 {
+		t.Errorf(
+			"LLMTimeout = %d, want 3600",
+			cfg.LLMTimeout,
+		)
+	}
+
+	if cfg.RunnerTimeout != 600 {
+		t.Errorf(
+			"RunnerTimeout = %d, want 600",
+			cfg.RunnerTimeout,
+		)
+	}
+
+	if cfg.AgentTimeouts.SessionSec != 3600 {
+		t.Errorf(
+			"SessionSec = %d, want 3600",
+			cfg.AgentTimeouts.SessionSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.RouterSec != 600 {
+		t.Errorf(
+			"RouterSec = %d, want 600",
+			cfg.AgentTimeouts.RouterSec,
+		)
+	}
+
+	if cfg.AgentTimeouts.VerifierSec != 3600 {
+		t.Errorf(
+			"VerifierSec = %d, want 3600",
+			cfg.AgentTimeouts.VerifierSec,
+		)
 	}
 }

@@ -251,11 +251,24 @@ func New(cfg *config.Config, log *slog.Logger) *Service {
 	return svc
 }
 
-func newRunnerWithDeps(cfg *config.Config, log *slog.Logger) *runner.Runner {
-	r := runner.New(120*time.Second, log)
+func newRunnerWithDeps(
+	cfg *config.Config,
+	log *slog.Logger,
+) *runner.Runner {
+	timeout := configuredTimeout(
+		cfg.RunnerTimeout,
+		10*time.Minute,
+	)
+
+	r := runner.New(
+		timeout,
+		log,
+	)
+
 	if cfg.DepsMode != "" {
 		r.DepsMode = cfg.DepsMode
 	}
+
 	return r
 }
 
@@ -1433,60 +1446,60 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 			strategy.Reason,
 		),
 	)
-    if strategy.EditMode != "" &&
-    	strategy.EditMode != EditModeAuto {
-    
-    	sendEvent(
-    		emit,
-    		domain.EventLog,
-    		fmt.Sprintf(
-    			"Edit strategy: %s",
-    			strategy.EditMode,
-    		),
-    	)
-    }
+	if strategy.EditMode != "" &&
+		strategy.EditMode != EditModeAuto {
 
-    switch strategy.Mode {
-    case ExecutionModeSimple:
-    	simpleOpts := opts
-    	simpleOpts.EditMode = strategy.EditMode
-    
-    	return s.executeSimple(
-    		ctx,
-    		query,
-    		simpleOpts,
-    		emit,
-    	)
-    
-    case ExecutionModeAgent:
-    	agentOpts := opts
-    
-    	if strategy.AgentDepth != "" &&
-    		strategy.AgentDepth != AgentDepthAuto {
-    
-    		agentOpts.AgentDepth =
-    			strategy.AgentDepth
-    	}
-    
-    	agentOpts.EditMode =
-    		strategy.EditMode
-    
-    	return s.executeAgentFull(
-    		ctx,
-    		query,
-    		"",
-    		agentOpts,
-    		emit,
-    	)
-    
-    default:
-    	return s.executeSimple(
-    		ctx,
-    		query,
-    		opts,
-    		emit,
-    	)
-    }
+		sendEvent(
+			emit,
+			domain.EventLog,
+			fmt.Sprintf(
+				"Edit strategy: %s",
+				strategy.EditMode,
+			),
+		)
+	}
+
+	switch strategy.Mode {
+	case ExecutionModeSimple:
+		simpleOpts := opts
+		simpleOpts.EditMode = strategy.EditMode
+
+		return s.executeSimple(
+			ctx,
+			query,
+			simpleOpts,
+			emit,
+		)
+
+	case ExecutionModeAgent:
+		agentOpts := opts
+
+		if strategy.AgentDepth != "" &&
+			strategy.AgentDepth != AgentDepthAuto {
+
+			agentOpts.AgentDepth =
+				strategy.AgentDepth
+		}
+
+		agentOpts.EditMode =
+			strategy.EditMode
+
+		return s.executeAgentFull(
+			ctx,
+			query,
+			"",
+			agentOpts,
+			emit,
+		)
+
+	default:
+		return s.executeSimple(
+			ctx,
+			query,
+			opts,
+			emit,
+		)
+	}
 }
 
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
@@ -1523,13 +1536,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		s.Cfg.PatchProtocolMode,
 	)
 
-    editMode := normalizeEditMode(
-    	string(opts.EditMode),
-    )
-    
-    if editMode == EditModeAuto {
-    	editMode = EditModePatch
-    }
+	editMode := normalizeEditMode(
+		string(opts.EditMode),
+	)
+
+	if editMode == EditModeAuto {
+		editMode = EditModePatch
+	}
 
 	sourceSnapshot, snapshotErr :=
 		s.WS.CaptureProjectSnapshot()
@@ -1646,40 +1659,39 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				prompt = prompts.CodeCreateInExistingProject(query, originalContext)
 			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
 
-            if !forceFull &&
-            	editMode != EditModeFull {
-            
-            	sendEvent(
-            		emit,
-            		domain.EventLog,
-            		"Using patch mode for existing project files",
-            	)
-            
-            	prompt =
-            		prompts.CodeModifyDiffForModelWithProtocol(
-            			query,
-            			originalContext,
-            			patchPolicy.String(),
-            			patchProtocol.String(),
-            		)
-            
-            	usePatchPrompt = true
-            } else {
-            	sendEvent(
-            		emit,
-            		domain.EventLog,
-            		"Using full-file mode for existing project files",
-            	)
-            
-            	prompt =
-            		prompts.CodeModify(
-            			query,
-            			originalContext,
-            		)
-            
-            	usePatchPrompt = false
-            }
+				if !forceFull &&
+					editMode != EditModeFull {
 
+					sendEvent(
+						emit,
+						domain.EventLog,
+						"Using patch mode for existing project files",
+					)
+
+					prompt =
+						prompts.CodeModifyDiffForModelWithProtocol(
+							query,
+							originalContext,
+							patchPolicy.String(),
+							patchProtocol.String(),
+						)
+
+					usePatchPrompt = true
+				} else {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						"Using full-file mode for existing project files",
+					)
+
+					prompt =
+						prompts.CodeModify(
+							query,
+							originalContext,
+						)
+
+					usePatchPrompt = false
+				}
 
 			case originalContext != "":
 				sendEvent(emit, domain.EventLog, "Using create-in-existing-project mode")
@@ -2229,35 +2241,35 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		if err := s.Runner.Build(ctx, sandbox); err != nil {
 			buildError := trim(err.Error(), 4000)
 
-            buildErrorCode :=
-            	domain.PatchErrorCodeFromText(
-            		buildError,
-            	)
-            
-            if buildErrorCode ==
-            	domain.PatchErrorModuleImportMismatch {
-            	buildError = domain.NewPatchError(
-            		domain.PatchErrorModuleImportMismatch,
-            		buildError,
-            	).Error()
-            
-            	lastErrors = []string{
-            		buildError,
-            	}
-            } else {
-            	lastErrors = []string{
-            		buildError,
-            	}
-            }
+			buildErrorCode :=
+				domain.PatchErrorCodeFromText(
+					buildError,
+				)
+
+			if buildErrorCode ==
+				domain.PatchErrorModuleImportMismatch {
+				buildError = domain.NewPatchError(
+					domain.PatchErrorModuleImportMismatch,
+					buildError,
+				).Error()
+
+				lastErrors = []string{
+					buildError,
+				}
+			} else {
+				lastErrors = []string{
+					buildError,
+				}
+			}
 			lastErrors = []string{
 				buildError,
 			}
 
-            if buildErrorCode !=
-            	domain.PatchErrorModuleImportMismatch &&
-            	s.Cfg.AutoSearch &&
-            	isDependencyFetchError(buildError) {
-            
+			if buildErrorCode !=
+				domain.PatchErrorModuleImportMismatch &&
+				s.Cfg.AutoSearch &&
+				isDependencyFetchError(buildError) {
+
 				dependency := extractDependencyImportPath(
 					buildError,
 				)
@@ -2290,24 +2302,24 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				}
 			}
 
-            if patchModeChanges &&
-            	s.Cfg.DiffTrace {
-            
-            	message :=
-            		"[DIFF] phase=VERIFY stage=BUILD decision=REJECT"
-            
-            	if buildErrorCode != "" {
-            		message +=
-            			" error_code=" +
-            				string(buildErrorCode)
-            		}
-            
-            	sendEvent(
-            		emit,
-            		domain.EventLog,
-            		message,
-            	)
-            }
+			if patchModeChanges &&
+				s.Cfg.DiffTrace {
+
+				message :=
+					"[DIFF] phase=VERIFY stage=BUILD decision=REJECT"
+
+				if buildErrorCode != "" {
+					message +=
+						" error_code=" +
+							string(buildErrorCode)
+				}
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					message,
+				)
+			}
 
 			_ = os.RemoveAll(sandbox)
 
@@ -4826,28 +4838,75 @@ func (s *Service) GitCreate(ctx context.Context, args []string, emit func(domain
 	return result
 }
 
-func dispatcherConfig(cfg *config.Config) agent.Config {
-	timeout := time.Duration(cfg.LLMTimeout) * time.Second
-	if timeout <= 0 {
-		timeout = 3000 * time.Second
+func configuredTimeout(
+	seconds int,
+	fallback time.Duration,
+) time.Duration {
+	if seconds <= 0 {
+		return fallback
 	}
 
-	// Масштабируем бюджет от размера контекста модели
+	return time.Duration(seconds) *
+		time.Second
+}
+
+func dispatcherConfig(cfg *config.Config) agent.Config {
+	defaultLLMTimeout := 3600 * time.Second
+
+	timeout := configuredTimeout(
+		cfg.LLMTimeout,
+		defaultLLMTimeout,
+	)
+
+	timeouts := cfg.AgentTimeouts
+
+	// Общий бюджет Agent-сессии.
+	sessionDuration := configuredTimeout(
+		timeouts.SessionSec,
+		60*time.Minute,
+	)
+
+	largeSessionDuration := configuredTimeout(
+		timeouts.SessionLargeContextSec,
+		180*time.Minute,
+	)
+
+	hugeSessionDuration := configuredTimeout(
+		timeouts.SessionHugeContextSec,
+		240*time.Minute,
+	)
+
+	if largeSessionDuration < sessionDuration {
+		largeSessionDuration = sessionDuration
+	}
+
+	if hugeSessionDuration < largeSessionDuration {
+		hugeSessionDuration = largeSessionDuration
+	}
+
+	// Масштабируем общий бюджет по размеру context window.
+	ctxTokens := cfg.EffectiveContextTokens()
+
+	switch {
+	case ctxTokens > 131072:
+		sessionDuration = hugeSessionDuration
+
+	case ctxTokens > 65536:
+		sessionDuration = largeSessionDuration
+	}
+
 	sessionTokens := 2_000_000
-	sessionDuration := 45 * time.Minute
 	coderTokens := 1_500_000
 	reviewerTokens := 300_000
 
-	ctxTokens := cfg.EffectiveContextTokens()
 	if ctxTokens > 65536 {
 		sessionTokens = 8_000_000
-		sessionDuration = 90 * time.Minute
 		coderTokens = 6_000_000
 		reviewerTokens = 1_000_000
 	}
+
 	if ctxTokens > 131072 {
 		sessionTokens = 20_000_000
-		sessionDuration = 120 * time.Minute
 		coderTokens = 15_000_000
 		reviewerTokens = 2_000_000
 	}
@@ -4857,6 +4916,65 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 		coderRequests = 24
 	}
 
+	// Coder не должен превышать общий session budget.
+	coderDuration := configuredTimeout(
+		timeouts.CoderSec,
+		sessionDuration-10*time.Minute,
+	)
+
+	if coderDuration <= 0 {
+		coderDuration = sessionDuration
+	}
+
+	maxCoderDuration :=
+		sessionDuration - time.Minute
+
+	if maxCoderDuration > 0 &&
+		coderDuration > maxCoderDuration {
+
+		coderDuration = maxCoderDuration
+	}
+
+	routerDuration := configuredTimeout(
+		timeouts.RouterSec,
+		10*time.Minute,
+	)
+
+	plannerDuration := configuredTimeout(
+		timeouts.PlannerSec,
+		60*time.Minute,
+	)
+
+	reviewerDuration := configuredTimeout(
+		timeouts.ReviewerSec,
+		30*time.Minute,
+	)
+
+	testerDuration := configuredTimeout(
+		timeouts.TesterSec,
+		30*time.Minute,
+	)
+
+	verifierDuration := configuredTimeout(
+		timeouts.VerifierSec,
+		60*time.Minute,
+	)
+
+	securityDuration := configuredTimeout(
+		timeouts.SecuritySec,
+		15*time.Minute,
+	)
+
+	searcherDuration := configuredTimeout(
+		timeouts.SearcherSec,
+		10*time.Minute,
+	)
+
+	docsDuration := configuredTimeout(
+		timeouts.DocsSec,
+		15*time.Minute,
+	)
+
 	return agent.Config{
 		DefaultTimeout:     timeout,
 		MaxSessionRequests: 120,
@@ -4865,68 +4983,76 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 		MaxQueue:           128,
 		AgingPerSecond:     5,
 
-		// ─── Retry ───────────────────────────────────────────
-		MaxRetries:      2,               // 2 повторных попытки
-		RetryBaseDelay:  1 * time.Second, // первая задержка 1s
-		RetryMaxDelay:   8 * time.Second, // потолок 8s
-		RetryMultiplier: 2.0,             // 1s → 2s → 4s
+		MaxRetries:      2,
+		RetryBaseDelay:  1 * time.Second,
+		RetryMaxDelay:   8 * time.Second,
+		RetryMultiplier: 2.0,
 
 		RoleQuotas: map[agent.Role]agent.RoleQuota{
 			agent.RoleRouter: {
 				MaxRequests:   30,
 				MaxTokens:     150_000,
-				MaxDuration:   3 * time.Minute,
+				MaxDuration:   routerDuration,
 				PriorityBoost: agent.PriorityHigh,
 			},
+
 			agent.RolePlanner: {
 				MaxRequests:   50,
 				MaxTokens:     2_000_000,
-				MaxDuration:   30 * time.Minute,
+				MaxDuration:   plannerDuration,
 				PriorityBoost: agent.PriorityHigh,
 			},
+
 			agent.RoleCoder: {
 				MaxRequests:   coderRequests,
 				MaxTokens:     coderTokens,
-				MaxDuration:   sessionDuration - 5*time.Minute,
+				MaxDuration:   coderDuration,
 				PriorityBoost: 0,
 			},
+
 			agent.RoleReviewer: {
 				MaxRequests:   20,
 				MaxTokens:     reviewerTokens,
-				MaxDuration:   10 * time.Minute,
+				MaxDuration:   reviewerDuration,
 				PriorityBoost: agent.PriorityHigh,
 			},
+
 			agent.RoleTester: {
 				MaxRequests:   20,
 				MaxTokens:     reviewerTokens,
-				MaxDuration:   10 * time.Minute,
+				MaxDuration:   testerDuration,
 				PriorityBoost: agent.PriorityNormal,
 			},
+
 			agent.RoleVerifier: {
 				MaxRequests:   50,
 				MaxTokens:     reviewerTokens,
-				MaxDuration:   30 * time.Minute,
+				MaxDuration:   verifierDuration,
 				PriorityBoost: agent.PriorityCritical,
 			},
+
 			agent.RoleSecurity: {
 				MaxRequests:   10,
 				MaxTokens:     500_000,
-				MaxDuration:   5 * time.Minute,
+				MaxDuration:   securityDuration,
 				PriorityBoost: agent.PriorityHigh,
 			},
+
 			agent.RoleSearcher: {
 				MaxRequests:   5,
 				MaxTokens:     100_000,
-				MaxDuration:   2 * time.Minute,
+				MaxDuration:   searcherDuration,
 				PriorityBoost: agent.PriorityLow,
 			},
+
 			agent.RoleDocs: {
 				MaxRequests:   10,
 				MaxTokens:     300_000,
-				MaxDuration:   5 * time.Minute,
+				MaxDuration:   docsDuration,
 				PriorityBoost: agent.PriorityLow,
 			},
 		},
+
 		ReasoningEnabled: cfg.ReasoningEnabled,
 	}
 }
