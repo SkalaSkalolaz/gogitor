@@ -99,9 +99,6 @@ func PatchErrorCodeFromError(
 
 // PatchErrorCodeFromText извлекает код из уже
 // сформированного текста ошибки.
-//
-// Это нужно для repair pipeline, где ошибки
-// передаются LLM как строка.
 func PatchErrorCodeFromText(
 	text string,
 ) PatchErrorCode {
@@ -112,75 +109,67 @@ func PatchErrorCodeFromText(
 		prefix,
 	)
 
-	if idx == -1 {
-		return ""
+	if idx >= 0 {
+		value := text[idx+len(prefix):]
+
+		if colon := strings.IndexByte(
+			value,
+			':',
+		); colon >= 0 {
+			value = value[:colon]
+		}
+
+		if space := strings.IndexAny(
+			value,
+			" \t\r\n",
+		); space >= 0 {
+			value = value[:space]
+		}
+
+		value = strings.TrimSpace(value)
+
+		switch PatchErrorCode(value) {
+		case PatchErrorDuplicateFileChange:
+			return PatchErrorDuplicateFileChange
+
+		case PatchErrorStrictSymbolRequired:
+			return PatchErrorStrictSymbolRequired
+
+		case PatchErrorSymbolNotFound:
+			return PatchErrorSymbolNotFound
+
+		case PatchErrorModuleImportMismatch:
+			return PatchErrorModuleImportMismatch
+        case PatchErrorNoOpPatch:              
+            return PatchErrorNoOpPatch
+		default:
+			return ""
+		}
 	}
 
+	// Fallback для сырых сообщений go/build/go mod,
+	// где структурированного patch_error_code ещё нет.
+	lower := strings.ToLower(text)
 
-    if idx == -1 {
-    	lower := strings.ToLower(text)
-    
-    	switch {
-    	case strings.Contains(
-    		lower,
-    		"no required module provides package",
-    	):
-    		return PatchErrorModuleImportMismatch
-    
-    	case strings.Contains(
-    		lower,
-    		"cannot find module providing package",
-    	):
-    		return PatchErrorModuleImportMismatch
-    
-    	case strings.Contains(
-    		lower,
-    		" is not in std ",
-    	):
-    		return PatchErrorModuleImportMismatch
-    	}
-    
-    	return ""
-    }
+	switch {
+	case strings.Contains(
+		lower,
+		"no required module provides package",
+	):
+		return PatchErrorModuleImportMismatch
 
-	value := text[idx+len(prefix):]
+	case strings.Contains(
+		lower,
+		"cannot find module providing package",
+	):
+		return PatchErrorModuleImportMismatch
 
-	if colon := strings.IndexByte(
-		value,
-		':',
-	); colon >= 0 {
-		value = value[:colon]
-	}
+	case strings.Contains(
+		lower,
+		"module found, but does not contain package",
+	):
+		return PatchErrorModuleImportMismatch
 
-	if space := strings.IndexAny(
-		value,
-		" \t\r\n",
-	); space >= 0 {
-		value = value[:space]
-	}
-
-	value = strings.TrimSpace(value)
-
-	switch PatchErrorCode(value) {
-	case PatchErrorDuplicateFileChange:
-		return PatchErrorDuplicateFileChange
-
-	case PatchErrorStrictSymbolRequired:
-		return PatchErrorStrictSymbolRequired
-
-	case PatchErrorStrictSearchTooLarge:
-		return PatchErrorStrictSearchTooLarge
-
-	case PatchErrorSymbolNotFound:
-		return PatchErrorSymbolNotFound
-	case PatchErrorNoOpPatch:
-		return PatchErrorNoOpPatch
-
-    case PatchErrorModuleImportMismatch:	
-    	return PatchErrorModuleImportMismatch
-
-	case PatchErrorTaskEffectiveness:
-		return PatchErrorTaskEffectiveness
 	default:
 		return ""
 	}

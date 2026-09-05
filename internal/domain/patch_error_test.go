@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestPatchErrorCodeFromRawModuleImportBuildErrorWithPrefix(
+	t *testing.T,
+) {
+	text := `patch_error_code=module_import_mismatch: new import "example.com/project/internal/service" does not match project module`
+
+	code := PatchErrorCodeFromText(text)
+
+	if code != PatchErrorModuleImportMismatch {
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			PatchErrorModuleImportMismatch,
+		)
+	}
+}
+
 func TestPatchErrorCodeFromRawModuleImportBuildError(
 	t *testing.T,
 ) {
