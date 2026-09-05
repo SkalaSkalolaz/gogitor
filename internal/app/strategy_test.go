@@ -7,6 +7,170 @@ import (
 	"gogitor/internal/workspace"
 )
 
+func TestNormalizeEditMode(t *testing.T) {
+	tests := []struct {
+		in   string
+		want EditMode
+	}{
+		{"patch", EditModePatch},
+		{"diff", EditModePatch},
+		{"minimal", EditModePatch},
+
+		{"full", EditModeFull},
+		{"full-file", EditModeFull},
+		{"full_file", EditModeFull},
+		{"rewrite", EditModeFull},
+
+		{"auto", EditModeAuto},
+		{"", EditModeAuto},
+		{"unknown", EditModeAuto},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got := normalizeEditMode(tt.in)
+
+			if got != tt.want {
+				t.Errorf(
+					"normalizeEditMode(%q) = %q, want %q",
+					tt.in,
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
+
+func TestValidateEditRecommendationDefaultsToPatch(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:       2,
+		TargetFiles: 1,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeSimple,
+		EditMode:   EditModeAuto,
+		Confidence: 90,
+		Complexity: "low",
+		Risk:       "low",
+		Reason:     "small change",
+		Source:     "llm",
+	}
+
+	got := validateEditRecommendation(
+		recommendation,
+		"add GET /health endpoint",
+		signals,
+	)
+
+	if got.EditMode != EditModePatch {
+		t.Fatalf(
+			"EditMode = %q, want patch",
+			got.EditMode,
+		)
+	}
+}
+
+func TestValidateEditRecommendationRejectsUnjustifiedFull(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:       2,
+		TargetFiles: 1,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeSimple,
+		EditMode:   EditModeFull,
+		Confidence: 99,
+		Complexity: "high",
+		Risk:       "high",
+		Reason:     "model prefers full file",
+		Source:     "llm",
+	}
+
+	got := validateEditRecommendation(
+		recommendation,
+		"add GET /health endpoint",
+		signals,
+	)
+
+	if got.EditMode != EditModePatch {
+		t.Fatalf(
+			"EditMode = %q, want patch",
+			got.EditMode,
+		)
+	}
+}
+
+func TestValidateEditRecommendationAllowsExplicitFull(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:       5,
+		TargetFiles: 1,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeSimple,
+		EditMode:   EditModePatch,
+		Confidence: 60,
+		Complexity: "medium",
+		Risk:       "medium",
+		Reason:     "localized change",
+		Source:     "llm",
+	}
+
+	got := validateEditRecommendation(
+		recommendation,
+		"Полностью перепиши файл main.go с нуля, сохранив внешний API",
+		signals,
+	)
+
+	if got.EditMode != EditModeFull {
+		t.Fatalf(
+			"EditMode = %q, want full",
+			got.EditMode,
+		)
+	}
+}
+
+func TestValidateEditRecommendationRefactorPrefersPatch(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:       6,
+		TargetFiles: 1,
+		RequiresAgent: true,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeAgent,
+		EditMode:   EditModeFull,
+		Confidence: 95,
+		Complexity: "high",
+		Risk:       "high",
+		Reason:     "architectural task",
+		Source:     "llm",
+	}
+
+	got := validateEditRecommendation(
+		recommendation,
+		"Рефакторинг main.go: вынеси обработчик в отдельную функцию",
+		signals,
+	)
+
+	if got.EditMode != EditModePatch {
+		t.Fatalf(
+			"EditMode = %q, want patch",
+			got.EditMode,
+		)
+	}
+}
+
 func TestDeepAgentUsesStrictPatchPolicy(
 	t *testing.T,
 ) {

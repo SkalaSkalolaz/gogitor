@@ -40,6 +40,7 @@ type Options struct {
 	ProgressTotal     int
 	Mode              string
 	AgentDepth        AgentDepth
+	EditMode          EditMode
 	InterviewAnswers  []prompts.AgentInterviewAnswer
 	AgentResumePlan   *fullPlan
 	AgentResumeFrom   int
@@ -1432,19 +1433,60 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 			strategy.Reason,
 		),
 	)
+    if strategy.EditMode != "" &&
+    	strategy.EditMode != EditModeAuto {
+    
+    	sendEvent(
+    		emit,
+    		domain.EventLog,
+    		fmt.Sprintf(
+    			"Edit strategy: %s",
+    			strategy.EditMode,
+    		),
+    	)
+    }
 
-	switch strategy.Mode {
-	case ExecutionModeSimple:
-		return s.executeSimple(ctx, query, opts, emit)
-	case ExecutionModeAgent:
-		agentOpts := opts
-		if strategy.AgentDepth != "" && strategy.AgentDepth != AgentDepthAuto {
-			agentOpts.AgentDepth = strategy.AgentDepth
-		}
-		return s.executeAgentFull(ctx, query, "", agentOpts, emit)
-	default:
-		return s.executeSimple(ctx, query, opts, emit)
-	}
+    switch strategy.Mode {
+    case ExecutionModeSimple:
+    	simpleOpts := opts
+    	simpleOpts.EditMode = strategy.EditMode
+    
+    	return s.executeSimple(
+    		ctx,
+    		query,
+    		simpleOpts,
+    		emit,
+    	)
+    
+    case ExecutionModeAgent:
+    	agentOpts := opts
+    
+    	if strategy.AgentDepth != "" &&
+    		strategy.AgentDepth != AgentDepthAuto {
+    
+    		agentOpts.AgentDepth =
+    			strategy.AgentDepth
+    	}
+    
+    	agentOpts.EditMode =
+    		strategy.EditMode
+    
+    	return s.executeAgentFull(
+    		ctx,
+    		query,
+    		"",
+    		agentOpts,
+    		emit,
+    	)
+    
+    default:
+    	return s.executeSimple(
+    		ctx,
+    		query,
+    		opts,
+    		emit,
+    	)
+    }
 }
 
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
@@ -1480,6 +1522,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		s.Cfg.Model,
 		s.Cfg.PatchProtocolMode,
 	)
+
+    editMode := normalizeEditMode(
+    	string(opts.EditMode),
+    )
+    
+    if editMode == EditModeAuto {
+    	editMode = EditModePatch
+    }
 
 	sourceSnapshot, snapshotErr :=
 		s.WS.CaptureProjectSnapshot()
@@ -1595,19 +1645,42 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				sendEvent(emit, domain.EventLog, "Target files do not exist, using create mode")
 				prompt = prompts.CodeCreateInExistingProject(query, originalContext)
 			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
-				if !forceFull {
-					sendEvent(emit, domain.EventLog, "Using patch mode for existing project files")
-					prompt = prompts.CodeModifyDiffForModelWithProtocol(
-						query,
-						originalContext,
-						patchPolicy.String(),
-						patchProtocol.String(),
-					)
-					usePatchPrompt = true
-				} else {
-					sendEvent(emit, domain.EventLog, "Using modification mode based on existing project files")
-					prompt = prompts.CodeModify(query, originalContext)
-				}
+
+            if !forceFull &&
+            	editMode != EditModeFull {
+            
+            	sendEvent(
+            		emit,
+            		domain.EventLog,
+            		"Using patch mode for existing project files",
+            	)
+            
+            	prompt =
+            		prompts.CodeModifyDiffForModelWithProtocol(
+            			query,
+            			originalContext,
+            			patchPolicy.String(),
+            			patchProtocol.String(),
+            		)
+            
+            	usePatchPrompt = true
+            } else {
+            	sendEvent(
+            		emit,
+            		domain.EventLog,
+            		"Using full-file mode for existing project files",
+            	)
+            
+            	prompt =
+            		prompts.CodeModify(
+            			query,
+            			originalContext,
+            		)
+            
+            	usePatchPrompt = false
+            }
+
+
 			case originalContext != "":
 				sendEvent(emit, domain.EventLog, "Using create-in-existing-project mode")
 				prompt = prompts.CodeCreateInExistingProject(query, originalContext)

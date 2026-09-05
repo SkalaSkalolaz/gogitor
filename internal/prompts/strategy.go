@@ -15,58 +15,56 @@ func ExecutionStrategy(
 
 	b.WriteString(`You are the execution strategy router for Gogitor, an AI coding assistant for Go.
 
-Your job is NOT to solve the task.
-Your job is ONLY to recommend the minimum execution mode that is sufficient.
+Your job is to recommend the minimum execution and editing strategy required for the task.
 
-Available modes:
+You must choose TWO independent things:
 
-- simple — one coding loop with sandbox validation
-- agent — Planner/Coder/Reviewer/Verifier pipeline
+1. execution_mode:
+   - simple
+   - agent
 
-IMPORTANT PRINCIPLE:
+2. edit_mode:
+   - patch
+   - full
 
-Prefer SIMPLE unless there is a concrete reason that orchestration is necessary.
+IMPORTANT:
+execution_mode and edit_mode are independent decisions.
 
-Do NOT choose agent merely because the task mentions:
-- server
-- API
-- database
-- middleware
-- interface
-- tests
-- HTTP
-- JSON
-- endpoint
+Use simple when one coding loop is sufficient.
+Use agent when planning, coordination, review, or verification across multiple steps is genuinely useful.
 
-Those words describe the subject matter, not the execution complexity.
+Use patch when modifying existing files can be expressed as localized source changes.
+Use full when a complete existing file must intentionally be regenerated or the task explicitly requires a whole-file rewrite.
 
-Use SIMPLE when:
-- the change is localized;
-- the task can reasonably be implemented in one coding pass;
-- only a small number of related files are affected;
-- the task adds or changes a function, handler, endpoint, field, constant, small helper, or test;
-- the existing architecture does not need to be redesigned;
-- the requested behavior is clearly specified.
+PATCH is the DEFAULT for existing files.
 
-Use AGENT when:
-- the task explicitly requires architectural refactoring;
-- responsibilities must be split across packages or layers;
-- existing code must be substantially reorganized;
-- several independent implementation steps must be coordinated;
-- the task affects many files or many subsystems;
-- the task is project-wide or system-wide;
-- there is substantial regression risk that benefits from planning and review.
+FULL is NOT the default.
 
-Treat the provided complexity score only as supporting evidence.
-Do NOT use it as the sole reason to choose agent.
+Do NOT choose full merely because:
+- the task mentions a server;
+- the task mentions an API;
+- the task mentions tests;
+- the task mentions a database;
+- the task is moderately complex;
+- the task uses several functions;
+- the task is a refactoring task.
 
-When uncertain between simple and agent, prefer simple.
+For refactoring existing files, prefer PATCH unless the task explicitly requires a complete rewrite.
 
-Agent depth:
-- normal for ordinary multi-step work;
-- deep only for genuinely large, architectural, broad, or high-risk tasks.
+For multi-file refactoring:
+- prefer PATCH for existing files;
+- use full file output only for genuinely new files or explicitly rewritten files.
 
-The model profile must NOT by itself cause agent or deep selection.
+Use FULL when the task explicitly asks for:
+- rewriting the entire file;
+- replacing the whole file;
+- generating a new version of an existing file;
+- rebuilding an existing file from scratch;
+- completely redesigning a single existing file.
+
+When uncertain between PATCH and FULL, choose PATCH.
+
+Never choose FULL simply because it is easier to describe.
 
 Return ONLY valid compact JSON.
 Do not return markdown.
@@ -76,6 +74,7 @@ JSON schema:
 {
   "execution_mode": "simple|agent",
   "agent_depth": "normal|deep",
+  "edit_mode": "patch|full",
   "confidence": 0,
   "complexity": "low|medium|high",
   "risk": "low|medium|high",
@@ -84,12 +83,13 @@ JSON schema:
 
 Rules:
 1. Recommend the minimum sufficient execution mode.
-2. Default toward simple.
-3. Use agent only when orchestration provides a real advantage.
-4. Do not infer agent solely from domain terminology.
-5. Keep confidence between 0 and 100.
-6. Keep reason short and specific.
-7. Never invent another execution mode.
+2. Recommend PATCH by default for existing files.
+3. Recommend FULL only when there is a concrete whole-file reason.
+4. Do not confuse execution complexity with editing strategy.
+5. The model profile is only supporting information.
+6. Keep confidence between 0 and 100.
+7. Keep reason short and specific.
+8. Never invent another execution mode or edit mode.
 `)
 
 	b.WriteString("\nMODEL PROFILE:\n")
@@ -102,9 +102,7 @@ Rules:
 	)
 
 	if strings.TrimSpace(projectSummary) != "" {
-		b.WriteString(
-			"\nPROJECT SUMMARY:\n",
-		)
+		b.WriteString("\nPROJECT SUMMARY:\n")
 		b.WriteString(projectSummary)
 		b.WriteString("\n")
 	}

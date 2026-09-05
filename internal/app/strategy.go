@@ -37,12 +37,22 @@ const (
 type ExecutionStrategy struct {
 	Mode       ExecutionMode
 	AgentDepth AgentDepth
+	EditMode   EditMode
 	Confidence int
 	Complexity string
 	Risk       string
 	Reason     string
 	Source     string
 }
+
+// EditMode определяет способ изменения существующих файлов.
+type EditMode string
+
+const (
+	EditModeAuto  EditMode = "auto"
+	EditModePatch EditMode = "patch"
+	EditModeFull  EditMode = "full"
+)
 
 type modelProfile string
 
@@ -83,6 +93,147 @@ func normalizeExecutionMode(mode string) ExecutionMode {
 	default:
 		return ExecutionModeAuto
 	}
+}
+
+func normalizeEditMode(mode string) EditMode {
+	m := strings.ToLower(strings.TrimSpace(mode))
+
+	switch m {
+	case "patch", "diff", "minimal":
+		return EditModePatch
+
+	case "full", "full-file", "full_file", "rewrite":
+		return EditModeFull
+
+	case "auto", "":
+		return EditModeAuto
+
+	default:
+		return EditModeAuto
+	}
+}
+
+func taskRequestsWholeFileRewrite(task string) bool {
+	lower := strings.ToLower(
+		strings.TrimSpace(task),
+	)
+
+	keywords := []string{
+		"rewrite the entire file",
+		"rewrite entire file",
+		"replace the entire file",
+		"replace whole file",
+		"full rewrite",
+		"complete rewrite",
+		"rewrite from scratch",
+		"rebuild the file",
+		"regenerate the file",
+		"replace the whole file",
+
+		"полностью перепиши файл",
+		"перепиши весь файл",
+		"перепиши файл целиком",
+		"полностью замени файл",
+		"замени весь файл",
+		"замени файл целиком",
+		"полная перезапись",
+		"полностью переработай файл",
+		"перепиши файл с нуля",
+	}
+
+	return containsAny(lower, keywords)
+}
+
+func taskSuggestsWholeFileRedesign(task string) bool {
+	lower := strings.ToLower(
+		strings.TrimSpace(task),
+	)
+
+	keywords := []string{
+		"redesign the entire",
+		"redesign the page",
+		"rebuild the page",
+		"new version of the file",
+		"replace the current implementation",
+
+		"полностью переработай страницу",
+		"переделай страницу",
+		"полностью переделай страницу",
+		"создай новую версию файла",
+		"замени текущую реализацию",
+	}
+
+	return containsAny(lower, keywords)
+}
+
+func validateEditRecommendation(
+	recommendation ExecutionStrategy,
+	task string,
+	signals executionSignals,
+) ExecutionStrategy {
+	mode := normalizeEditMode(
+		string(recommendation.EditMode),
+	)
+
+	if mode == EditModeAuto {
+		mode = EditModePatch
+	}
+
+	explicitFull := taskRequestsWholeFileRewrite(task)
+
+	designFull :=
+		signals.TargetFiles == 1 &&
+			recommendation.Confidence >= 75 &&
+			taskSuggestsWholeFileRedesign(task)
+
+	fullAllowed :=
+		explicitFull ||
+			designFull
+
+	originalMode := mode
+
+	// Явное требование пользователя имеет абсолютный приоритет.
+	if explicitFull {
+		mode = EditModeFull
+	}
+
+	// Если LLM предложила full без достаточного основания,
+	// Gogitor возвращает более безопасный PATCH.
+	if mode == EditModeFull && !fullAllowed {
+		mode = EditModePatch
+	}
+
+	// Полная перезапись нескольких файлов без явного указания
+	// особенно опасна: существующие файлы лучше менять патчами.
+	if mode == EditModeFull &&
+		signals.TargetFiles > 1 &&
+		!explicitFull {
+
+		mode = EditModePatch
+	}
+
+	reason := strings.TrimSpace(
+		recommendation.Reason,
+	)
+
+	if reason == "" {
+		reason = "LLM edit recommendation"
+	}
+
+	if originalMode != mode {
+		switch {
+		case mode == EditModePatch:
+			reason += "; Gogitor guard selected patch"
+
+		case mode == EditModeFull:
+			reason += "; Gogitor guard selected full-file"
+		}
+	}
+
+	recommendation.EditMode = mode
+	recommendation.Reason = reason
+
+	return recommendation
 }
 
 func normalizeAgentDepth(depth string) AgentDepth {
@@ -147,7 +298,12 @@ func taskRequiresAgent(task string) (bool, []string) {
 		"move into a package",
 		"create package",
 		"new package",
-
+		"move business logic into",
+		"move logic into",
+		"move code into a new",
+		"move code into the new",
+		"extract into a new package",
+		"extract logic into a package",
 		"рефактор",
 		"рефакторинг",
 		"архитектур",
@@ -168,6 +324,12 @@ func taskRequiresAgent(task string) (bool, []string) {
 		"создай пакет",
 		"добавь пакет",
 		"новый пакет",
+		"перенеси логику в новый пакет",
+		"перенести логику в новый пакет",
+		"вынеси логику в новый пакет",
+		"вынести логику в новый пакет",
+		"перенеси код в новый пакет",
+		"перенести код в новый пакет",
 	}
 
 	var reasons []string
@@ -266,6 +428,7 @@ func (s *Service) chooseExecutionStrategy(
 			return ExecutionStrategy{
 				Mode:       ExecutionModeSimple,
 				AgentDepth: AgentDepthNormal,
+				EditMode:   normalizeEditMode(string(opts.EditMode)),
 				Reason:     "explicit simple mode",
 				Source:     "user",
 			}
@@ -276,9 +439,15 @@ func (s *Service) chooseExecutionStrategy(
 			depth = AgentDepthNormal
 		}
 
+		editMode := normalizeEditMode(string(opts.EditMode))
+		if editMode == EditModeAuto {
+			editMode = EditModePatch
+		}
+
 		return ExecutionStrategy{
 			Mode:       ExecutionModeAgent,
 			AgentDepth: depth,
+			EditMode:   editMode,
 			Reason:     "explicit agent mode",
 			Source:     "user",
 		}
@@ -297,10 +466,20 @@ func (s *Service) chooseExecutionStrategy(
 	)
 
 	if err == nil {
-		return validateExecutionRecommendation(
-			recommendation,
-			signals,
-		)
+		recommendation =
+			validateExecutionRecommendation(
+				recommendation,
+				signals,
+			)
+
+		recommendation =
+			validateEditRecommendation(
+				recommendation,
+				task,
+				signals,
+			)
+
+		return recommendation
 	}
 
 	sendEvent(
@@ -312,9 +491,17 @@ func (s *Service) chooseExecutionStrategy(
 		),
 	)
 
-	return fallbackExecutionStrategy(signals)
-}
+	fallback := fallbackExecutionStrategy(
+		signals,
+	)
 
+	return validateEditRecommendation(
+		fallback,
+		task,
+		signals,
+	)
+
+}
 
 func validateExecutionRecommendation(
 	recommendation ExecutionStrategy,
@@ -367,7 +554,7 @@ func validateExecutionRecommendation(
 	agentAllowed :=
 		signals.RequiresAgent ||
 			signals.BroadTask ||
-			signals.TargetFiles > 3 || 	(signals.Score >= 8 && 	confidence >= 70 && complexity == "high" && risk != "low")
+			signals.TargetFiles > 3 || (signals.Score >= 8 && confidence >= 70 && complexity == "high" && risk != "low")
 
 	if mode == ExecutionModeAgent && !agentAllowed {
 		mode = ExecutionModeSimple
@@ -508,6 +695,7 @@ func (s *Service) llmExecutionStrategy(
 	var out struct {
 		ExecutionMode string `json:"execution_mode"`
 		AgentDepth    string `json:"agent_depth"`
+		EditMode      string `json:"edit_mode"`
 		Confidence    int    `json:"confidence"`
 		Complexity    string `json:"complexity"`
 		Risk          string `json:"risk"`
@@ -526,18 +714,10 @@ func (s *Service) llmExecutionStrategy(
 		return ExecutionStrategy{}, err
 	}
 
-	rawMode := strings.TrimSpace(
-		out.ExecutionMode,
-	)
-
-	mode := normalizeExecutionMode(rawMode)
+	mode := normalizeExecutionMode(out.ExecutionMode)
 
 	if mode == ExecutionModeAuto {
-		return ExecutionStrategy{},
-			fmt.Errorf(
-				"execution router returned invalid mode %q",
-				rawMode,
-			)
+		mode = ExecutionModeAgent
 	}
 
 	depth := normalizeAgentDepth(
@@ -548,9 +728,25 @@ func (s *Service) llmExecutionStrategy(
 		depth = AgentDepthNormal
 	}
 
+	editMode := normalizeEditMode(out.EditMode)
+	if editMode == EditModeAuto {
+		editMode = EditModePatch
+	}
+
+	// Защитные ограничения.
+	if score >= 8 && mode == ExecutionModeSimple {
+		mode = ExecutionModeAgent
+		depth = AgentDepthDeep
+	}
+	if score <= 2 && mode == ExecutionModeAgent {
+		mode = ExecutionModeSimple
+		depth = AgentDepthNormal
+	}
+
 	return ExecutionStrategy{
 		Mode:       mode,
 		AgentDepth: depth,
+		EditMode:   editMode,
 		Confidence: out.Confidence,
 		Complexity: strings.ToLower(
 			strings.TrimSpace(out.Complexity),

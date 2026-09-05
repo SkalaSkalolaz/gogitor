@@ -125,6 +125,12 @@ TASK:
 <full file content>
 13. Do not include explanations.
 14. Do not use placeholders.
+15. This prompt is used only when Gogitor selected FULL_FILE mode.
+16. For every modified existing file, return exactly one complete --- File: path --- block.
+17. Do NOT use SEARCH/REPLACE or PATCH markers in FULL_FILE mode.
+18. Return only files that must actually be changed.
+19. Preserve the current project source except for changes required by the task.
+20. Do not regenerate unrelated files.
 
 EXAMPLE FOR A SPLIT TASK:
 If the task is:
@@ -433,6 +439,13 @@ CRITICAL RULES:
 8. Do not use placeholders.
 9. If a new file is required, return it as a full file.
 10. If an existing file is modified, prefer a minimal patch.
+11. This prompt is used only when Gogitor has selected PATCH mode.
+12. NEVER return a complete existing file in PATCH mode.
+13. Return exactly ONE --- Patch: path --- header for each file.
+14. If one file requires multiple logical changes, keep all patch blocks under that single Patch header.
+15. NEVER emit multiple Patch headers for the same file.
+16. Do not convert a patch into a full-file rewrite.
+17. Keep each patch local and minimal.
 
 PATCH FORMAT:
 --- Patch: path/to/file.go ---
