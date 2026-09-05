@@ -1437,6 +1437,27 @@ CORRECT STRUCTURE FOR MULTIPLE CHANGES IN ONE FILE:
 ...
 >>>>>>> REPLACE`
 
+	case domain.PatchErrorTaskEffectiveness:
+		return `ERROR CODE: task_effectiveness_failed
+    
+MANDATORY CORRECTION:
+1. The previous patch was syntactically valid but did not achieve the required task outcome.
+2. Do NOT make cosmetic or unrelated changes merely to produce a non-empty diff.
+3. Re-read CURRENT PROJECT SOURCE.
+4. Compare the requested task with the actual structural state of the source.
+5. The replacement patch must establish the requested postcondition.
+6. Do not assume that BUILD or TEST success means the task was completed.
+7. Preserve all existing behavior not required by the task.
+8. Do not return a complete file.
+9. Keep the patch minimal and targeted.
+10. If the task requires extracting, renaming, or adding a function, verify that the requested structural change actually exists after the patch.
+
+FINAL CHECK:
+- The requested task outcome is present.
+- The patch produces a meaningful task-related change.
+- No cosmetic-only change is used as a substitute for the requested change.
+- No unrelated declarations are modified.`
+
 	default:
 		return ""
 	}

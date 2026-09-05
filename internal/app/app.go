@@ -2444,7 +2444,166 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				continue
 			}
 		}
+		// ------------------------------------------------------------
+		// TASK EFFECTIVENESS
+		// ------------------------------------------------------------
+		if patchModeChanges {
+			if s.Cfg.DiffTrace {
+				sendEvent(
+					emit,
+					domain.EventLog,
+					fmt.Sprintf(
+						"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=RUN files=%d",
+						len(changes),
+					),
+				)
+			}
 
+			effectiveness, effectivenessErr :=
+				s.WS.ValidateTaskEffectiveness(
+					query,
+					sandbox,
+					changes,
+				)
+
+			if effectivenessErr != nil {
+				_ = os.RemoveAll(sandbox)
+
+				lastErrors = []string{
+					effectivenessErr.Error(),
+				}
+
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=REJECT reason=%s",
+							strings.ReplaceAll(
+								strings.ReplaceAll(
+									effectivenessErr.Error(),
+									"\n",
+									" ",
+								),
+								"\r",
+								" ",
+							),
+						),
+					)
+				}
+
+				if patchFixAttempts <
+					maxPatchFixAttempts {
+
+					patchRepairPending = true
+				} else {
+					forceFull = true
+				}
+
+				continue
+			}
+
+			switch effectiveness.Decision {
+			case "OK":
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=OK contract=%s reason=%s",
+							effectiveness.Contract,
+							effectiveness.Reason,
+						),
+					)
+				}
+
+			case "SKIP":
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=SKIP reason=%s",
+							effectiveness.Reason,
+						),
+					)
+				}
+
+			case "ALREADY_SATISFIED":
+				_ = os.RemoveAll(sandbox)
+
+				result.Success = true
+				result.FilesCreated = nil
+				result.FilesModified = nil
+				result.FilesPatched = nil
+				result.FilesFullRewritten = nil
+				result.OutputFiles = nil
+				result.Response =
+					"Task already satisfied; no changes applied."
+
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=ALREADY_SATISFIED contract=%s reason=%s",
+							effectiveness.Contract,
+							effectiveness.Reason,
+						),
+					)
+				}
+
+				return result
+
+			case "REJECT":
+				_ = os.RemoveAll(sandbox)
+
+				reason := effectiveness.Reason
+				if strings.TrimSpace(reason) == "" {
+					reason =
+						"required task postcondition was not satisfied"
+				}
+
+				lastErrors = []string{
+					domain.NewPatchError(
+						domain.PatchErrorTaskEffectiveness,
+						reason,
+					).Error(),
+				}
+
+				if s.Cfg.DiffTrace {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=VERIFY stage=TASK_EFFECTIVENESS decision=REJECT error_code=%s contract=%s reason=%s",
+							domain.PatchErrorTaskEffectiveness,
+							effectiveness.Contract,
+							reason,
+						),
+					)
+				}
+
+				if patchFixAttempts <
+					maxPatchFixAttempts {
+
+					patchRepairPending = true
+
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						fmt.Sprintf(
+							"Task effectiveness rejected (%s). Requesting corrected patch.",
+							reason,
+						),
+					)
+				} else {
+					forceFull = true
+				}
+
+				continue
+			}
+		}
 		// ... далее без изменений (result.OutputFiles, DryRun, CopyToRootSafe и т.д.)
 		result.OutputFiles = s.collectOutputFiles(sandbox, changes)
 		if opts.DryRun {

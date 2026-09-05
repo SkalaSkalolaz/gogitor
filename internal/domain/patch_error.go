@@ -29,6 +29,10 @@ const (
 	// формально сопоставились, но итоговый файл фактически
 	// не изменился.
 	PatchErrorNoOpPatch PatchErrorCode = "no_op_patch"
+
+	// PatchErrorTaskEffectiveness означает, что patch формально
+	// применился, но ожидаемый результат задачи не был достигнут.
+	PatchErrorTaskEffectiveness PatchErrorCode = "task_effectiveness_failed"
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -139,6 +143,9 @@ func PatchErrorCodeFromText(
 		return PatchErrorSymbolNotFound
 	case PatchErrorNoOpPatch:
 		return PatchErrorNoOpPatch
+
+	case PatchErrorTaskEffectiveness:
+		return PatchErrorTaskEffectiveness
 	default:
 		return ""
 	}
