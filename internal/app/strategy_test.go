@@ -151,3 +151,223 @@ func TestCloudModelIsRemoteOnLocalOllama(
 		)
 	}
 }
+
+func TestTaskRequiresAgent(t *testing.T) {
+	tests := []struct {
+		name  string
+		task  string
+		want  bool
+	}{
+		{
+			name: "health endpoint is simple",
+			task: "add GET /health endpoint",
+			want: false,
+		},
+		{
+			name: "api endpoint is simple",
+			task: "add GET /api/cars endpoint returning JSON",
+			want: false,
+		},
+		{
+			name: "server terminology is not enough",
+			task: "add HTTP health check to the server",
+			want: false,
+		},
+		{
+			name: "refactor requires agent",
+			task: "refactor authentication into a separate package",
+			want: true,
+		},
+		{
+			name: "package split requires agent",
+			task: "move business logic into a new service package",
+			want: true,
+		},
+		{
+			name: "architecture requires agent",
+			task: "redesign the application architecture",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := taskRequiresAgent(tt.task)
+
+			if got != tt.want {
+				t.Fatalf(
+					"taskRequiresAgent(%q) = %v, want %v",
+					tt.task,
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
+
+func TestValidateExecutionRecommendationPrefersFastForLocalTask(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:         2,
+		TargetFiles:   1,
+		RequiresAgent: false,
+		BroadTask:     false,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeAgent,
+		AgentDepth: AgentDepthDeep,
+		Confidence: 95,
+		Complexity: "high",
+		Risk:       "high",
+		Reason:     "LLM thinks agent is safer",
+		Source:     "llm",
+	}
+
+	got := validateExecutionRecommendation(
+		recommendation,
+		signals,
+	)
+
+	if got.Mode != ExecutionModeSimple {
+		t.Fatalf(
+			"mode = %q, want simple; reason=%s",
+			got.Mode,
+			got.Reason,
+		)
+	}
+
+	if got.AgentDepth != AgentDepthNormal {
+		t.Fatalf(
+			"depth = %q, want normal",
+			got.AgentDepth,
+		)
+	}
+}
+
+func TestValidateExecutionRecommendationPromotesArchitecturalTask(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:         5,
+		TargetFiles:   2,
+		RequiresAgent: true,
+		BroadTask:     false,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeSimple,
+		AgentDepth: AgentDepthNormal,
+		Confidence: 95,
+		Complexity: "medium",
+		Risk:       "medium",
+		Reason:     "single coding pass",
+		Source:     "llm",
+	}
+
+	got := validateExecutionRecommendation(
+		recommendation,
+		signals,
+	)
+
+	if got.Mode != ExecutionModeAgent {
+		t.Fatalf(
+			"mode = %q, want agent; reason=%s",
+			got.Mode,
+			got.Reason,
+		)
+	}
+}
+
+func TestValidateExecutionRecommendationDowngradesDeep(
+	t *testing.T,
+) {
+	signals := executionSignals{
+		Score:         5,
+		TargetFiles:   2,
+		RequiresAgent: true,
+		BroadTask:     false,
+	}
+
+	recommendation := ExecutionStrategy{
+		Mode:       ExecutionModeAgent,
+		AgentDepth: AgentDepthDeep,
+		Confidence: 95,
+		Complexity: "medium",
+		Risk:       "medium",
+		Reason:     "deep preferred",
+		Source:     "llm",
+	}
+
+	got := validateExecutionRecommendation(
+		recommendation,
+		signals,
+	)
+
+	if got.Mode != ExecutionModeAgent {
+		t.Fatalf(
+			"mode = %q, want agent",
+			got.Mode,
+		)
+	}
+
+	if got.AgentDepth != AgentDepthNormal {
+		t.Fatalf(
+			"depth = %q, want normal; reason=%s",
+			got.AgentDepth,
+			got.Reason,
+		)
+	}
+}
+
+func TestTaskComplexityDoesNotOverrateCommonDevelopmentTerms(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	ws := workspace.New(root)
+	defer ws.Close()
+
+	svc := &Service{
+		WS: ws,
+	}
+
+	tests := []struct {
+		name string
+		task string
+		max  int
+	}{
+		{
+			name: "health endpoint",
+			task: "add HTTP GET /health endpoint returning OK",
+			max: 2,
+		},
+		{
+			name: "API endpoint",
+			task: "add GET /api/cars endpoint returning JSON",
+			max: 2,
+		},
+		{
+			name: "server check",
+			task: "add a server health check with timeout",
+			max: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score, _ := svc.taskComplexityScore(tt.task)
+
+			if score > tt.max {
+				t.Fatalf(
+					"taskComplexityScore(%q) = %d, want <= %d",
+					tt.task,
+					score,
+					tt.max,
+				)
+			}
+		})
+	}
+}

@@ -119,7 +119,138 @@ func (s *Service) agentDepthForTask(task string) AgentDepth {
 	return AgentDepthNormal
 }
 
-// chooseExecutionStrategy выбирает режим выполнения задачи.
+type executionSignals struct {
+	Score         int
+	Reasons       []string
+	TargetFiles   int
+	RequiresAgent bool
+	BroadTask     bool
+}
+
+func taskRequiresAgent(task string) (bool, []string) {
+	lower := strings.ToLower(strings.TrimSpace(task))
+
+	architecturalKeywords := []string{
+		"refactor",
+		"refactoring",
+		"architecture",
+		"architectural",
+		"restructure",
+		"reorganize",
+		"redesign",
+		"migration",
+		"migrate",
+		"split",
+		"divide",
+		"extract",
+		"move to a package",
+		"move into a package",
+		"create package",
+		"new package",
+
+		"рефактор",
+		"рефакторинг",
+		"архитектур",
+		"архитект",
+		"реструктур",
+		"перестрой",
+		"перенастрой архитект",
+		"перепроект",
+		"миграц",
+		"раздели",
+		"разделить",
+		"разбей",
+		"разбить",
+		"вынеси",
+		"вынести",
+		"перенеси",
+		"перенести",
+		"создай пакет",
+		"добавь пакет",
+		"новый пакет",
+	}
+
+	var reasons []string
+
+	for _, keyword := range architecturalKeywords {
+		if strings.Contains(lower, keyword) {
+			reasons = append(
+				reasons,
+				"architectural or structural change",
+			)
+			break
+		}
+	}
+
+	broadKeywords := []string{
+		"entire project",
+		"whole project",
+		"all packages",
+		"throughout the project",
+		"system-wide",
+		"across the project",
+
+		"весь проект",
+		"по всему проекту",
+		"во всём проекте",
+		"во всем проекте",
+		"все пакеты",
+		"во всех пакетах",
+	}
+
+	broad := containsAny(lower, broadKeywords)
+	if broad {
+		reasons = append(reasons, "broad project-wide scope")
+	}
+
+	return len(reasons) > 0, reasons
+}
+
+func (s *Service) executionSignals(task string) executionSignals {
+	score, reasons := s.taskComplexityScore(task)
+
+	targetFiles := extractTargetFiles(task)
+	requiresAgent, agentReasons := taskRequiresAgent(task)
+
+	reasons = append(reasons, agentReasons...)
+
+	if len(targetFiles) > 3 {
+		requiresAgent = true
+		reasons = append(
+			reasons,
+			"many explicitly mentioned files",
+		)
+	}
+
+	lower := strings.ToLower(task)
+
+	broadKeywords := []string{
+		"entire project",
+		"whole project",
+		"all packages",
+		"throughout the project",
+		"system-wide",
+		"across the project",
+
+		"весь проект",
+		"по всему проекту",
+		"во всём проекте",
+		"во всем проекте",
+		"все пакеты",
+		"во всех пакетах",
+	}
+
+	broad := containsAny(lower, broadKeywords)
+
+	return executionSignals{
+		Score:         score,
+		Reasons:       reasons,
+		TargetFiles:   len(targetFiles),
+		RequiresAgent: requiresAgent,
+		BroadTask:     broad,
+	}
+}
+
 func (s *Service) chooseExecutionStrategy(
 	ctx context.Context,
 	task string,
@@ -129,7 +260,7 @@ func (s *Service) chooseExecutionStrategy(
 	requested := normalizeExecutionMode(opts.Mode)
 	requestedDepth := normalizeAgentDepth(string(opts.AgentDepth))
 
-	// Явно выбранный пользователем режим.
+	// Явный выбор пользователя всегда имеет приоритет.
 	if requested != ExecutionModeAuto {
 		if requested == ExecutionModeSimple {
 			return ExecutionStrategy{
@@ -139,10 +270,12 @@ func (s *Service) chooseExecutionStrategy(
 				Source:     "user",
 			}
 		}
+
 		depth := requestedDepth
 		if depth == AgentDepthAuto {
 			depth = AgentDepthNormal
 		}
+
 		return ExecutionStrategy{
 			Mode:       ExecutionModeAgent,
 			AgentDepth: depth,
@@ -151,86 +284,205 @@ func (s *Service) chooseExecutionStrategy(
 		}
 	}
 
-	score, reasons := s.taskComplexityScore(task)
-	reason := strings.Join(reasons, "; ")
+	signals := s.executionSignals(task)
 	profile := s.modelProfile()
-	local := s.isLocalModelEndpoint()
 
-	caps := s.agentModelCapabilities()
+	// В автоматическом режиме сначала спрашиваем LLM-router.
+	recommendation, err := s.llmExecutionStrategy(
+		ctx,
+		task,
+		signals.Score,
+		profile,
+		emit,
+	)
 
-	if caps.PreferredDepth == AgentDepthDeep &&
-		score >= 4 {
-
-		return ExecutionStrategy{
-			Mode:       ExecutionModeAgent,
-			AgentDepth: AgentDepthDeep,
-			Reason:     "model capability profile prefers deep Agent",
-			Source:     "model-profile",
-		}
-	}
-	threshold := s.Cfg.AgentDeepComplexityThreshold
-	if threshold <= 0 {
-		threshold = 6
-	}
-
-	// Простые задачи — без оркестрации.
-	if score <= 2 {
-		return ExecutionStrategy{
-			Mode:       ExecutionModeSimple,
-			AgentDepth: AgentDepthNormal,
-			Reason:     "low complexity: " + reason,
-			Source:     "rules",
-		}
-	}
-
-	// Для локальных моделей сложные задачи → агент.
-	if local && score >= threshold {
-		return ExecutionStrategy{
-			Mode:       ExecutionModeAgent,
-			AgentDepth: AgentDepthDeep,
-			Reason:     fmt.Sprintf("local model, high complexity score %d", score),
-			Source:     "rules",
-		}
-	}
-
-	// Средние задачи для локальных моделей.
-	if local && score >= 4 {
-		return ExecutionStrategy{
-			Mode:       ExecutionModeAgent,
-			AgentDepth: AgentDepthNormal,
-			Reason:     fmt.Sprintf("local model, medium complexity score %d", score),
-			Source:     "rules",
-		}
-	}
-
-	// Для внешних провайдеров — LLM-подсказка.
-	if !local && score >= 4 {
-		strategy, err := s.llmExecutionStrategy(ctx, task, score, profile, emit)
-		if err == nil {
-			return strategy
-		}
-		sendEvent(
-			emit,
-			domain.EventWarn,
-			fmt.Sprintf("Execution strategy LLM failed, fallback to rules: %v", err),
+	if err == nil {
+		return validateExecutionRecommendation(
+			recommendation,
+			signals,
 		)
 	}
 
-	// Fallback: сложную задачу отдаём агенту.
-	if score >= threshold {
+	sendEvent(
+		emit,
+		domain.EventWarn,
+		fmt.Sprintf(
+			"Execution strategy LLM failed, using deterministic fallback: %v",
+			err,
+		),
+	)
+
+	return fallbackExecutionStrategy(signals)
+}
+
+
+func validateExecutionRecommendation(
+	recommendation ExecutionStrategy,
+	signals executionSignals,
+) ExecutionStrategy {
+	mode := normalizeExecutionMode(
+		string(recommendation.Mode),
+	)
+
+	if mode == ExecutionModeAuto {
+		mode = ExecutionModeSimple
+	}
+
+	confidence := recommendation.Confidence
+	if confidence < 0 {
+		confidence = 0
+	}
+	if confidence > 100 {
+		confidence = 100
+	}
+
+	depth := normalizeAgentDepth(
+		string(recommendation.AgentDepth),
+	)
+
+	if depth == AgentDepthAuto {
+		depth = AgentDepthNormal
+	}
+
+	complexity := strings.ToLower(
+		strings.TrimSpace(
+			recommendation.Complexity,
+		),
+	)
+
+	risk := strings.ToLower(
+		strings.TrimSpace(
+			recommendation.Risk,
+		),
+	)
+
+	reason := strings.TrimSpace(
+		recommendation.Reason,
+	)
+
+	// ------------------------------------------------------------
+	// Agent разрешается только при наличии объективных оснований.
+	// ------------------------------------------------------------
+
+	agentAllowed :=
+		signals.RequiresAgent ||
+			signals.BroadTask ||
+			signals.TargetFiles > 3 || 	(signals.Score >= 8 && 	confidence >= 70 && complexity == "high" && risk != "low")
+
+	if mode == ExecutionModeAgent && !agentAllowed {
+		mode = ExecutionModeSimple
+		depth = AgentDepthNormal
+
+		if reason == "" {
+			reason = "LLM recommended agent"
+		}
+
+		reason =
+			"Gogitor guard selected fast: " +
+				reason
+	}
+
+	// ------------------------------------------------------------
+	// Если LLM выбрала fast, но задача объективно архитектурная,
+	// Gogitor повышает уровень до Agent.
+	// ------------------------------------------------------------
+
+	if mode == ExecutionModeSimple &&
+		agentAllowed {
+
+		mode = ExecutionModeAgent
+
+		if signals.BroadTask ||
+			signals.Score >= 8 ||
+			risk == "high" {
+
+			depth = AgentDepthDeep
+		} else {
+			depth = AgentDepthNormal
+		}
+
+		if reason == "" {
+			reason = "LLM recommended fast"
+		}
+
+		reason =
+			"Gogitor guard selected agent: " +
+				reason
+	}
+
+	// ------------------------------------------------------------
+	// Deep разрешается только для действительно тяжёлых задач.
+	// Capability profile модели больше не может сам по себе
+	// заставить Gogitor использовать deep.
+	// ------------------------------------------------------------
+
+	deepAllowed :=
+		signals.BroadTask ||
+			signals.Score >= 8 ||
+			risk == "high"
+
+	if depth == AgentDepthDeep &&
+		!deepAllowed {
+
+		depth = AgentDepthNormal
+
+		if reason == "" {
+			reason = "deep downgraded to normal by execution guard"
+		} else {
+			reason += "; deep downgraded to normal by execution guard"
+		}
+	}
+
+	if mode == ExecutionModeSimple {
+		depth = AgentDepthNormal
+	}
+
+	return ExecutionStrategy{
+		Mode:       mode,
+		AgentDepth: depth,
+		Confidence: confidence,
+		Complexity: complexity,
+		Risk:       risk,
+		Reason:     reason,
+		Source:     recommendation.Source,
+	}
+}
+
+func fallbackExecutionStrategy(
+	signals executionSignals,
+) ExecutionStrategy {
+	if signals.RequiresAgent ||
+		signals.BroadTask ||
+		signals.TargetFiles > 3 ||
+		signals.Score >= 8 {
+
+		depth := AgentDepthNormal
+
+		if signals.BroadTask ||
+			signals.Score >= 8 {
+
+			depth = AgentDepthDeep
+		}
+
 		return ExecutionStrategy{
 			Mode:       ExecutionModeAgent,
-			AgentDepth: AgentDepthDeep,
-			Reason:     fmt.Sprintf("high complexity fallback, score %d", score),
-			Source:     "rules",
+			AgentDepth: depth,
+			Reason: fmt.Sprintf(
+				"deterministic fallback: task requires orchestration (score %d)",
+				signals.Score,
+			),
+			Source: "rules",
 		}
 	}
 
 	return ExecutionStrategy{
-		Mode:       ExecutionModeAgent,
+		Mode:       ExecutionModeSimple,
 		AgentDepth: AgentDepthNormal,
-		Reason:     "default heuristic",
-		Source:     "rules",
+		Reason: fmt.Sprintf(
+			"deterministic fallback: fast is sufficient (score %d)",
+			signals.Score,
+		),
+		Source: "rules",
 	}
 }
 
@@ -248,9 +500,11 @@ func (s *Service) llmExecutionStrategy(
 		string(profile),
 		score,
 	)
+
 	if !s.Cfg.ReasoningRouter {
 		ctx = llm.WithReasoningDisabled(ctx)
 	}
+
 	var out struct {
 		ExecutionMode string `json:"execution_mode"`
 		AgentDepth    string `json:"agent_depth"`
@@ -259,6 +513,7 @@ func (s *Service) llmExecutionStrategy(
 		Risk          string `json:"risk"`
 		Reason        string `json:"reason"`
 	}
+
 	err := s.sendAgentJSON(
 		ctx,
 		agent.RoleRouter,
@@ -270,22 +525,26 @@ func (s *Service) llmExecutionStrategy(
 	if err != nil {
 		return ExecutionStrategy{}, err
 	}
-	mode := normalizeExecutionMode(out.ExecutionMode)
+
+	rawMode := strings.TrimSpace(
+		out.ExecutionMode,
+	)
+
+	mode := normalizeExecutionMode(rawMode)
+
 	if mode == ExecutionModeAuto {
-		mode = ExecutionModeAgent
-	}
-	depth := normalizeAgentDepth(out.AgentDepth)
-	if depth == AgentDepthAuto {
-		depth = AgentDepthNormal
+		return ExecutionStrategy{},
+			fmt.Errorf(
+				"execution router returned invalid mode %q",
+				rawMode,
+			)
 	}
 
-	// Защитные ограничения.
-	if score >= 8 && mode == ExecutionModeSimple {
-		mode = ExecutionModeAgent
-		depth = AgentDepthDeep
-	}
-	if score <= 2 && mode == ExecutionModeAgent {
-		mode = ExecutionModeSimple
+	depth := normalizeAgentDepth(
+		out.AgentDepth,
+	)
+
+	if depth == AgentDepthAuto {
 		depth = AgentDepthNormal
 	}
 
@@ -293,61 +552,164 @@ func (s *Service) llmExecutionStrategy(
 		Mode:       mode,
 		AgentDepth: depth,
 		Confidence: out.Confidence,
-		Complexity: out.Complexity,
-		Risk:       out.Risk,
-		Reason:     out.Reason,
-		Source:     "llm",
+		Complexity: strings.ToLower(
+			strings.TrimSpace(out.Complexity),
+		),
+		Risk: strings.ToLower(
+			strings.TrimSpace(out.Risk),
+		),
+		Reason: strings.TrimSpace(
+			out.Reason,
+		),
+		Source: "llm",
 	}, nil
 }
 
 // taskComplexityScore оценивает сложность задачи детерминированно.
-func (s *Service) taskComplexityScore(task string) (int, []string) {
+func (s *Service) taskComplexityScore(
+	task string,
+) (int, []string) {
 	lower := strings.ToLower(task)
+
 	score := 0
 	var reasons []string
-	if len(strings.Fields(task)) > 14 {
-		score += 2
-		reasons = append(reasons, "long task")
+
+	// Длина запроса — слабый сигнал, а не основной критерий.
+	if len(strings.Fields(task)) > 24 {
+		score += 1
+		reasons = append(
+			reasons,
+			"long task",
+		)
 	}
+
+	// Только действительно структурные действия.
 	highKeywords := []string{
-		"refactor", "architecture", "split", "module", "api",
-		"server", "auth", "database", "middleware", "interface",
-		"migration", "test", "tests",
-		"рефактор", "архитект", "раздели", "вынеси",
-		"много файлов", "сервер", "база", "тест",
+		"refactor",
+		"refactoring",
+		"architecture",
+		"architectural",
+		"restructure",
+		"reorganize",
+		"redesign",
+		"migration",
+		"migrate",
+		"split",
+		"divide",
+		"extract",
+		"create package",
+		"new package",
+		"move to a package",
+
+		"рефактор",
+		"рефакторинг",
+		"архитектур",
+		"реструктур",
+		"перестрой",
+		"перепроект",
+		"миграц",
+		"раздели",
+		"разделить",
+		"разбей",
+		"разбить",
+		"вынеси",
+		"вынести",
+		"перенеси",
+		"перенести",
+		"создай пакет",
+		"новый пакет",
 	}
+
 	if containsAny(lower, highKeywords) {
 		score += 3
-		reasons = append(reasons, "high-complexity keywords")
+		reasons = append(
+			reasons,
+			"structural-change keywords",
+		)
 	}
+
 	mediumKeywords := []string{
-		"add", "modify", "update", "fix", "improve",
-		"добавь", "измени", "исправь", "улучши",
+		"add",
+		"modify",
+		"update",
+		"fix",
+		"improve",
+		"create",
+		"change",
+		"remove",
+		"delete",
+
+		"добавь",
+		"добавить",
+		"измени",
+		"изменить",
+		"обнови",
+		"обновить",
+		"исправь",
+		"исправить",
+		"улучши",
+		"улучшить",
+		"создай",
+		"создать",
+		"измени",
+		"удали",
+		"удалить",
 	}
+
 	if containsAny(lower, mediumKeywords) {
 		score += 1
-		reasons = append(reasons, "medium-complexity keywords")
+		reasons = append(
+			reasons,
+			"implementation keywords",
+		)
 	}
+
 	files := extractTargetFiles(task)
+
 	if len(files) > 1 {
-		score += 2
-		reasons = append(reasons, fmt.Sprintf("mentions %d files", len(files)))
+		score += 1
+		reasons = append(
+			reasons,
+			fmt.Sprintf(
+				"mentions %d files",
+				len(files),
+			),
+		)
 	}
+
 	if len(files) > 3 {
-		score += 1
-		reasons = append(reasons, "many mentioned files")
+		score += 2
+		reasons = append(
+			reasons,
+			"many mentioned files",
+		)
 	}
-	if s.WS.HasGoFiles() {
+
+	if s.WS != nil && s.WS.HasGoFiles() {
 		score += 1
-		reasons = append(reasons, "existing Go project")
+		reasons = append(
+			reasons,
+			"existing Go project",
+		)
 	}
-	if idx := s.WS.ExistingIndex(); idx != nil && idx.Ready() && idx.FileCount() > 20 {
-		score += 1
-		reasons = append(reasons, "large indexed project")
+
+	if s.WS != nil {
+		if idx := s.WS.ExistingIndex(); idx != nil &&
+			idx.Ready() &&
+			idx.FileCount() > 20 {
+
+			score += 1
+			reasons = append(
+				reasons,
+				"large indexed project",
+			)
+		}
 	}
+
 	if score > 10 {
 		score = 10
 	}
+
 	return score, reasons
 }
 
