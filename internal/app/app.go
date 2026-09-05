@@ -2156,13 +2156,35 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		if err := s.Runner.Build(ctx, sandbox); err != nil {
 			buildError := trim(err.Error(), 4000)
 
+            buildErrorCode :=
+            	domain.PatchErrorCodeFromText(
+            		buildError,
+            	)
+            
+            if buildErrorCode ==
+            	domain.PatchErrorModuleImportMismatch {
+            	buildError = domain.NewPatchError(
+            		domain.PatchErrorModuleImportMismatch,
+            		buildError,
+            	).Error()
+            
+            	lastErrors = []string{
+            		buildError,
+            	}
+            } else {
+            	lastErrors = []string{
+            		buildError,
+            	}
+            }
 			lastErrors = []string{
 				buildError,
 			}
 
-			if s.Cfg.AutoSearch &&
-				isDependencyFetchError(buildError) {
-
+            if buildErrorCode !=
+            	domain.PatchErrorModuleImportMismatch &&
+            	s.Cfg.AutoSearch &&
+            	isDependencyFetchError(buildError) {
+            
 				dependency := extractDependencyImportPath(
 					buildError,
 				)
@@ -2194,13 +2216,25 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					}
 				}
 			}
-			if patchModeChanges && s.Cfg.DiffTrace {
-				sendEvent(
-					emit,
-					domain.EventLog,
-					"[DIFF] phase=VERIFY stage=BUILD decision=REJECT",
-				)
-			}
+
+            if patchModeChanges &&
+            	s.Cfg.DiffTrace {
+            
+            	message :=
+            		"[DIFF] phase=VERIFY stage=BUILD decision=REJECT"
+            
+            	if buildErrorCode != "" {
+            		message +=
+            			" error_code=" +
+            				string(buildErrorCode)
+            		}
+            
+            	sendEvent(
+            		emit,
+            		domain.EventLog,
+            		message,
+            	)
+            }
 
 			_ = os.RemoveAll(sandbox)
 

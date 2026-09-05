@@ -30,6 +30,11 @@ const (
 	// не изменился.
 	PatchErrorNoOpPatch PatchErrorCode = "no_op_patch"
 
+    // PatchErrorModuleImportMismatch означает,
+    // что новый Go import не соответствует module path
+    // проекта и не является объявленной зависимостью.
+    PatchErrorModuleImportMismatch PatchErrorCode =  "module_import_mismatch"
+
 	// PatchErrorTaskEffectiveness означает, что patch формально
 	// применился, но ожидаемый результат задачи не был достигнут.
 	PatchErrorTaskEffectiveness PatchErrorCode = "task_effectiveness_failed"
@@ -111,6 +116,33 @@ func PatchErrorCodeFromText(
 		return ""
 	}
 
+
+    if idx == -1 {
+    	lower := strings.ToLower(text)
+    
+    	switch {
+    	case strings.Contains(
+    		lower,
+    		"no required module provides package",
+    	):
+    		return PatchErrorModuleImportMismatch
+    
+    	case strings.Contains(
+    		lower,
+    		"cannot find module providing package",
+    	):
+    		return PatchErrorModuleImportMismatch
+    
+    	case strings.Contains(
+    		lower,
+    		" is not in std ",
+    	):
+    		return PatchErrorModuleImportMismatch
+    	}
+    
+    	return ""
+    }
+
 	value := text[idx+len(prefix):]
 
 	if colon := strings.IndexByte(
@@ -143,6 +175,9 @@ func PatchErrorCodeFromText(
 		return PatchErrorSymbolNotFound
 	case PatchErrorNoOpPatch:
 		return PatchErrorNoOpPatch
+
+    case PatchErrorModuleImportMismatch:	
+    	return PatchErrorModuleImportMismatch
 
 	case PatchErrorTaskEffectiveness:
 		return PatchErrorTaskEffectiveness

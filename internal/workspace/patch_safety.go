@@ -244,6 +244,19 @@ func (w *Workspace) PreflightChanges(
 	prepared := cloneFileChanges(changes)
 	report := &PatchPreflightReport{Files: len(prepared)}
 
+    moduleImportContext, err :=
+    	loadGoModImportContext(
+    		dir,
+    		prepared,
+    	)
+    
+    if err != nil {
+    	return nil, nil, fmt.Errorf(
+    		"preflight module/import context: %w",
+    		err,
+    	)
+    }
+
 	for i := range prepared {
 		ch := &prepared[i]
 		if strings.TrimSpace(ch.Path) == "" {
@@ -329,6 +342,31 @@ func (w *Workspace) PreflightChanges(
 		if err := validateGoModGuard(before, current, ch.Patches, ch.Path); err != nil {
 			return nil, nil, err
 		}
+
+        if err := validateModuleImportGuard(
+        	before,
+        	current,
+        	ch.Patches,
+        	ch.Path,
+        	moduleImportContext,
+        ); err != nil {
+        	w.diffTracef(
+        		"phase=PREFLIGHT file=%s stage=MODULE_IMPORT decision=REJECT error_code=%s reason=%s",
+        		ch.Path,
+        		domain.PatchErrorCodeFromError(err),
+        		strings.ReplaceAll(
+        			strings.ReplaceAll(
+        				err.Error(),
+        				"\n",
+        				" ",
+        			),
+        			"\r",
+        			" ",
+        		),
+        	)
+        
+        	return nil, nil, err
+        }
 
 		maxBlocks, maxLines, maxBytes := patchLimits(policy)
 

@@ -1301,6 +1301,34 @@ func patchRepairGuidance(
 		)
 
 	switch code {
+    case domain.PatchErrorModuleImportMismatch:
+    	return `ERROR CODE: module_import_mismatch
+
+The previous patch introduced a Go import that does not belong to the current project module and is not a declared dependency.
+
+MANDATORY CORRECTION:
+1. Re-read the CURRENT PROJECT SOURCE.
+2. Read the module path from the project's go.mod.
+3. For project-local packages, use the exact module path from go.mod.
+4. Never invent a module path such as example.com/project.
+5. Do not treat a project-local package as an external dependency.
+6. If a genuinely new external dependency is required, update go.mod in the same task.
+7. Keep the import change minimal.
+8. Do not rewrite the complete file.
+9. Preserve the existing module path unless the original task explicitly requires changing it.
+10. Do not perform web research merely to resolve a project-local import.
+
+Example:
+If go.mod contains:
+
+module example.com/m/v2
+
+then:
+  CORRECT: import "example.com/m/v2/internal/service"
+  WRONG:   import "example.com/project/internal/service"
+
+Return only corrected SEARCH/REPLACE patch blocks.`
+
 	case domain.PatchErrorStrictSearchTooLarge:
 		return `ERROR CODE: strict_search_too_large
     

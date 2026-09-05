@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestPatchErrorCodeFromRawModuleImportBuildError(
+	t *testing.T,
+) {
+	text := `main.go:9:2: no required module provides package example.com/project/internal/service; to add it:
+	go get example.com/project/internal/service`
+
+	code := PatchErrorCodeFromText(text)
+
+	if code != PatchErrorModuleImportMismatch {
+		t.Fatalf(
+			"code = %q, want %q",
+			code,
+			PatchErrorModuleImportMismatch,
+		)
+	}
+}
+
 func TestPatchErrorCodeNoOpPatch(t *testing.T) {
 	err := NewPatchError(
 		PatchErrorNoOpPatch,
