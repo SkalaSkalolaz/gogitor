@@ -1862,6 +1862,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		if usePatchPrompt {
 			changes = codegen.ParseResponseWithPatches(response)
+            changes = codegen.NormalizeParsedFileChanges(changes)
 			patchAttempted = true
 		} else {
 			changes = codegen.ParseResponseWithOptions(

@@ -597,6 +597,66 @@ func ParseResponseWithPatches(response string) []domain.FileChange {
 	return files
 }
 
+// NormalizeParsedFileChanges объединяет несколько patch-only
+// FileChange для одного и того же файла.
+//
+// Это безопасная нормализация ответа LLM:
+// - несколько Patch-блоков одного файла объединяются;
+// - полный файл + patch не объединяются;
+// - два разных полных FileChange не объединяются;
+//
+// Последние варианты остаются на Validate(), чтобы не ослаблять
+// существующую защиту от конфликтующих ответов модели.
+func NormalizeParsedFileChanges(
+	changes []domain.FileChange,
+) []domain.FileChange {
+	if len(changes) < 2 {
+		return changes
+	}
+
+	out := make(
+		[]domain.FileChange,
+		0,
+		len(changes),
+	)
+
+	patchIndex := make(map[string]int)
+
+	for _, ch := range changes {
+		key := filepath.Clean(
+			strings.TrimSpace(ch.Path),
+		)
+
+		if ch.PatchMode &&
+			len(ch.Patches) > 0 &&
+			strings.TrimSpace(ch.Content) == "" {
+
+			if idx, ok := patchIndex[key]; ok {
+				dst := &out[idx]
+
+				if dst.PatchMode &&
+					len(dst.Patches) > 0 &&
+					strings.TrimSpace(dst.Content) == "" {
+
+					dst.Patches = append(
+						dst.Patches,
+						ch.Patches...,
+					)
+
+					dst.PatchMode = true
+					continue
+				}
+			}
+
+			patchIndex[key] = len(out)
+		}
+
+		out = append(out, ch)
+	}
+
+	return out
+}
+
 func extractMarker(line, prefix string) string {
 	idx := strings.Index(line, prefix)
 	if idx == -1 {

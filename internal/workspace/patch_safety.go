@@ -285,60 +285,135 @@ func (w *Workspace) PreflightChanges(
 		report.PatchFiles++
 		report.PatchBlocks += len(ch.Patches)
 
-		before := string(original)
-		current := before
-		for pi := range ch.Patches {
-			if ch.Patches[pi].ExpectedSymbolFingerprint != "" && strings.TrimSpace(ch.Patches[pi].Symbol) != "" {
-				fp, fpErr := SymbolFingerprint(before, ch.Patches[pi].Symbol)
-				if fpErr != nil {
-					return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, fpErr)
-				}
-				if fp != ch.Patches[pi].ExpectedSymbolFingerprint {
-					return nil, nil, fmt.Errorf(
-						"preflight %s patch %d: symbol %q changed since generation",
-						ch.Path, pi+1, ch.Patches[pi].Symbol,
-					)
-				}
-			}
+        before := string(original)
+        current := before
+        
+        allowedScope := make(
+        	map[string]bool,
+        )
+        
+        for pi := range ch.Patches {
+        
+        	patchBefore := current
+        
+        	if ch.Patches[pi].ExpectedSymbolFingerprint != "" &&
+        		strings.TrimSpace(
+        			ch.Patches[pi].Symbol,
+        		) != "" {
+        
+        		fp, fpErr := SymbolFingerprint(
+        			before,
+        			ch.Patches[pi].Symbol,
+        		)
+        
+        		if fpErr != nil {
+        			return nil, nil, fmt.Errorf(
+        				"preflight %s patch %d: %w",
+        				ch.Path,
+        				pi+1,
+        				fpErr,
+        			)
+        		}
+        
+        		if fp !=
+        			ch.Patches[pi].ExpectedSymbolFingerprint {
+        
+        			return nil, nil, fmt.Errorf(
+        				"preflight %s patch %d: symbol %q changed since generation",
+        				ch.Path,
+        				pi+1,
+        				ch.Patches[pi].Symbol,
+        			)
+        		}
+        	}
+        
+        	p := ch.Patches[pi]
+        
+        	resolved, resolveErr :=
+        		preparePatch(
+        			current,
+        			p,
+        		)
+        
+        	if resolveErr != nil {
+        		return nil, nil, fmt.Errorf(
+        			"preflight %s patch %d: %w",
+        			ch.Path,
+        			pi+1,
+        			resolveErr,
+        		)
+        	}
+        
+        	ch.Patches[pi] = resolved
+        
+        	updated, err :=
+        		applyOnePatchWithPolicyCoreChecked(
+        			current,
+        			resolved,
+        			policy,
+        			minConfidenceOverride,
+        			w.getDiffMatchingConfig(),
+        			pi == 0,
+        			newPatchTrace(
+        				w.getDiffTraceSink(),
+        				"PREFLIGHT",
+        				ch.Path,
+        				pi+1,
+        				len(ch.Patches),
+        				policy,
+        				resolved,
+        			),
+        		)
+        
+        	if err != nil {
+        		return nil, nil, fmt.Errorf(
+        			"preflight %s patch %d: %w",
+        			ch.Path,
+        			pi+1,
+        			err,
+        		)
+        	}
+        
+        	// НОВОЕ:
+        	// фиксируем именно тот AST-footprint,
+        	// который изменил этот patch.
+        	if err := addPatchFootprintToScope(
+        		patchBefore,
+        		updated,
+        		resolved,
+        		allowedScope,
+        	); err != nil {
+        		return nil, nil, fmt.Errorf(
+        			"preflight %s patch %d: %w",
+        			ch.Path,
+        			pi+1,
+        			err,
+        		)
+        	}
+        
+        	current = updated
+        }
+        
+        if err := validateSemanticScopeWithAllowed(
+        	before,
+        	current,
+        	ch.Patches,
+        	ch.Path,
+        	allowedScope,
+        ); err != nil {
+        	return nil, nil, err
+        }
+        
+        if err := validatePublicAPIGuardWithAllowed(
+        	before,
+        	current,
+        	ch.Patches,
+        	ch.Path,
+        	allowedScope,
+        ); err != nil {
+        	return nil, nil, err
+        }
 
-			p := ch.Patches[pi]
-			resolved, resolveErr := preparePatch(current, p)
-			if resolveErr != nil {
-				return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, resolveErr)
-			}
-			ch.Patches[pi] = resolved
-			updated, err := applyOnePatchWithPolicyCoreChecked(
-				current,
-				resolved,
-				policy,
-				minConfidenceOverride,
-				w.getDiffMatchingConfig(),
-				pi == 0,
-				newPatchTrace(
-					w.getDiffTraceSink(),
-					"PREFLIGHT",
-					ch.Path,
-					pi+1,
-					len(ch.Patches),
-					policy,
-					resolved,
-				),
-			)
-			if err != nil {
-				return nil, nil, fmt.Errorf("preflight %s patch %d: %w", ch.Path, pi+1, err)
-			}
-			current = updated
-		}
-
-		if err := validateSemanticScope(before, current, ch.Patches, ch.Path); err != nil {
-			return nil, nil, err
-		}
-		if err := validatePublicAPIGuard(before, current, ch.Patches, ch.Path); err != nil {
-			return nil, nil, err
-		}
-		if err := validateImportGuard(before, current, ch.Patches, ch.Path); err != nil {
-			return nil, nil, err
-		}
 		if err := validateGoModGuard(before, current, ch.Patches, ch.Path); err != nil {
 			return nil, nil, err
 		}
@@ -409,6 +484,94 @@ func (w *Workspace) PreflightChanges(
 	return prepared, report, nil
 }
 
+func validatePublicAPIGuardWithAllowed(
+	before string,
+	after string,
+	patches []domain.Patch,
+	path string,
+	allowed map[string]bool,
+) error {
+
+	if len(patches) == 0 ||
+		!isGoPath(path) {
+		return nil
+	}
+
+	beforeDecls, err :=
+		goDeclarationFingerprints(before)
+
+	if err != nil {
+		return fmt.Errorf(
+			"public API guard %s: parse before: %w",
+			path,
+			err,
+		)
+	}
+
+	afterDecls, err :=
+		goDeclarationFingerprints(after)
+
+	if err != nil {
+		return fmt.Errorf(
+			"public API guard %s: parse after: %w",
+			path,
+			err,
+		)
+	}
+
+	var unexpected []string
+
+	all := make(
+		map[string]bool,
+		len(beforeDecls)+len(afterDecls),
+	)
+
+	for key := range beforeDecls {
+		all[key] = true
+	}
+
+	for key := range afterDecls {
+		all[key] = true
+	}
+
+	for key := range all {
+		if !isExportedDeclarationKey(key) {
+			continue
+		}
+
+		if beforeDecls[key] ==
+			afterDecls[key] {
+			continue
+		}
+
+		if !allowed[key] {
+			unexpected =
+				append(
+					unexpected,
+					key,
+				)
+		}
+	}
+
+	if len(unexpected) > 0 {
+		sort.Strings(unexpected)
+
+		return domain.NewPatchError(
+			domain.PatchErrorPublicAPIGuard,
+			fmt.Sprintf(
+				"public API guard %s: unapproved exported API changes: %s",
+				path,
+				strings.Join(
+					unexpected,
+					", ",
+				),
+			),
+		)
+	}
+
+	return nil
+}
+
 func preparePatch(content string, p domain.Patch) (domain.Patch, error) {
 	if !p.ReplaceOnly {
 		return p, nil
@@ -433,6 +596,8 @@ func preparePatch(content string, p domain.Patch) (domain.Patch, error) {
 	p.Search = search
 	return p, nil
 }
+
+
 
 func SymbolFingerprint(content, symbol string) (string, error) {
 	start, end, err := findSymbolRange(content, symbol)
@@ -526,6 +691,115 @@ func estimateChangedLines(before, after string) int {
 	return oldMiddle + newMiddle
 }
 
+func validateSemanticScopeWithAllowed(
+	before string,
+	after string,
+	patches []domain.Patch,
+	path string,
+	allowed map[string]bool,
+) error {
+
+	if len(patches) == 0 ||
+		!isGoPath(path) {
+		return nil
+	}
+
+	beforeDecls, err :=
+		goDeclarationFingerprints(before)
+
+	if err != nil {
+		return fmt.Errorf(
+			"semantic scope %s: parse before: %w",
+			path,
+			err,
+		)
+	}
+
+	afterDecls, err :=
+		goDeclarationFingerprints(after)
+
+	if err != nil {
+		return fmt.Errorf(
+			"semantic scope %s: parse after: %w",
+			path,
+			err,
+		)
+	}
+
+	// Старую логику разрешения новых приватных
+	// helper-функций оставляем.
+	calls, err :=
+		goDeclarationCalls(after)
+
+	if err != nil {
+		return fmt.Errorf(
+			"semantic scope %s: parse calls: %w",
+			path,
+			err,
+		)
+	}
+
+	for key := range afterDecls {
+		if newScopedFunctionAllowed(
+			key,
+			beforeDecls,
+			afterDecls,
+			allowed,
+			calls,
+		) {
+			allowed[key] = true
+		}
+	}
+
+	var unexpected []string
+
+	all := make(
+		map[string]bool,
+		len(beforeDecls)+len(afterDecls),
+	)
+
+	for key := range beforeDecls {
+		all[key] = true
+	}
+
+	for key := range afterDecls {
+		all[key] = true
+	}
+
+	for key := range all {
+		if beforeDecls[key] ==
+			afterDecls[key] {
+			continue
+		}
+
+		if !allowed[key] {
+			unexpected =
+				append(
+					unexpected,
+					key,
+				)
+		}
+	}
+
+	if len(unexpected) > 0 {
+		sort.Strings(unexpected)
+
+		return domain.NewPatchError(
+			domain.PatchErrorSemanticScope,
+			fmt.Sprintf(
+				"semantic scope %s: declarations changed outside the applied patch footprint: %s",
+				path,
+				strings.Join(
+					unexpected,
+					", ",
+				),
+			),
+		)
+	}
+
+	return nil
+}
+
 func validateSemanticScope(
 	before,
 	after string,
@@ -538,11 +812,27 @@ func validateSemanticScope(
 
 	allowed := make(map[string]bool)
 
-	for _, p := range patches {
-		if symbol := normalizePatchSymbol(p.Symbol); symbol != "" {
-			allowed[declarationKey(symbol)] = true
-		}
-	}
+    for _, p := range patches {
+    	symbol := normalizePatchSymbol(p.Symbol)
+    	if symbol == "" {
+    		continue
+    	}
+    
+    	if key, err := resolveDeclarationKey(
+    		before,
+    		symbol,
+    	); err == nil {
+    		allowed[key] = true
+    		continue
+    	}
+    
+    	if key, err := resolveDeclarationKey(
+    		after,
+    		symbol,
+    	); err == nil {
+    		allowed[key] = true
+    	}
+    }
 
 	if len(allowed) == 0 {
 		return nil
@@ -555,6 +845,7 @@ func validateSemanticScope(
 			path,
 			err,
 		)
+
 	}
 
 	afterDecls, err := goDeclarationFingerprints(after)
@@ -625,15 +916,21 @@ func validateSemanticScope(
 		}
 	}
 
-	if len(unexpected) > 0 {
-		sort.Strings(unexpected)
-
-		return fmt.Errorf(
-			"patch_error_code=semantic_scope: semantic scope %s: unrelated declarations changed: %s",
-			path,
-			strings.Join(unexpected, ", "),
-		)
-	}
+    if len(unexpected) > 0 {
+    	sort.Strings(unexpected)
+    
+    	return domain.NewPatchError(
+    		domain.PatchErrorSemanticScope,
+    		fmt.Sprintf(
+    			"semantic scope %s: unrelated declarations changed: %s",
+    			path,
+    			strings.Join(
+    				unexpected,
+    				", ",
+    			),
+    		),
+    	)
+    }
 
 	return nil
 }
@@ -643,11 +940,28 @@ func validatePublicAPIGuard(before, after string, patches []domain.Patch, path s
 		return nil
 	}
 	allowed := make(map[string]bool)
-	for _, p := range patches {
-		if symbol := normalizePatchSymbol(p.Symbol); symbol != "" {
-			allowed[declarationKey(symbol)] = true
-		}
-	}
+
+    for _, p := range patches {
+    	symbol := normalizePatchSymbol(p.Symbol)
+    	if symbol == "" {
+    		continue
+    	}
+    
+    	if key, err := resolveDeclarationKey(
+    		before,
+    		symbol,
+    	); err == nil {
+    		allowed[key] = true
+    		continue
+    	}
+    
+    	if key, err := resolveDeclarationKey(
+    		after,
+    		symbol,
+    	); err == nil {
+    		allowed[key] = true
+    	}
+    }
 	if len(allowed) == 0 {
 		return nil
 	}
@@ -709,7 +1023,14 @@ func validateImportGuard(before, after string, patches []domain.Patch, path stri
 			return nil
 		}
 	}
-	return fmt.Errorf("import guard %s: import set changed outside an explicit import patch", path)
+
+    return domain.NewPatchError(
+    	domain.PatchErrorImportGuard,
+    	fmt.Sprintf(
+    		"import guard %s: import set changed outside an explicit import patch",
+    		path,
+    	),
+    )
 }
 
 func patchContainsImportDeclaration(s string) bool {
@@ -783,7 +1104,12 @@ func equalStringSet(a, b []string) bool {
 
 func goDeclarationFingerprints(content string) (map[string]string, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "fingerprint.go", []byte(content), parser.ParseComments)
+    file, err := parser.ParseFile(
+    	fset,
+    	"fingerprint.go",
+    	[]byte(content),
+    	0,
+    )
 	if err != nil {
 		return nil, err
 	}

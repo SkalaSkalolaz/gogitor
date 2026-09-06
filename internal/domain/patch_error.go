@@ -30,14 +30,19 @@ const (
 	// не изменился.
 	PatchErrorNoOpPatch PatchErrorCode = "no_op_patch"
 
-    // PatchErrorModuleImportMismatch означает,
-    // что новый Go import не соответствует module path
-    // проекта и не является объявленной зависимостью.
-    PatchErrorModuleImportMismatch PatchErrorCode =  "module_import_mismatch"
+	// PatchErrorModuleImportMismatch означает,
+	// что новый Go import не соответствует module path
+	// проекта и не является объявленной зависимостью.
+	PatchErrorModuleImportMismatch PatchErrorCode = "module_import_mismatch"
 
 	// PatchErrorTaskEffectiveness означает, что patch формально
 	// применился, но ожидаемый результат задачи не был достигнут.
 	PatchErrorTaskEffectiveness PatchErrorCode = "task_effectiveness_failed"
+	PatchErrorSemanticScope     PatchErrorCode = "semantic_scope"
+	PatchErrorPublicAPIGuard    PatchErrorCode = "public_api_guard"
+	PatchErrorImportGuard       PatchErrorCode = "import_guard"
+	PatchErrorGoModGuard        PatchErrorCode = "gomod_guard"
+	PatchErrorPatchTooLarge     PatchErrorCode = "patch_too_large"
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -140,8 +145,23 @@ func PatchErrorCodeFromText(
 
 		case PatchErrorModuleImportMismatch:
 			return PatchErrorModuleImportMismatch
-        case PatchErrorNoOpPatch:              
-            return PatchErrorNoOpPatch
+		case PatchErrorNoOpPatch:
+			return PatchErrorNoOpPatch
+		case PatchErrorSemanticScope:
+			return PatchErrorSemanticScope
+
+		case PatchErrorPublicAPIGuard:
+			return PatchErrorPublicAPIGuard
+
+		case PatchErrorImportGuard:
+			return PatchErrorImportGuard
+
+		case PatchErrorGoModGuard:
+			return PatchErrorGoModGuard
+
+		case PatchErrorPatchTooLarge:
+			return PatchErrorPatchTooLarge
+
 		default:
 			return ""
 		}

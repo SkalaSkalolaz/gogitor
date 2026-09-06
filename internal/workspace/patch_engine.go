@@ -21,6 +21,238 @@ const (
 	PatchPolicyAdvanced
 )
 
+type declarationInfo struct {
+	Start int
+	End   int
+}
+
+type sourceSpan struct {
+	Start int
+	End   int
+}
+
+func changedSourceSpans(
+	before string,
+	after string,
+) (sourceSpan, sourceSpan, bool) {
+
+	if before == after {
+		return sourceSpan{},
+			sourceSpan{},
+			false
+	}
+
+	prefix := 0
+
+	maxPrefix := len(before)
+
+	if len(after) < maxPrefix {
+		maxPrefix = len(after)
+	}
+
+	for prefix < maxPrefix &&
+		before[prefix] == after[prefix] {
+
+		prefix++
+	}
+
+	beforeEnd := len(before)
+	afterEnd := len(after)
+
+	for beforeEnd > prefix &&
+		afterEnd > prefix &&
+		before[beforeEnd-1] ==
+			after[afterEnd-1] {
+
+		beforeEnd--
+		afterEnd--
+	}
+
+	return sourceSpan{
+			Start: prefix,
+			End:   beforeEnd,
+		},
+		sourceSpan{
+			Start: prefix,
+			End:   afterEnd,
+		},
+		true
+}
+
+func spansTouch(
+	a sourceSpan,
+	b declarationInfo,
+) bool {
+	// Вставка в одну точку.
+	if a.Start == a.End {
+		return a.Start >= b.Start &&
+			a.Start <= b.End
+	}
+
+	return a.Start < b.End &&
+		b.Start < a.End
+}
+
+func addPatchFootprintToScope(
+	before string,
+	after string,
+	p domain.Patch,
+	allowed map[string]bool,
+) error {
+
+	oldSpan, newSpan, changed :=
+		changedSourceSpans(
+			before,
+			after,
+		)
+
+	if !changed {
+		return nil
+	}
+
+	beforeDecls, err :=
+		goDeclarationInfos(before)
+
+	if err != nil {
+		return fmt.Errorf(
+			"semantic footprint: parse before: %w",
+			err,
+		)
+	}
+
+	afterDecls, err :=
+		goDeclarationInfos(after)
+
+	if err != nil {
+		return fmt.Errorf(
+			"semantic footprint: parse after: %w",
+			err,
+		)
+	}
+
+	// Явный Symbol тоже считается разрешённым,
+	// если он действительно существует в исходнике.
+	if symbol :=
+		normalizePatchSymbol(p.Symbol); symbol != "" {
+
+		if key, err :=
+			resolveDeclarationKey(
+				before,
+				symbol,
+			); err == nil {
+
+			allowed[key] = true
+		}
+	}
+
+	// Существующие declarations,
+	// затронутые реальным patch.
+	for key, info := range beforeDecls {
+		if spansTouch(oldSpan, info) {
+			allowed[key] = true
+		}
+	}
+
+	// Новые declarations.
+	for key, info := range afterDecls {
+		if spansTouch(newSpan, info) {
+			allowed[key] = true
+		}
+	}
+
+	return nil
+}
+
+func goDeclarationInfos(
+	content string,
+) (map[string]declarationInfo, error) {
+	fset := token.NewFileSet()
+
+	file, err := parser.ParseFile(
+		fset,
+		"declarations.go",
+		[]byte(content),
+		parser.ParseComments,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	fileInfo := fset.File(file.Pos())
+
+	if fileInfo == nil {
+		return nil, fmt.Errorf(
+			"cannot resolve declaration positions",
+		)
+	}
+
+	out := make(
+		map[string]declarationInfo,
+	)
+
+	add := func(
+		key string,
+		node ast.Node,
+	) {
+		out[key] = declarationInfo{
+			Start: fileInfo.Offset(node.Pos()),
+			End:   fileInfo.Offset(node.End()),
+		}
+	}
+
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+
+		case *ast.FuncDecl:
+			key := goFuncDeclarationKey(d)
+			if key != "" {
+				add(key, d)
+			}
+
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+
+				case *ast.TypeSpec:
+					if s.Name != nil {
+						add(
+							"type:"+s.Name.Name,
+							s,
+						)
+					}
+
+				case *ast.ValueSpec:
+					var names []string
+
+					for _, n := range s.Names {
+						if n != nil {
+							names = append(
+								names,
+								n.Name,
+							)
+						}
+					}
+
+					if len(names) > 0 {
+						sort.Strings(names)
+
+						add(
+							"value:"+
+								strings.Join(
+									names,
+									",",
+								),
+							s,
+						)
+					}
+				}
+			}
+		}
+	}
+
+	return out, nil
+}
+
 func (p PatchPolicy) String() string {
 	switch p {
 	case PatchPolicyStrict:
@@ -224,16 +456,16 @@ func applyPatchesWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-    return applyPatchesWithPolicyCore(
-    	content,
-    	patches,
-    	policy,
-    	minConfidenceOverride,
-    	domain.DefaultDiffMatchingConfig(),
-    	"",
-    	"",
-    	nil,
-    )
+	return applyPatchesWithPolicyCore(
+		content,
+		patches,
+		policy,
+		minConfidenceOverride,
+		domain.DefaultDiffMatchingConfig(),
+		"",
+		"",
+		nil,
+	)
 }
 
 // applyOnePatch оставляем как compatibility wrapper,
@@ -253,14 +485,14 @@ func applyOnePatchWithPolicy(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, error) {
-    return applyOnePatchWithPolicyCore(
-    	content,
-    	p,
-    	policy,
-    	minConfidenceOverride,
-    	domain.DefaultDiffMatchingConfig(),
-    	nil,
-    )
+	return applyOnePatchWithPolicyCore(
+		content,
+		p,
+		policy,
+		minConfidenceOverride,
+		domain.DefaultDiffMatchingConfig(),
+		nil,
+	)
 }
 
 // detectSymbolForSearch ищет функцию/метод, содержащий SEARCH-блок,
@@ -325,15 +557,15 @@ func applyPatchText(
 	policy PatchPolicy,
 	minConfidenceOverride float64,
 ) (string, bool, error) {
-    return applyPatchTextCore(
-    	content,
-    	search,
-    	replace,
-    	policy,
-    	minConfidenceOverride,
-    	domain.DefaultDiffMatchingConfig(),
-    	nil,
-    )
+	return applyPatchTextCore(
+		content,
+		search,
+		replace,
+		policy,
+		minConfidenceOverride,
+		domain.DefaultDiffMatchingConfig(),
+		nil,
+	)
 }
 
 func hasUniqueExactAnchor(
@@ -467,15 +699,22 @@ func replaceLineRange(
 	return strings.Join(newLines, "\n")
 }
 
-// ------------------------------------------------------------
-// AST / Symbol anchor
-// ------------------------------------------------------------
+type symbolResolution struct {
+	Key   string
+	Name  string
+	Start int
+	End   int
+}
 
-func findSymbolRange(content, symbol string) (int, int, error) {
+func resolveSymbol(
+	content string,
+	symbol string,
+) (symbolResolution, error) {
 	symbol = normalizePatchSymbol(symbol)
 
 	if symbol == "" {
-		return 0, 0, fmt.Errorf("empty symbol anchor")
+		return symbolResolution{},
+			fmt.Errorf("empty symbol anchor")
 	}
 
 	fset := token.NewFileSet()
@@ -487,103 +726,262 @@ func findSymbolRange(content, symbol string) (int, int, error) {
 		parser.ParseComments,
 	)
 	if err != nil {
-		return 0, 0, fmt.Errorf(
-			"cannot parse Go file for symbol anchor %q: %w",
-			symbol,
-			err,
-		)
+		return symbolResolution{},
+			fmt.Errorf(
+				"cannot parse Go file for symbol anchor %q: %w",
+				symbol,
+				err,
+			)
 	}
 
 	type candidate struct {
 		node ast.Node
+		key  string
 		name string
 	}
 
 	var matches []candidate
 
+	appendCandidate := func(
+		node ast.Node,
+		key string,
+		name string,
+	) {
+		matches = append(
+			matches,
+			candidate{
+				node: node,
+				key:  key,
+				name: name,
+			},
+		)
+	}
+
 	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name == nil {
-			continue
-		}
+		switch d := decl.(type) {
 
-		name := fn.Name.Name
+		case *ast.FuncDecl:
+			if d.Name == nil {
+				continue
+			}
 
-		if fn.Recv != nil &&
-			len(fn.Recv.List) > 0 {
-			receiver := receiverTypeName(
-				fn.Recv.List[0].Type,
-			)
-			if receiver != "" {
-				name = receiver + "." + name
+			name := d.Name.Name
+
+			if d.Recv != nil &&
+				len(d.Recv.List) > 0 {
+
+				if recv := receiverTypeName(
+					d.Recv.List[0].Type,
+				); recv != "" {
+					name = recv + "." + name
+				}
+			}
+
+			key := "func:" + name
+
+			if symbol == name ||
+				symbol == d.Name.Name {
+
+				appendCandidate(
+					d,
+					key,
+					name,
+				)
+			}
+
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					if s.Name == nil {
+						continue
+					}
+
+					name := s.Name.Name
+
+					if symbol == name {
+						var node ast.Node = s
+						if len(d.Specs) == 1 {
+							node = d
+						}
+
+						appendCandidate(
+							node,
+							"type:"+name,
+							name,
+						)
+					}
+				case *ast.ValueSpec:
+					var names []string
+
+					for _, nameIdent := range s.Names {
+						if nameIdent == nil {
+							continue
+						}
+						names = append(
+							names,
+							nameIdent.Name,
+						)
+					}
+
+					if len(names) == 0 {
+						continue
+					}
+
+					sortedNames :=
+						append([]string(nil), names...)
+
+					sort.Strings(sortedNames)
+
+					key :=
+						"value:" +
+							strings.Join(
+								sortedNames,
+								",",
+							)
+
+					for _, name := range names {
+						if symbol == name {
+							appendCandidate(
+								s,
+								key,
+								name,
+							)
+							break
+						}
+					}
+				}
 			}
 		}
+	}
 
-		if symbol == name ||
-			symbol == fn.Name.Name {
-			matches = append(
-				matches,
-				candidate{
-					node: fn,
-					name: name,
-				},
+	if len(matches) == 0 {
+		return symbolResolution{},
+			domain.NewPatchError(
+				domain.PatchErrorSymbolNotFound,
+				fmt.Sprintf(
+					"symbol %q not found",
+					symbol,
+				),
 			)
-		}
 	}
 
-    if len(matches) == 0 {
-    	return 0, 0, domain.NewPatchError(
-    		domain.PatchErrorSymbolNotFound,
-    		fmt.Sprintf(
-    			"symbol %q not found",
-    			symbol,
-    		),
-    	)
-    }
 	if len(matches) > 1 {
-		return 0, 0, fmt.Errorf(
-			"symbol %q is ambiguous (%d matches)",
-			symbol,
-			len(matches),
-		)
+		return symbolResolution{},
+			fmt.Errorf(
+				"symbol %q is ambiguous (%d matches)",
+				symbol,
+				len(matches),
+			)
 	}
 
-	fileInfo := fset.File(file.Pos())
+	fileInfo := fset.File(
+		matches[0].node.Pos(),
+	)
+
 	if fileInfo == nil {
-		return 0, 0, fmt.Errorf(
-			"cannot resolve token positions for symbol %q",
-			symbol,
-		)
+		return symbolResolution{},
+			fmt.Errorf(
+				"cannot resolve token positions for symbol %q",
+				symbol,
+			)
 	}
 
-	start := fileInfo.Offset(matches[0].node.Pos())
-	end := fileInfo.Offset(matches[0].node.End())
+	start :=
+		fileInfo.Offset(
+			matches[0].node.Pos(),
+		)
+
+	end :=
+		fileInfo.Offset(
+			matches[0].node.End(),
+		)
 
 	if start < 0 ||
 		end < start ||
 		end > len(content) {
-		return 0, 0, fmt.Errorf(
-			"invalid source range for symbol %q",
-			symbol,
-		)
+
+		return symbolResolution{},
+			fmt.Errorf(
+				"invalid source range for symbol %q",
+				symbol,
+			)
 	}
 
-	return start, end, nil
+	return symbolResolution{
+		Key:   matches[0].key,
+		Name:  matches[0].name,
+		Start: start,
+		End:   end,
+	}, nil
+}
+
+// ------------------------------------------------------------
+// AST / Symbol anchor
+// ------------------------------------------------------------
+
+func findSymbolRange(
+	content string,
+	symbol string,
+) (int, int, error) {
+	resolved, err :=
+		resolveSymbol(content, symbol)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return resolved.Start,
+		resolved.End,
+		nil
+}
+
+func resolveDeclarationKey(
+	content string,
+	symbol string,
+) (string, error) {
+	resolved, err :=
+		resolveSymbol(content, symbol)
+
+	if err != nil {
+		return "", err
+	}
+
+	return resolved.Key, nil
 }
 
 func normalizePatchSymbol(symbol string) string {
 	symbol = strings.TrimSpace(symbol)
+
 	if symbol == "" {
 		return ""
 	}
 
-	symbol = strings.TrimPrefix(symbol, "func ")
-	symbol = strings.TrimSpace(symbol)
+	for _, prefix := range []string{
+		"func ",
+		"type ",
+		"var ",
+		"const ",
+	} {
+		if strings.HasPrefix(symbol, prefix) {
+			symbol = strings.TrimSpace(
+				strings.TrimPrefix(
+					symbol,
+					prefix,
+				),
+			)
+			break
+		}
+	}
 
-	// Допускаем (*Service).Method и приводим к Service.Method.
 	if strings.HasPrefix(symbol, "(*") {
-		if idx := strings.Index(symbol, ")."); idx > 2 {
-			symbol = symbol[2:idx] + symbol[idx+1:]
+		if idx := strings.Index(
+			symbol,
+			").",
+		); idx > 2 {
+			symbol =
+				symbol[2:idx] +
+					symbol[idx+1:]
 		}
 	}
 

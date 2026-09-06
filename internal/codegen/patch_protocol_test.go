@@ -7,6 +7,45 @@ import (
 	"gogitor/internal/domain"
 )
 
+func TestNormalizeParsedFileChanges_MergesDuplicatePatchHeaders(
+	t *testing.T,
+) {
+	response := `--- Patch: main.go ---
+<<<<<<< SEARCH
+aaa
+=======
+bbb
+>>>>>>> REPLACE
+
+--- Patch: main.go ---
+<<<<<<< SEARCH
+ccc
+=======
+ddd
+>>>>>>> REPLACE
+`
+
+	changes :=
+		ParseResponseWithPatches(response)
+
+	changes =
+		NormalizeParsedFileChanges(changes)
+
+	if len(changes) != 1 {
+		t.Fatalf(
+			"changes = %d, want 1",
+			len(changes),
+		)
+	}
+
+	if len(changes[0].Patches) != 2 {
+		t.Fatalf(
+			"patches = %d, want 2",
+			len(changes[0].Patches),
+		)
+	}
+}
+
 func TestParseResponseWithPatches_ReplaceOnly(t *testing.T) {
 	response := `--- Patch: main.go ---
 --- Symbol: main ---

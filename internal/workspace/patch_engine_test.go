@@ -8,6 +8,151 @@ import (
 	"gogitor/internal/domain"
 )
 
+
+func TestSemanticScopeAllowsRelatedInterfaceAndImplementationMethod(
+	t *testing.T,
+) {
+	before := `package main
+
+type Repository interface {
+	GetByID(id string) error
+}
+
+type InMemoryRepository struct{}
+
+func (r *InMemoryRepository) GetByID(id string) error {
+	return nil
+}
+`
+
+	afterInterface := `package main
+
+type Repository interface {
+	GetByID(id string) error
+	Delete(id string) error
+}
+
+type InMemoryRepository struct{}
+
+func (r *InMemoryRepository) GetByID(id string) error {
+	return nil
+}
+`
+
+	afterMethod := `package main
+
+type Repository interface {
+	GetByID(id string) error
+	Delete(id string) error
+}
+
+type InMemoryRepository struct{}
+
+func (r *InMemoryRepository) GetByID(id string) error {
+	return nil
+}
+
+func (r *InMemoryRepository) Delete(id string) error {
+	return nil
+}
+`
+
+	allowed :=
+		make(map[string]bool)
+
+	firstPatch := domain.Patch{
+		Symbol: "Repository",
+		Search: `type Repository interface {
+	GetByID(id string) error
+}`,
+		Replace: `type Repository interface {
+	GetByID(id string) error
+	Delete(id string) error
+}`,
+	}
+
+	if err := addPatchFootprintToScope(
+		before,
+		afterInterface,
+		firstPatch,
+		allowed,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	secondPatch := domain.Patch{
+		Symbol: "InMemoryRepository.Delete",
+		Replace: `func (r *InMemoryRepository) Delete(id string) error {
+	return nil
+}`,
+	}
+
+	if err := addPatchFootprintToScope(
+		afterInterface,
+		afterMethod,
+		secondPatch,
+		allowed,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	patches := []domain.Patch{
+		firstPatch,
+		secondPatch,
+	}
+
+	if err := validateSemanticScopeWithAllowed(
+		before,
+		afterMethod,
+		patches,
+		"repository.go",
+		allowed,
+	); err != nil {
+		t.Fatalf(
+			"related structural change rejected: %v",
+			err,
+		)
+	}
+}
+
+func TestFindSymbolRangeSupportsTypeDeclaration(
+	t *testing.T,
+) {
+	content := `package main
+
+type Repository interface {
+	GetByID(id string) error
+}
+
+func main() {}
+`
+
+	start, end, err :=
+		findSymbolRange(
+			content,
+			"Repository",
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"findSymbolRange failed: %v",
+			err,
+		)
+	}
+
+	got := content[start:end]
+
+	if !strings.Contains(
+		got,
+		"type Repository interface",
+	) {
+		t.Fatalf(
+			"unexpected range: %q",
+			got,
+		)
+	}
+}
+
 func TestStrictPatchRequiresSymbolForLargeSearch(t *testing.T) {
 	content := `package main
 

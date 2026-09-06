@@ -1281,14 +1281,20 @@ MANDATORY SYMBOL RULE:
 When the active patch policy is strict:
 
 - A SEARCH block containing 4 or more lines MUST include a Symbol line.
-- The Symbol MUST be a real Go symbol present in CURRENT PROJECT SOURCE.
-- NEVER invent synthetic symbols such as ImportBlock, ImportSection, FileImports, or similar names.
-- Import-block changes are NOT Go function/method symbols.
-- Therefore, an import-block SEARCH under strict policy MUST normally be kept to 1-3 lines.
-- Function and method changes should use the actual function or method name as Symbol.
-- If the requested modification contains both imports and function/method changes, use separate SEARCH/REPLACE blocks under ONE Patch header:
-  - import block: 1-3 SEARCH lines, without Symbol;
-  - function/method block: actual Symbol.
+- Symbol MUST be an actual supported declaration from CURRENT PROJECT SOURCE.
+- Supported symbols include:
+  - functions;
+  - methods;
+  - named types and interfaces;
+  - uniquely identifiable const/var declarations.
+- Import blocks are NOT Symbols.
+- Never invent synthetic symbols such as:
+  ImportBlock, ImportSection, FileImports.
+- REPLACE_ONLY remains limited to actual functions and methods.
+- If an interface/type must be changed, use its actual type name.
+- If one file requires several related changes, keep ONE Patch header
+  and use multiple SEARCH/REPLACE blocks.
+
 Format:
 --- Patch: path/to/file.go ---
 --- Symbol: FunctionName ---
@@ -1314,8 +1320,100 @@ func patchRepairGuidance(
 		)
 
 	switch code {
-    case domain.PatchErrorModuleImportMismatch:
-    	return `ERROR CODE: module_import_mismatch
+	case domain.PatchErrorPatchTooLarge:
+		return `ERROR CODE: patch_too_large
+
+The generated patch exceeds the current safety limit.
+
+MANDATORY CORRECTION:
+1. Do not return the complete file.
+2. Split the change into smaller logical SEARCH/REPLACE blocks.
+3. Keep ONE Patch header for each file.
+4. Preserve all required changes.
+5. Keep each SEARCH block as small as safely possible.
+6. Do not include unrelated declarations.
+`
+
+	case domain.PatchErrorGoModGuard:
+		return `ERROR CODE: gomod_guard
+    
+The module path changed without an explicit requested module-path change.
+
+MANDATORY CORRECTION:
+1. Preserve the current module path.
+2. Do not modify the module directive unless the task explicitly asks for it.
+3. Do not rewrite go.mod.
+4. Return only the minimal corrected patch.
+`
+
+	case domain.PatchErrorImportGuard:
+		return `ERROR CODE: import_guard
+    
+The import set changed without an explicit import patch.
+
+MANDATORY CORRECTION:
+1. Add only imports actually required by the requested implementation.
+2. Put import modification in its own SEARCH/REPLACE block.
+3. Do not invent imports.
+4. Do not change unrelated imports.
+5. Keep function/method changes in separate patch blocks.
+6. Do not return a complete file.
+`
+
+	case domain.PatchErrorPublicAPIGuard:
+		return `ERROR CODE: public_api_guard
+    
+The previous patch changed an exported Go declaration that was not
+connected to the requested change.
+
+MANDATORY CORRECTION:
+1. Re-read CURRENT PROJECT SOURCE.
+2. Keep exported changes that are directly required by the task.
+3. Remove unrelated exported API changes.
+4. If a public interface must gain a method, keep that interface change
+   and add the required implementation changes.
+5. Do not rename or alter unrelated exported functions, types, methods,
+   constants, or variables.
+6. Return only corrected SEARCH/REPLACE patch blocks.
+`
+
+	case domain.PatchErrorSemanticScope:
+		return `ERROR CODE: semantic_scope
+
+The validator detected declarations changed outside the previously
+declared patch scope.
+
+IMPORTANT:
+A legitimate structural change may require several related declarations.
+
+Allowed related examples:
+- interface/type + its implementation method;
+- exported interface + newly required method implementation;
+- handler + route registration;
+- existing function + newly added private helper;
+- renamed declaration + references required to keep the program valid.
+
+MANDATORY CORRECTION:
+1. Re-read CURRENT PROJECT SOURCE.
+2. Keep every genuinely required related declaration.
+3. Remove only declarations that are unrelated to the original task.
+4. One file must use ONE --- Patch: path --- header.
+5. Use separate SEARCH/REPLACE blocks for separate logical changes.
+6. A Symbol may be an actual function, method, named type/interface,
+   or supported value declaration.
+7. Never invent synthetic symbols such as ImportBlock or FileImports.
+8. For REPLACE_ONLY, Symbol must resolve to the actual function or method.
+9. Do NOT return a complete file.
+10. Preserve all behavior not required by the task.
+
+For an additive interface change:
+- modify the interface only when the task requires it;
+- add the corresponding implementation method;
+- update callers/handlers/routes only when required for the requested behavior.
+`
+
+	case domain.PatchErrorModuleImportMismatch:
+		return `ERROR CODE: module_import_mismatch
 
 The previous patch introduced a Go import that does not belong to the current project module and is not a declared dependency.
 
@@ -1399,9 +1497,10 @@ MANDATORY CORRECTION:
 2. NEVER invent a Symbol such as ImportBlock, ImportSection, FileImports, or any other synthetic name.
 3. A Symbol MUST be an actual Go function, method, or other supported AST declaration present in CURRENT PROJECT SOURCE.
 4. Re-read CURRENT PROJECT SOURCE and verify the Symbol before returning the patch.
-5. If the requested change is in an import block, DO NOT use a Symbol for the import block.
+5. Import-block changes are NOT Go function/method symbols.
+   If the requested change is in an import block, DO NOT use a Symbol for the import block.
 6. For an import-block change under strict policy, keep SEARCH to 1-3 lines so it does not require a Symbol.
-7. For a function or method change, use the actual function/method name as Symbol.
+7. For a function or method change, use the actual function or method name as Symbol.
 8. Keep separate logical changes as separate SEARCH/REPLACE blocks under ONE Patch header for the same file.
 9. NEVER return a complete file.
 10. NEVER repeat the invalid Symbol.

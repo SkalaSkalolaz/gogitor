@@ -212,22 +212,72 @@ func applyOnePatchWithPolicyCoreChecked(
 			)
 		}
 
-		start, end, err :=
-			findSymbolRange(
-				content,
-				p.Symbol,
-			)
 
-		if err != nil {
-			trace.emit(
-				"SYMBOL",
-				"REJECT",
-				"error=%q",
-				err.Error(),
-			)
-
-			return "", err
-		}
+        start, end, err :=
+        	findSymbolRange(
+        		content,
+        		p.Symbol,
+        	)
+        
+        if err != nil {
+        
+        	// REPLACE_ONLY никогда не должен
+        	// терять Symbol-based safety.
+        	if replaceOnly ||
+        		policy == PatchPolicyStrict {
+        
+        		trace.emit(
+        			"SYMBOL",
+        			"REJECT",
+        			"error=%q",
+        			err.Error(),
+        		)
+        
+        		return "", err
+        	}
+        
+        	trace.emit(
+        		"SYMBOL",
+        		"WARN",
+        		"symbol=%q unresolved; attempting high-confidence file-scope recovery",
+        		p.Symbol,
+        	)
+        
+        	updated, matched, fallbackErr :=
+        		applyPatchTextCore(
+        			content,
+        			search,
+        			replace,
+        			policy,
+        			minConfidenceOverride,
+        			matching,
+        			trace,
+        		)
+        
+        	if fallbackErr != nil {
+        		return "", fallbackErr
+        	}
+        
+        	if matched &&
+        		isSafeSymbolRecoveryMethod(
+        			trace.method,
+        		) {
+        
+        		trace.emit(
+        			"SYMBOL",
+        			"RECOVER",
+        			"method=%s",
+        			trace.method,
+        		)
+        
+        		return updated, nil
+        	}
+        
+        	return "", fmt.Errorf(
+        		"symbol %q could not be resolved safely",
+        		p.Symbol,
+        	)
+        }
 
 		trace.emit(
 			"SYMBOL",
@@ -446,6 +496,23 @@ func applyOnePatchWithPolicyCoreChecked(
 	)
 
 	return updated, nil
+}
+
+func isSafeSymbolRecoveryMethod(
+	method string,
+) bool {
+	switch method {
+	case "EXACT",
+		"RELAXED",
+		"NORMALIZED",
+		"REBASE":
+		return true
+
+	default:
+		// AST-FUZZY и LEGACY-FUZZY
+		// для Symbol recovery не используем.
+		return false
+	}
 }
 
 // finishPatchResult проверяет, привёл ли успешно найденный
