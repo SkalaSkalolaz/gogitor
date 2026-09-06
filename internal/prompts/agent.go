@@ -88,105 +88,119 @@ GOOD SUBTASK:
 	b.WriteString("\n")
 	return b.String()
 }
+func ReviewChanges(
+	originalTask,
+	subtask,
+	changeSummary,
+	memory string,
+) string {
+	return ReviewChangesWithSource(
+		originalTask,
+		subtask,
+		changeSummary,
+		"",
+		memory,
+	)
+}
 
-func ReviewChanges(originalTask, subtask, changeSummary, memory string) string {
+func ReviewChangesWithSource(
+	originalTask,
+	subtask,
+	changeSummary,
+	currentSource,
+	memory string,
+) string {
 	var b strings.Builder
+
 	b.WriteString(`You are a senior Go reviewer agent.
 Review the changes produced by another agent.
+
 Return ONLY valid compact JSON.
 Do not return markdown.
 Do not return explanations outside JSON.
 
-MANDATORY JSON schema (follow EXACTLY):
+MANDATORY JSON schema:
 {
-"approved": true,
-"critical_issues": ["string describing a critical issue"],
-"suggestions": ["string describing a non-blocking suggestion"]
+  "approved": true,
+  "critical_issues": [],
+  "suggestions": []
 }
 
-CRITICAL FORMAT RULES:
-- "critical_issues" MUST be a JSON array of PLAIN STRINGS. Example: ["Missing error check on line 42"]
-- "suggestions" MUST be a JSON array of PLAIN STRINGS. Example: ["Consider adding context timeout"]
-- Do NOT use objects, nested JSON, key-value pairs, or arrays of objects inside these fields.
-- Each element must be a single human-readable string, not a JSON object.
-- If there are no issues, use empty arrays: []
-
-CORRECT EXAMPLE:
-{"approved":true,"critical_issues":[],"suggestions":["Add mutex for concurrent map access","Consider using context.WithTimeout for HTTP calls"]}
-
-INCORRECT EXAMPLES (NEVER DO THIS):
-{"approved":true,"critical_issues":[],"suggestions":[{"text":"Add mutex","severity":"low"}]}
-{"approved":true,"critical_issues":[{"issue":"nil pointer","file":"main.go"}],"suggestions":[]}
-
 RULES:
-1. Set approved=false ONLY if there is a clear, concrete critical issue that would break compilation, cause a runtime panic, or introduce a security vulnerability.
-2. Critical issues are strictly limited to:
-- syntax or compile errors visible in the provided code;
-- obvious nil-pointer dereference or race condition;
-- security vulnerabilities (SQL injection, path traversal, hardcoded secrets);
-- broken package structure (wrong package name, circular imports).
-3. The code has ALREADY passed go build and go test successfully. Do not question compilation or test results.
-4. Do NOT reject for:
-- style preferences;
-- missing comments or documentation;
-- naming conventions;
-- "could be improved" suggestions;
-- missing error handling in non-critical paths;
-- theoretical performance concerns;
-- missing features not explicitly required by the subtask.
-5. NEVER suggest removing imports that are actively used in the provided code snippet.
-6. NEVER suggest using deprecated packages. For example, always prefer "io" and "os" over the deprecated "io/ioutil".
-7. NEVER suggest adding dummy variables (like "var _ = ...") or blank imports just to silence linters.
-8. Base your review STRICTLY on the visible code context. Do not hallucinate missing functions, variables, or usages.
-9. Do NOT mark "missing required part" as critical unless you can point to a specific file or function that is explicitly required by the subtask text and is clearly absent from the change summary. However, if the subtask explicitly says "Create <filename>" or "Создать <filename>", and that file is absent from the CHANGE SUMMARY, this IS a critical issue and you MUST set approved=false.
-10. If you are unsure whether something is critical, approve and add it as a suggestion instead.
-11. Suggestions may contain non-blocking improvements but must never block approval.
-12. When in doubt, approve.
-13. Keep each suggestion string under 200 characters.
-14. Maximum 5 suggestions.
+1. The ORIGINAL TASK and CURRENT SUBTASK acceptance criteria are mandatory.
+2. Build and test success is necessary but NOT sufficient.
+3. If the subtask explicitly requires a behavior or architectural constraint and the current source violates it, this is a CRITICAL issue.
+4. For refactoring tasks, inspect the CURRENT PROJECT SOURCE. Do not judge architecture from the change summary alone.
+5. Treat these as critical when explicitly required:
+   - missing required behavior;
+   - violation of required architectural boundaries;
+   - removal of required existing behavior;
+   - removal of required tests or required test coverage;
+   - changing an explicitly preserved endpoint or API.
+6. Do NOT reject for style preferences, optional improvements, naming preferences, comments, or theoretical performance concerns.
+7. Do NOT invent requirements that are absent from the ORIGINAL TASK.
+8. Every critical issue MUST name a concrete file, function, symbol, or missing structural element.
+9. When the task explicitly says "preserve", "keep", or "do not change", verify that requirement against CURRENT PROJECT SOURCE.
+10. Approve only when all explicit subtask requirements are satisfied.
+11. Suggestions are non-blocking and must never replace a critical issue.
+12. Maximum 5 suggestions.
 `)
+
 	if strings.TrimSpace(memory) != "" {
 		b.WriteString("\nPROJECT MEMORY:\n")
 		b.WriteString(memory)
 		b.WriteString("\n")
 	}
+
 	b.WriteString("\nORIGINAL TASK:\n")
 	b.WriteString(originalTask)
-	b.WriteString("\n")
-	b.WriteString("CURRENT SUBTASK:\n")
-	b.WriteString(subtask)
-	b.WriteString("\n")
-	b.WriteString("CHANGE SUMMARY:\n")
-	b.WriteString(changeSummary)
-	b.WriteString("\n")
-	return b.String()
-}
 
-func ReviewChangesStrict(originalTask, subtask string) string {
-	var b strings.Builder
-	b.WriteString(`You are a code reviewer. Return ONLY this exact JSON structure. No other text.
-{"approved":true,"critical_issues":[],"suggestions":[]}
-Rules:
-- approved: boolean (true or false)
-- critical_issues: array of strings (empty [] if none)
-- suggestions: array of strings (empty [] if none)
-- Each array element MUST be a plain string like "Add error handling"
-- NEVER use objects inside arrays
-- When in doubt, set approved=true and empty arrays
-ORIGINAL TASK: `)
-	b.WriteString(originalTask)
-	b.WriteString("\nSUBTASK:\n")
+	b.WriteString("\nCURRENT SUBTASK:\n")
 	b.WriteString(subtask)
-	b.WriteString("\n")
+
+	b.WriteString("\nCHANGE SUMMARY:\n")
+	b.WriteString(changeSummary)
+
+	if strings.TrimSpace(currentSource) != "" {
+		b.WriteString(`
+CURRENT PROJECT SOURCE OF TRUTH:
+The source below is the current repository state AFTER the subtask.
+Use it to verify architectural and behavioral requirements.
+`)
+		b.WriteString(currentSource)
+		b.WriteString("\nEND CURRENT PROJECT SOURCE\n")
+	}
+
 	return b.String()
 }
 
 // VerifyCompletion просит verifier agent проверить, что исходная задача выполнена.
-func VerifyCompletion(originalTask, resultSummary, memory string) string {
+func VerifyCompletion(
+	originalTask,
+	resultSummary,
+	memory string,
+) string {
+	return VerifyCompletionWithSource(
+		originalTask,
+		resultSummary,
+		"",
+		"",
+		memory,
+	)
+}
+
+func VerifyCompletionWithSource(
+	originalTask,
+	resultSummary,
+	currentSource,
+	acceptanceSummary,
+	memory string,
+) string {
 	var b strings.Builder
 
-	b.WriteString(`You are a verification agent.
-Decide whether the original task was completed.
+	b.WriteString(`You are a strict final verification agent for a Go project.
+
+Your job is to determine whether the ORIGINAL TASK was actually completed.
 
 Return ONLY valid compact JSON.
 Do not return markdown.
@@ -197,35 +211,66 @@ JSON schema:
   "completed": true,
   "missing": [],
   "risks": [],
-  "fix_task": ""
+  "fix_task": "",
+  "checks": [
+    {
+      "requirement": "explicit requirement from the task",
+      "satisfied": true,
+      "evidence": ["file.go:FunctionName"]
+    }
+  ]
 }
 
 RULES:
-1. completed=true if the original task is satisfied by static file changes shown in RESULT SUMMARY.
-2. Gogitor can ONLY create or modify text files. It cannot run scripts, send HTTP requests, start servers, or verify terminal output. Do not mark runtime execution or output verification as missing.
-3. Shell scripts (.sh, .bash, .zsh, .fish, .command) are automatically executable in Gogitor. Do not mark chmod, executable bit, or permission verification as missing or as a risk.
-4. PROJECT MEMORY is background information only. Do not treat memory as acceptance criteria and do not add requirements that are not explicitly present in ORIGINAL TASK.
-5. missing must contain only concrete file/content requirements that can be fixed by creating/modifying files.
-6. risks may contain non-blocking technical risks. Risks alone must not make completed=false.
-7. fix_task must be empty if completed=true.
-8. If completed=false, fix_task must be a concrete file-only corrective task.
-9. If the task asks to create a helper script and RESULT SUMMARY shows that the script file was created or modified, completed=true even if the script was not executed.
-10. Do not require comparison with source files that are not present in RESULT SUMMARY. If the changed script contains a plausible endpoint consistent with the task, consider it sufficient.
+1. ORIGINAL TASK is the only source of requirements.
+2. CURRENT PROJECT SOURCE is the authoritative source for the final state.
+3. RESULT SUMMARY is evidence, not proof.
+4. Build/test success does NOT by itself prove that the task was completed.
+5. Map every material explicit acceptance requirement to a CHECK.
+6. For every satisfied structural or architectural CHECK, provide concrete evidence from CURRENT PROJECT SOURCE.
+7. If an explicit requirement is not satisfied, set satisfied=false and completed=false.
+8. If any CHECK is false, completed MUST be false.
+9. If the task explicitly requires architectural separation, inspect the actual source boundaries. Do not assume that the existence of a new package proves that responsibilities were moved correctly.
+10. If the task says handlers are HTTP-only, verify that business logic is not still implemented in handlers.
+11. If the task says repository is storage-only, verify that business logic is not still implemented in repository code.
+12. If the task says preserve tests or endpoints, inspect the current source and deterministic acceptance report.
+13. Risks alone do not make completed=false.
+14. fix_task must contain only file/content changes.
+15. Do not request runtime-only verification that Gogitor cannot perform.
+16. Do not invent requirements that are not present in ORIGINAL TASK.
+17. If CURRENT PROJECT SOURCE is insufficient to establish a requirement, completed MUST be false rather than guessed true.
 `)
 
 	if strings.TrimSpace(memory) != "" {
-		b.WriteString("\nPROJECT MEMORY (informational only, not requirements):\n")
+		b.WriteString(
+			"\nPROJECT MEMORY (informational only):\n",
+		)
 		b.WriteString(memory)
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\nORIGINAL TASK:\n")
 	b.WriteString(originalTask)
-	b.WriteString("\n\n")
 
-	b.WriteString("RESULT SUMMARY:\n")
+	if strings.TrimSpace(acceptanceSummary) != "" {
+		b.WriteString(
+			"\n\nDETERMINISTIC ACCEPTANCE REPORT:\n",
+		)
+		b.WriteString(acceptanceSummary)
+	}
+
+	b.WriteString("\n\nRESULT SUMMARY:\n")
 	b.WriteString(resultSummary)
-	b.WriteString("\n")
+
+	if strings.TrimSpace(currentSource) != "" {
+		b.WriteString(`
+CURRENT PROJECT SOURCE OF TRUTH:
+The following is the current source after all requested changes.
+Use it to verify every explicit requirement.
+`)
+		b.WriteString(currentSource)
+		b.WriteString("\nEND CURRENT PROJECT SOURCE\n")
+	}
 
 	return b.String()
 }

@@ -454,11 +454,18 @@ func anyToString(v any) string {
 }
 
 // agentVerification — результат работы verifier agent.
+type agentVerificationCheck struct {
+	Requirement string   `json:"requirement"`
+	Satisfied   bool     `json:"satisfied"`
+	Evidence    []string `json:"evidence"`
+}
+
 type agentVerification struct {
-	Completed bool     `json:"completed"`
-	Missing   []string `json:"missing"`
-	Risks     []string `json:"risks"`
-	FixTask   string   `json:"fix_task"`
+	Completed bool                     `json:"completed"`
+	Missing   []string                 `json:"missing"`
+	Risks     []string                 `json:"risks"`
+	FixTask   string                   `json:"fix_task"`
+	Checks    []agentVerificationCheck `json:"checks"`
 }
 
 func (s *Service) executeAgentFull(
@@ -533,6 +540,7 @@ func (s *Service) executeAgentFull(
 	if !opts.DryRun {
 		var err error
 		checkpoint, err = s.createAgentCheckpoint(ctx)
+
 		if err != nil {
 			errMsg := fmt.Sprintf("cannot create agent checkpoint: %v", err)
 			sendEvent(emit, domain.EventError, errMsg)
@@ -549,6 +557,29 @@ func (s *Service) executeAgentFull(
 		Success: true,
 		Mode:    "agent",
 		DryRun:  opts.DryRun,
+	}
+
+	var acceptanceBaseline agentAcceptanceBaseline
+
+	if !opts.DryRun &&
+		checkpoint != nil {
+
+		baseline, baselineErr :=
+			captureAgentAcceptanceBaseline(
+				checkpoint.Dir,
+			)
+
+		if baselineErr != nil {
+			final.AddWarning(
+				fmt.Sprintf(
+					"deterministic acceptance baseline unavailable: %v",
+					baselineErr,
+				),
+			)
+		} else {
+			acceptanceBaseline =
+				baseline
+		}
 	}
 
 	preTaskHead := s.captureHead(ctx)
@@ -1194,23 +1225,140 @@ func (s *Service) executeAgentFull(
 			} else if !review.Approved &&
 				len(review.CriticalIssues) > 0 {
 
-				issues := strings.Join(review.CriticalIssues, "; ")
-				sendEvent(emit, domain.EventWarn, "Reviewer found critical issues: "+issues)
-				fixTask := buildReviewFixTask(sub.Task, review)
-				fixRes := s.executeSimple(agent.WithRole(ctx, agent.RoleCoder), fixTask, subOpts, emit)
-				final.Iterations += fixRes.Iterations
+				issues :=
+					strings.Join(
+						review.CriticalIssues,
+						"; ",
+					)
+
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					"Reviewer found critical issues: "+issues,
+				)
+
+				fixTask :=
+					buildReviewFixTask(
+						sub.Task,
+						review,
+					)
+
+				fixRes :=
+					s.executeSimple(
+						agent.WithRole(
+							ctx,
+							agent.RoleCoder,
+						),
+						fixTask,
+						subOpts,
+						emit,
+					)
+
+				final.Iterations +=
+					fixRes.Iterations
+
 				addFiles(fixRes)
+
 				if !fixRes.Success {
-					markPlan(i+1, domain.PlanFailed, "fix after reviewer failed")
+					markPlan(
+						i+1,
+						domain.PlanFailed,
+						"fix after reviewer failed",
+					)
+
 					final.Success = false
-					final.Errors = append(final.Errors, fixRes.Errors...)
+
+					final.Errors =
+						append(
+							final.Errors,
+							fixRes.Errors...,
+						)
+
 					rollbackSubtask(
 						"reviewer fix failed",
 					)
+
 					return final
 				}
-				itemStatus = domain.PlanWarn
-				itemNote = "fixed after reviewer comments"
+
+				// Критическая правка считается принятой
+				// только после повторной проверки reviewer.
+				reviewedResult :=
+					mergeAgentResults(
+						res,
+						fixRes,
+					)
+
+				reviewAfterFix, reviewErr :=
+					s.runReviewer(
+						ctx,
+						query,
+						sub.Task,
+						reviewedResult,
+						mem,
+						emit,
+					)
+
+				if reviewErr != nil {
+					markPlan(
+						i+1,
+						domain.PlanFailed,
+						"reviewer unavailable after critical fix",
+					)
+
+					final.Success = false
+
+					final.AddError(
+						fmt.Sprintf(
+							"reviewer failed after critical fix: %v",
+							reviewErr,
+						),
+					)
+
+					rollbackSubtask(
+						"reviewer unavailable after critical fix",
+					)
+
+					return final
+				}
+
+				if !reviewAfterFix.Approved &&
+					len(reviewAfterFix.CriticalIssues) > 0 {
+
+					remainingIssues :=
+						strings.Join(
+							reviewAfterFix.CriticalIssues,
+							"; ",
+						)
+
+					markPlan(
+						i+1,
+						domain.PlanFailed,
+						"critical reviewer issues remain after fix",
+					)
+
+					final.Success = false
+
+					final.AddError(
+						"critical reviewer issues remain after fix: " +
+							remainingIssues,
+					)
+
+					rollbackSubtask(
+						"critical reviewer issues remain",
+					)
+
+					return final
+				}
+
+				res = reviewedResult
+
+				itemStatus =
+					domain.PlanDone
+
+				itemNote =
+					"critical reviewer issues fixed and re-reviewed"
+
 			} else if len(review.Suggestions) > 0 {
 				itemStatus = domain.PlanWarn
 				itemNote = fmt.Sprintf("reviewer suggestions: %d", len(review.Suggestions))
@@ -1465,14 +1613,35 @@ func (s *Service) executeAgentFull(
 		"current stage: verifier",
 	)
 
-	verification, err := s.runVerifier(
-		ctx,
-		query,
-		plan,
-		final,
-		mem,
-		emit,
-	)
+	acceptance :=
+		validateAgentAcceptance(
+			s.Cfg.WorkDir,
+			query,
+			plan,
+			acceptanceBaseline,
+			final,
+		)
+
+	for _, warning := range acceptance.Warnings {
+
+		final.AddWarning(
+			"acceptance: " + warning,
+		)
+	}
+
+	acceptanceSummary :=
+		acceptance.String()
+
+	verification, err :=
+		s.runVerifier(
+			ctx,
+			query,
+			plan,
+			final,
+			mem,
+			acceptanceSummary,
+			emit,
+		)
 
 	if err != nil {
 		final.Success = false
@@ -1482,6 +1651,64 @@ func (s *Service) executeAgentFull(
 
 		rollback("verifier failed")
 		return final
+	}
+
+	if !acceptance.Passed {
+		verification.Completed = false
+
+		for _, item := range acceptance.Blocking {
+
+			verification.Missing =
+				appendUniqueString(
+					verification.Missing,
+					item,
+				)
+		}
+
+		if strings.TrimSpace(
+			verification.FixTask,
+		) == "" {
+
+			verification.FixTask =
+				acceptance.FixTask
+		}
+
+		if strings.TrimSpace(
+			verification.FixTask,
+		) == "" {
+
+			verification.FixTask =
+				"Fix the deterministic acceptance failures using file/content changes only: " +
+					strings.Join(
+						acceptance.Blocking,
+						"; ",
+					)
+		}
+	}
+
+	if !acceptance.Passed {
+		verification.Completed = false
+
+		for _, item := range acceptance.Blocking {
+
+			verification.Missing =
+				appendUniqueString(
+					verification.Missing,
+					item,
+				)
+		}
+
+		if strings.TrimSpace(
+			verification.FixTask,
+		) == "" {
+
+			verification.FixTask =
+				acceptance.FixTask
+		} else if acceptance.FixTask != "" {
+			verification.FixTask +=
+				"\n\nAdditional deterministic acceptance failures:\n" +
+					acceptance.FixTask
+		}
 	}
 
 	// -----------------------------------------------------------
@@ -1579,6 +1806,23 @@ func (s *Service) executeAgentFull(
 		}
 
 		// Повторная verification — ОБЯЗАТЕЛЬНА.
+		acceptanceAfterFix :=
+			validateAgentAcceptance(
+				s.Cfg.WorkDir,
+				query,
+				plan,
+				acceptanceBaseline,
+				final,
+			)
+
+		for _, warning := range acceptanceAfterFix.Warnings {
+
+			final.AddWarning(
+				"acceptance after verifier fix: " +
+					warning,
+			)
+		}
+
 		verification, err =
 			s.runVerifier(
 				ctx,
@@ -1586,9 +1830,81 @@ func (s *Service) executeAgentFull(
 				plan,
 				final,
 				mem,
+				acceptanceAfterFix.String(),
 				emit,
 			)
 
+		if !acceptanceAfterFix.Passed {
+			verification.Completed = false
+
+			for _, item := range acceptanceAfterFix.Blocking {
+
+				verification.Missing =
+					appendUniqueString(
+						verification.Missing,
+						item,
+					)
+			}
+
+			if strings.TrimSpace(
+				verification.FixTask,
+			) == "" {
+				verification.FixTask =
+					acceptanceAfterFix.FixTask
+			}
+		}
+
+		acceptanceAfterFix =
+			validateAgentAcceptance(
+				s.Cfg.WorkDir,
+				query,
+				plan,
+				acceptanceBaseline,
+				final,
+			)
+
+		for _, warning := range acceptanceAfterFix.Warnings {
+
+			final.AddWarning(
+				"acceptance after verifier fix: " +
+					warning,
+			)
+		}
+
+		acceptanceAfterFixSummary :=
+			acceptanceAfterFix.String()
+
+		if !acceptanceAfterFix.Passed {
+			verification.Completed = false
+
+			for _, item := range acceptanceAfterFix.Blocking {
+
+				verification.Missing =
+					appendUniqueString(
+						verification.Missing,
+						item,
+					)
+			}
+
+			if strings.TrimSpace(
+				verification.FixTask,
+			) == "" {
+
+				verification.FixTask =
+					acceptanceAfterFix.FixTask
+			}
+		}
+
+		verification, err =
+			s.runVerifier(
+				ctx,
+				query,
+				plan,
+				final,
+				mem,
+				acceptanceAfterFixSummary,
+				emit,
+			)
 		if err != nil {
 			final.Success = false
 			final.AddError(
@@ -2123,14 +2439,66 @@ func (s *Service) runReviewer(
 	}
 
 	maxTotal, maxPerFile := s.reviewLimits()
-	summary := agentChangeSummaryWithLimits(res, maxTotal, maxPerFile)
 
-	prompt := prompts.ReviewChanges(
-		originalTask,
-		subtask,
-		summary,
-		mem.summary(20),
+	summary :=
+		agentChangeSummaryWithLimits(
+			res,
+			maxTotal,
+			maxPerFile,
+		)
+
+	maxFiles, maxBytes :=
+		s.contextLimits()
+
+	if maxBytes > maxTotal {
+		maxBytes = maxTotal
+	}
+
+	changedFiles := make(
+		[]string,
+		0,
+		len(res.FilesCreated)+
+			len(res.FilesModified)+
+			len(res.FilesPatched)+
+			len(res.FilesFullRewritten),
 	)
+
+	changedFiles = append(
+		changedFiles,
+		res.FilesCreated...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		res.FilesModified...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		res.FilesPatched...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		res.FilesFullRewritten...,
+	)
+
+	currentSource :=
+		s.WS.BuildSmartContext(
+			originalTask,
+			changedFiles,
+			maxFiles,
+			maxBytes,
+		)
+
+	prompt :=
+		prompts.ReviewChangesWithSource(
+			originalTask,
+			subtask,
+			summary,
+			currentSource,
+			mem.summary(20),
+		)
 
 	prompt = s.appendProjectInstructions(prompt)
 	var review agentReview
@@ -2213,6 +2581,7 @@ func (s *Service) runVerifier(
 	plan *fullPlan,
 	final domain.Result,
 	mem *agentMemory,
+	acceptanceSummary string,
 	emit func(domain.Event),
 ) (agentVerification, error) {
 	maxTotal, maxPerFile := s.reviewLimits()
@@ -2222,16 +2591,64 @@ func (s *Service) runVerifier(
 		maxTotal,
 		maxPerFile,
 	)
+
+	maxFiles, maxBytes :=
+		s.contextLimits()
+
+	if maxBytes > maxTotal {
+		maxBytes = maxTotal
+	}
+
+	changedFiles := make(
+		[]string,
+		0,
+		len(final.FilesCreated)+
+			len(final.FilesModified)+
+			len(final.FilesPatched)+
+			len(final.FilesFullRewritten),
+	)
+
+	changedFiles = append(
+		changedFiles,
+		final.FilesCreated...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		final.FilesModified...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		final.FilesPatched...,
+	)
+
+	changedFiles = append(
+		changedFiles,
+		final.FilesFullRewritten...,
+	)
+
+	currentSource :=
+		s.WS.BuildSmartContext(
+			originalTask,
+			changedFiles,
+			maxFiles,
+			maxBytes,
+		)
+
 	if plan != nil && len(plan.Acceptance) > 0 {
 		summary += "\nacceptance criteria:\n- " + strings.Join(plan.Acceptance, "\n- ")
 	}
 
 	task := truncate(originalTask, 4000)
-	prompt := prompts.VerifyCompletion(
-		task,
-		summary,
-		mem.summary(20),
-	)
+	prompt :=
+		prompts.VerifyCompletionWithSource(
+			task,
+			summary,
+			currentSource,
+			acceptanceSummary,
+			mem.summary(20),
+		)
 
 	prompt = s.appendProjectInstructions(prompt)
 	var verification agentVerification
@@ -2251,6 +2668,28 @@ func (s *Service) runVerifier(
 		)
 	}
 	sanitizeVerification(&verification)
+
+	if requiresStructuredAgentVerification(
+		originalTask,
+	) &&
+		len(verification.Checks) == 0 {
+
+		verification.Completed = false
+
+		verification.Missing =
+			appendUniqueString(
+				verification.Missing,
+				"verifier did not provide required acceptance checks and source evidence",
+			)
+
+		if strings.TrimSpace(
+			verification.FixTask,
+		) == "" {
+
+			verification.FixTask =
+				"Re-check the original task against the current project source and fix every unmet explicit requirement using file changes only."
+		}
+	}
 	return verification, nil
 }
 
@@ -2450,6 +2889,53 @@ func (s *Service) runAgentDeterministicChecks(
 func sanitizeVerification(v *agentVerification) {
 	if v == nil || v.Completed {
 		return
+	}
+
+	var failedChecks []string
+
+	for _, check := range v.Checks {
+		requirement :=
+			strings.TrimSpace(
+				check.Requirement,
+			)
+
+		if requirement == "" {
+			continue
+		}
+
+		if check.Satisfied {
+			continue
+		}
+
+		failedChecks =
+			append(
+				failedChecks,
+				requirement,
+			)
+	}
+
+	if len(failedChecks) > 0 {
+		v.Completed = false
+
+		for _, item := range failedChecks {
+			v.Missing =
+				appendUniqueString(
+					v.Missing,
+					item,
+				)
+		}
+
+		if strings.TrimSpace(
+			v.FixTask,
+		) == "" {
+
+			v.FixTask =
+				"Fix the unmet requirements listed by the verifier using file/content changes only: " +
+					strings.Join(
+						failedChecks,
+						"; ",
+					)
+		}
 	}
 	var blocking []string
 	for _, item := range v.Missing {
@@ -2749,4 +3235,117 @@ func executableScriptNames(lists ...[]string) []string {
 		}
 	}
 	return out
+}
+
+func mergeAgentResults(
+	base,
+	extra domain.Result,
+) domain.Result {
+	merged := base
+
+	merged.Success = extra.Success
+
+	if strings.TrimSpace(extra.Response) != "" {
+		merged.Response =
+			extra.Response
+	}
+
+	merged.FilesCreated =
+		sortedUniqueStrings(
+			append(
+				append(
+					[]string{},
+					base.FilesCreated...,
+				),
+				extra.FilesCreated...,
+			),
+		)
+
+	merged.FilesModified =
+		sortedUniqueStrings(
+			append(
+				append(
+					[]string{},
+					base.FilesModified...,
+				),
+				extra.FilesModified...,
+			),
+		)
+
+	merged.FilesPatched =
+		sortedUniqueStrings(
+			append(
+				append(
+					[]string{},
+					base.FilesPatched...,
+				),
+				extra.FilesPatched...,
+			),
+		)
+
+	merged.FilesFullRewritten =
+		sortedUniqueStrings(
+			append(
+				append(
+					[]string{},
+					base.FilesFullRewritten...,
+				),
+				extra.FilesFullRewritten...,
+			),
+		)
+
+	merged.OutputFiles =
+		mergeOutputFiles(
+			base.OutputFiles,
+			extra.OutputFiles,
+		)
+
+	merged.Errors =
+		append(
+			append(
+				[]string{},
+				base.Errors...,
+			),
+			extra.Errors...,
+		)
+
+	merged.Warnings =
+		append(
+			append(
+				[]string{},
+				base.Warnings...,
+			),
+			extra.Warnings...,
+		)
+
+	if extra.Tests.Run ||
+		extra.Tests.Skipped {
+
+		merged.Tests =
+			extra.Tests
+	}
+
+	return merged
+}
+
+func appendUniqueString(
+	values []string,
+	value string,
+) []string {
+	value = strings.TrimSpace(value)
+
+	if value == "" {
+		return values
+	}
+
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+
+	return append(
+		values,
+		value,
+	)
 }
