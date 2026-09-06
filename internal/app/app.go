@@ -4911,10 +4911,16 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 		reviewerTokens = 2_000_000
 	}
 
-	coderRequests := cfg.MaxIterations * 8
-	if coderRequests < 24 {
-		coderRequests = 24
-	}
+    coderRequests :=
+        cfg.MaxIterations *
+            cfg.LLMCoderRequestMultiplier
+    
+    if coderRequests <
+        cfg.LLMCoderMinRequests {
+    
+        coderRequests =
+            cfg.LLMCoderMinRequests
+    }
 
 	// Coder не должен превышать общий session budget.
 	coderDuration := configuredTimeout(
@@ -4977,7 +4983,7 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 
 	return agent.Config{
 		DefaultTimeout:     timeout,
-		MaxSessionRequests: 120,
+        MaxSessionRequests: cfg.LLMMaxSessionRequests,
 		MaxSessionTokens:   sessionTokens,
 		MaxSessionDuration: sessionDuration,
 		MaxQueue:           128,

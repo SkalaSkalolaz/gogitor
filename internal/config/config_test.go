@@ -7,6 +7,31 @@ import (
 	"testing"
 )
 
+func TestDefaultLLMBudgets(t *testing.T) {
+    cfg := Default()
+
+    if cfg.LLMMaxSessionRequests != 960 {
+        t.Fatalf(
+            "LLMMaxSessionRequests = %d, want 960",
+            cfg.LLMMaxSessionRequests,
+        )
+    }
+
+    if cfg.LLMCoderRequestMultiplier != 64 {
+        t.Fatalf(
+            "LLMCoderRequestMultiplier = %d, want 64",
+            cfg.LLMCoderRequestMultiplier,
+        )
+    }
+
+    if cfg.LLMCoderMinRequests != 192 {
+        t.Fatalf(
+            "LLMCoderMinRequests = %d, want 192",
+            cfg.LLMCoderMinRequests,
+        )
+    }
+}
+
 func TestOpenAIBaseFromProvider(t *testing.T) {
 	tests := []struct {
 		provider string
@@ -293,6 +318,27 @@ func TestLoadMigratesMissingTimeoutConfig(
 			err,
 		)
 	}
+
+    if disk.LLMMaxSessionRequests != 960 {
+        t.Fatalf(
+            "disk LLMMaxSessionRequests = %d, want 960",
+            disk.LLMMaxSessionRequests,
+        )
+    }
+    
+    if disk.LLMCoderRequestMultiplier != 64 {
+        t.Fatalf(
+            "disk LLMCoderRequestMultiplier = %d, want 64",
+            disk.LLMCoderRequestMultiplier,
+        )
+    }
+    
+    if disk.LLMCoderMinRequests != 192 {
+        t.Fatalf(
+            "disk LLMCoderMinRequests = %d, want 192",
+            disk.LLMCoderMinRequests,
+        )
+    }
 
 	if cfg.Model != "qwen3.8:27b" {
 		t.Fatalf(

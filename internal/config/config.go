@@ -50,6 +50,9 @@ type Config struct {
 	DryRun                       bool                            `json:"dry_run"`
 	LLMTimeout                   int                             `json:"llm_timeout"`
 	MaxIterations                int                             `json:"max_iterations"`
+    LLMMaxSessionRequests        int 							 `json:"llm_max_session_requests"`
+    LLMCoderRequestMultiplier 	 int 							 `json:"llm_coder_request_multiplier"`
+    LLMCoderMinRequests 		 int 							 `json:"llm_coder_min_requests"`
 	AgentTimeouts                AgentTimeoutConfig              `json:"agent_timeouts"`
 	RunnerTimeout                int                             `json:"runner_timeout"`
 	AutoGitCommit                bool                            `json:"auto_git_commit"`
@@ -118,6 +121,9 @@ func Default() *Config {
 		},
 		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
+        LLMMaxSessionRequests:        960,
+        LLMCoderRequestMultiplier:    64,
+        LLMCoderMinRequests:          192,
 		AutoGitCommit:                true,
 		GitAutoInit:                  true,
 		MultiAgent:                   true,
