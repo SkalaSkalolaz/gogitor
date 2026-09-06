@@ -292,6 +292,8 @@ func (w *Workspace) PreflightChanges(
         	map[string]bool,
         )
         
+        changedLines := 0
+        changedBytes := 0
         for pi := range ch.Patches {
         
         	patchBefore := current
@@ -373,10 +375,23 @@ func (w *Workspace) PreflightChanges(
         			err,
         		)
         	}
+
+            changedLines +=
+            	estimateChangedLines(
+            		patchBefore,
+            		updated,
+            	)
+            
+            changedBytes +=
+            	estimateChangedBytes(
+            		patchBefore,
+            		updated,
+            	)
         
         	// НОВОЕ:
         	// фиксируем именно тот AST-footprint,
         	// который изменил этот patch.
+
         	if err := addPatchFootprintToScope(
         		patchBefore,
         		updated,
@@ -444,12 +459,6 @@ func (w *Workspace) PreflightChanges(
         }
 
 		maxBlocks, maxLines, maxBytes := patchLimits(policy)
-
-		changedLines := estimateChangedLines(before, current)
-		changedBytes := len(current) - len(before)
-		if changedBytes < 0 {
-			changedBytes = -changedBytes
-		}
 
 		if len(ch.Patches) > maxBlocks {
 			return nil, nil, fmt.Errorf(
@@ -689,6 +698,42 @@ func estimateChangedLines(before, after string) int {
 		newMiddle = 0
 	}
 	return oldMiddle + newMiddle
+}
+
+func estimateChangedBytes(
+	before,
+	after string,
+) int {
+	if before == after {
+		return 0
+	}
+
+	prefix := 0
+	maxPrefix := len(before)
+
+	if len(after) < maxPrefix {
+		maxPrefix = len(after)
+	}
+
+	for prefix < maxPrefix &&
+		before[prefix] == after[prefix] {
+		prefix++
+	}
+
+	beforeEnd := len(before)
+	afterEnd := len(after)
+
+	for beforeEnd > prefix &&
+		afterEnd > prefix &&
+		before[beforeEnd-1] ==
+			after[afterEnd-1] {
+
+		beforeEnd--
+		afterEnd--
+	}
+
+	return (beforeEnd - prefix) +
+		(afterEnd - prefix)
 }
 
 func validateSemanticScopeWithAllowed(

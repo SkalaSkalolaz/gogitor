@@ -1,13 +1,142 @@
 package app
 
 import (
-	"testing"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 
 	"gogitor/internal/config"
+	"gogitor/internal/domain"
 	"gogitor/internal/workspace"
 )
+
+func TestPreflightCountsPatchChangesIndependently(
+	t *testing.T,
+) {
+	var b strings.Builder
+
+	b.WriteString("package main\n\n")
+	b.WriteString("func main() {\n")
+	b.WriteString("\tprintln(\"a\")\n")
+	b.WriteString("}\n")
+
+	for i := 0; i < 320; i++ {
+		fmt.Fprintf(
+			&b,
+			"// unchanged-%d\n",
+			i,
+		)
+	}
+
+	before := b.String()
+	before += "\nfunc helper() {}\n"
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+
+	if err := os.WriteFile(
+		path,
+		[]byte(before),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	changes := []domain.FileChange{
+		{
+			Path:      "main.go",
+			PatchMode: true,
+			Patches: []domain.Patch{
+				{
+					Search:  "println(\"a\")",
+					Replace: "println(\"b\")",
+				},
+				{
+					Search:  "// unchanged-319",
+					Replace: "// changed-319",
+				},
+			},
+		},
+	}
+
+	ws := workspace.New(dir)
+
+	prepared, report, err :=
+		ws.PreflightChanges(
+			dir,
+			changes,
+			workspace.PatchPolicyBalanced,
+			0,
+		)
+
+	if err != nil {
+		t.Fatalf(
+			"PreflightChanges failed: %v",
+			err,
+		)
+	}
+
+	if len(prepared) != 1 {
+		t.Fatalf(
+			"prepared files = %d, want 1",
+			len(prepared),
+		)
+	}
+
+	if report.ChangedLines <= 0 {
+		t.Fatalf(
+			"changed lines = %d, want > 0",
+			report.ChangedLines,
+		)
+	}
+
+	if report.ChangedLines >= 20 {
+		t.Fatalf(
+			"changed lines = %d, want < 20; unchanged lines were likely counted",
+			report.ChangedLines,
+		)
+	}
+}
+
+func TestIsExplicitFileCreationTask(t *testing.T) {
+	tests := []struct {
+		query string
+		want  bool
+	}{
+		{
+			query: "Добавь фоновую горутину в main.go",
+			want:  false,
+		},
+		{
+			query: "Добавь endpoint DELETE /paste/{id}",
+			want:  false,
+		},
+		{
+			query: "Создай новый файл internal/foo.go",
+			want:  true,
+		},
+		{
+			query: "Create a new file internal/foo.go",
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			got := isExplicitFileCreationTask(tt.query)
+
+			if got != tt.want {
+				t.Fatalf(
+					"isExplicitFileCreationTask() = %v, want %v",
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
 
 func TestAssessAgentSubtaskAlreadySatisfiedField(t *testing.T) {
 	root := t.TempDir()
@@ -190,8 +319,6 @@ func TestRecoverableAgentSubtaskFailure(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestShouldAuditPatch(t *testing.T) {
 	tests := []struct {

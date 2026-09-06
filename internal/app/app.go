@@ -32,19 +32,19 @@ import (
 )
 
 type Options struct {
-	DryRun            bool
-	NoCommit          bool
-	NoTests           bool
-	NoCompare         bool
-	ProgressItem      int
-	ProgressTotal     int
-	Mode              string
-	AgentDepth        AgentDepth
-	EditMode          EditMode
-	InterviewAnswers  []prompts.AgentInterviewAnswer
-	AgentResumePlan   *fullPlan
-	AgentResumeFrom   int
-	AgentResumeSource string
+	DryRun              bool
+	NoCommit            bool
+	NoTests             bool
+	NoCompare           bool
+	ProgressItem        int
+	ProgressTotal       int
+	Mode                string
+	AgentDepth          AgentDepth
+	EditMode            EditMode
+	InterviewAnswers    []prompts.AgentInterviewAnswer
+	AgentResumePlan     *fullPlan
+	AgentResumeFrom     int
+	AgentResumeSource   string
 	AgentProjectContext string
 }
 
@@ -1563,18 +1563,17 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		)
 	}
 
-    targetFiles := extractTargetFiles(query)
-    
-    cc := s.buildCodeContext(query, targetFiles)
-    
-    if strings.TrimSpace(opts.AgentProjectContext) != "" {
-    	cc.Context = opts.AgentProjectContext
-    	cc.HasExisting = true
-    	cc.ExistingTargets = s.WS.ExistingFiles(targetFiles)
-    }
-    
-    originalContext := cc.Context
-    defaultPath := defaultPath(query, targetFiles)
+	targetFiles := extractTargetFiles(query)
+
+	cc := s.buildCodeContext(query, targetFiles)
+
+	if strings.TrimSpace(opts.AgentProjectContext) != "" {
+		cc.Context = opts.AgentProjectContext
+		cc.HasExisting = true
+	}
+
+	originalContext := cc.Context
+	defaultPath := defaultPath(query, targetFiles)
 	var lastErrors []string
 	var lastChanges []domain.FileChange
 
@@ -1656,18 +1655,24 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		diffMatchingConfigLogged := false
 
 		if i == 1 {
-			// Проверяем, существуют ли целевые файлы.
-			// Если ни один целевой файл не существует, патч-режим не нужен.
-			targetFiles := extractTargetFiles(query)
-			existingTargets := s.WS.ExistingFiles(targetFiles)
-			allTargetsExist := len(targetFiles) == 0 || len(existingTargets) == len(targetFiles)
+			existingTargets := cc.ExistingTargets
+			hasExistingTargets := len(existingTargets) > 0
+
+			explicitFileCreation :=
+				isExplicitFileCreationTask(query)
+
+			existingProject :=
+				strings.TrimSpace(originalContext) != ""
+
+			modificationTask :=
+				hasExistingTargets ||
+					s.needsModify(query) ||
+					s.isSplitOrRefactor(query)
 
 			switch {
-			case originalContext != "" && !allTargetsExist:
-				// Целевые файлы не существуют → режим создания, а не патчей.
-				sendEvent(emit, domain.EventLog, "Target files do not exist, using create mode")
-				prompt = prompts.CodeCreateInExistingProject(query, originalContext)
-			case originalContext != "" && (len(cc.ExistingTargets) > 0 || s.needsModify(query) || s.isSplitOrRefactor(query)):
+			case existingProject &&
+				modificationTask &&
+				!explicitFileCreation:
 
 				if !forceFull &&
 					editMode != EditModeFull {
@@ -1675,7 +1680,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					sendEvent(
 						emit,
 						domain.EventLog,
-						"Using patch mode for existing project files",
+						"Using patch mode: existing project modification task",
 					)
 
 					prompt =
@@ -1694,21 +1699,61 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 						"Using full-file mode for existing project files",
 					)
 
-					prompt =
-						prompts.CodeModify(
-							query,
-							originalContext,
-						)
+					prompt = prompts.CodeModify(
+						query,
+						originalContext,
+					)
 
 					usePatchPrompt = false
 				}
 
-			case originalContext != "":
-				sendEvent(emit, domain.EventLog, "Using create-in-existing-project mode")
-				prompt = prompts.CodeCreateInExistingProject(query, originalContext)
+			case existingProject &&
+				explicitFileCreation:
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Explicit file-creation task detected; using create-in-existing-project mode",
+				)
+
+				prompt =
+					prompts.CodeCreateInExistingProject(
+						query,
+						originalContext,
+					)
+
+				usePatchPrompt = false
+
+			case existingProject:
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Using create-in-existing-project mode",
+				)
+
+				prompt =
+					prompts.CodeCreateInExistingProject(
+						query,
+						originalContext,
+					)
+
+				usePatchPrompt = false
+
 			default:
-				sendEvent(emit, domain.EventLog, "Using create mode for empty project")
-				prompt = prompts.CodeCreate(query, "")
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Using create mode for empty project",
+				)
+
+				prompt = prompts.CodeCreate(
+					query,
+					"",
+				)
+
+				usePatchPrompt = false
 				allowFallback = true
 			}
 
@@ -1872,7 +1917,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		if usePatchPrompt {
 			changes = codegen.ParseResponseWithPatches(response)
-            changes = codegen.NormalizeParsedFileChanges(changes)
+			changes = codegen.NormalizeParsedFileChanges(changes)
 			patchAttempted = true
 		} else {
 			changes = codegen.ParseResponseWithOptions(
@@ -3576,6 +3621,28 @@ func (s *Service) needsModify(query string) bool {
 	return containsAny(lower, keywords)
 }
 
+func isExplicitFileCreationTask(query string) bool {
+	lower := strings.ToLower(
+		strings.TrimSpace(query),
+	)
+
+	keywords := []string{
+		"create file",
+		"new file",
+		"add file",
+		"create a file",
+		"создай файл",
+		"создать файл",
+		"новый файл",
+		"нового файла",
+		"добавь файл",
+		"добавить файл",
+		"создание файла",
+	}
+
+	return containsAny(lower, keywords)
+}
+
 func (s *Service) isAnalysisOnlyTask(query string) bool {
 	lower := strings.ToLower(query)
 
@@ -4922,16 +4989,16 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 		reviewerTokens = 2_000_000
 	}
 
-    coderRequests :=
-        cfg.MaxIterations *
-            cfg.LLMCoderRequestMultiplier
-    
-    if coderRequests <
-        cfg.LLMCoderMinRequests {
-    
-        coderRequests =
-            cfg.LLMCoderMinRequests
-    }
+	coderRequests :=
+		cfg.MaxIterations *
+			cfg.LLMCoderRequestMultiplier
+
+	if coderRequests <
+		cfg.LLMCoderMinRequests {
+
+		coderRequests =
+			cfg.LLMCoderMinRequests
+	}
 
 	// Coder не должен превышать общий session budget.
 	coderDuration := configuredTimeout(
@@ -4994,7 +5061,7 @@ func dispatcherConfig(cfg *config.Config) agent.Config {
 
 	return agent.Config{
 		DefaultTimeout:     timeout,
-        MaxSessionRequests: cfg.LLMMaxSessionRequests,
+		MaxSessionRequests: cfg.LLMMaxSessionRequests,
 		MaxSessionTokens:   sessionTokens,
 		MaxSessionDuration: sessionDuration,
 		MaxQueue:           128,
