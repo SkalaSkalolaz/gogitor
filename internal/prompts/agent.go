@@ -41,13 +41,17 @@ RULES:
 7. Prefer subtasks that create or modify files.
 8. Write "goal", subtask text, and acceptance criteria in the same language as the TASK.
 9. Use the exact file names, paths, endpoints, ports, and identifiers mentioned in the TASK. Do not replace them with example names.
-10. If the TASK does not specify a file name, choose a short descriptive name appropriate for the task.
-11. The coder agent can ONLY create or modify text files. It cannot run shell commands, cannot change file permissions, cannot start servers, cannot send HTTP requests, and cannot verify runtime behavior.
-12. Do NOT create subtasks such as: chmod +x, make executable, run, execute, start, launch, curl, wget, send request, go run, manual test. Shell scripts created by Gogitor are automatically executable.
-13. If the task is "analyze code and create a helper script", prefer ONE subtask: create the helper script using context from the code.
-14. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
-15. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
-16. Use "needs_search": true for:
+10. CURRENT PROJECT SOURCE is authoritative and represents the current repository state.
+11. If a requested component already exists in CURRENT PROJECT SOURCE, do not create a subtask to add it again.
+12. Never create a subtask that changes existing behavior unless ORIGINAL TASK explicitly requires that behavior change.
+13. Do not encode assumptions about future subtasks as if they were already implemented.
+14. If the TASK does not specify a file name, choose a short descriptive name appropriate for the task.
+15. The coder agent can ONLY create or modify text files. It cannot run shell commands, cannot change file permissions, cannot start servers, cannot send HTTP requests, and cannot verify runtime behavior.
+16. Do NOT create subtasks such as: chmod +x, make executable, run, execute, start, launch, curl, wget, send request, go run, manual test. Shell scripts created by Gogitor are automatically executable.
+17. If the task is "analyze code and create a helper script", prefer ONE subtask: create the helper script using context from the code.
+18. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
+19. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
+20. Use "needs_search": true for:
    - external libraries and their current APIs;
    - dependency/module versions;
    - breaking changes and migrations;
@@ -56,15 +60,15 @@ RULES:
    - current Go/toolchain compatibility;
    - platform-specific behavior when version matters;
    - performance information or benchmarks when external evidence is required.
-17. Use "needs_search": false for:
+21. Use "needs_search": false for:
    - local refactoring;
    - local syntax fixes;
    - renaming;
    - moving code;
    - straightforward tests;
    - changes whose correctness can be established from the supplied project source.
-18. Do not request web search merely because a task is complex.
-19. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
+22. Do not request web search merely because a task is complex.
+23. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
 
 BAD SUBTASKS:
 - chmod +x <script_name>.sh
@@ -257,12 +261,16 @@ RULES:
 7. Prefer subtasks that create or modify files.
 8. Write "goal", subtask text, and acceptance criteria in the same language as the TASK.
 9. Use the exact file names, paths, endpoints, ports, and identifiers mentioned in the TASK.
-10. The coder agent can ONLY create or modify text files.
-11. Do NOT create subtasks such as: chmod +x, run, execute, start, curl, wget.
-12. The plan MUST follow the SELECTED IMPLEMENTATION APPROACH below. Do not deviate from it.
-13. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
-14. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
-15. Use "needs_search": true for:
+10. CURRENT PROJECT SOURCE is authoritative and represents the current repository state.
+11. If a requested component already exists in CURRENT PROJECT SOURCE, do not create a subtask to add it again.
+12. Never create a subtask that changes existing behavior unless ORIGINAL TASK explicitly requires that behavior change.
+13. Do not encode assumptions about future subtasks as if they were already implemented.
+14. The coder agent can ONLY create or modify text files.
+15. Do NOT create subtasks such as: chmod +x, run, execute, start, curl, wget.
+16. The plan MUST follow the SELECTED IMPLEMENTATION APPROACH below. Do not deviate from it.
+17. Set "needs_search" to true ONLY when the subtask requires looking up documentation for an unfamiliar third-party Go package, a specific API signature you are not sure about, or a library version. Do NOT set it for standard library tasks, simple file creation, or refactoring. Default is false.
+18. Set "needs_search": true ONLY when the subtask requires current external information that may not be reliably known from model memory.
+19. Use "needs_search": true for:
    - external libraries and their current APIs;
    - dependency/module versions;
    - breaking changes and migrations;
@@ -271,15 +279,15 @@ RULES:
    - current Go/toolchain compatibility;
    - platform-specific behavior when version matters;
    - performance information or benchmarks when external evidence is required.
-16. Use "needs_search": false for:
+20. Use "needs_search": false for:
    - local refactoring;
    - local syntax fixes;
    - renaming;
    - moving code;
    - straightforward tests;
    - changes whose correctness can be established from the supplied project source.
-17. Do not request web search merely because a task is complex.
-18. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
+21. Do not request web search merely because a task is complex.
+22. Do not search for generic programming knowledge when project-local source and standard Go knowledge are sufficient.
 
 `)
 	if strings.TrimSpace(approach) != "" {
@@ -295,5 +303,76 @@ RULES:
 	b.WriteString("\nTASK:\n")
 	b.WriteString(task)
 	b.WriteString("\n")
+	return b.String()
+}
+
+func ValidateAgentPlan(
+	originalTask,
+	projectContext,
+	planJSON string,
+) string {
+	var b strings.Builder
+
+	b.WriteString(`You are a strict plan validation agent for a Go project.
+
+Your job is to validate an existing implementation plan against the CURRENT
+PROJECT SOURCE.
+
+Return ONLY valid compact JSON.
+Do not return markdown.
+Do not return explanations outside JSON.
+
+JSON schema:
+{
+  "goal": "short goal",
+  "acceptance": ["acceptance criterion"],
+  "subtasks": [
+    {
+      "task": "concrete subtask",
+      "acceptance": ["subtask acceptance criterion"],
+      "needs_search": false
+    }
+  ]
+}
+
+RULES:
+1. CURRENT PROJECT SOURCE is authoritative and represents the current repository state.
+2. ORIGINAL TASK is the only source of requirements.
+3. Remove a subtask when the requested functionality is already present.
+4. Correct a subtask when it contradicts existing required behavior.
+5. Do not add a new feature that is not required by ORIGINAL TASK.
+6. Never remove required functionality merely because it is difficult.
+7. Never create a subtask that changes existing behavior unless ORIGINAL TASK explicitly requires that behavior change.
+8. Do not re-add functionality already present in the source.
+9. Preserve important acceptance criteria from the original plan.
+10. Each subtask must remain one atomic code operation.
+11. Maximum 5 subtasks.
+12. Do not create runtime-only subtasks.
+13. Do not invent files, symbols, functions, methods or constants.
+14. When uncertain, keep the existing subtask unchanged.
+15. The result must describe only work that is still necessary.
+
+ORIGINAL TASK:
+`)
+
+	b.WriteString(originalTask)
+
+	b.WriteString(`
+
+CURRENT PROJECT SOURCE:
+`)
+
+	b.WriteString(projectContext)
+
+	b.WriteString(`
+
+PLAN TO VALIDATE:
+`)
+
+	b.WriteString(planJSON)
+
+	b.WriteString(`
+`)
+
 	return b.String()
 }

@@ -34,20 +34,25 @@ type agentSession struct {
 }
 
 type agentSessionState struct {
-	Version           int        `json:"version"`
-	Task              string     `json:"task"`
-	Depth             AgentDepth `json:"depth"`
-	StartedAt         time.Time  `json:"started_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	PreTaskHead       string     `json:"pre_task_head,omitempty"`
-	CurrentSubtask    int        `json:"current_subtask"`
-	CompletedSubtasks int        `json:"completed_subtasks"`
-	TotalSubtasks     int        `json:"total_subtasks"`
-	Status            string     `json:"status"`
-	GitCommit         string     `json:"git_commit,omitempty"`
-	UndoCommit        string     `json:"undo_commit,omitempty"`
-	ResumedFrom       string     `json:"resumed_from,omitempty"`
-    SubtaskCommits []string `json:"subtask_commits,omitempty"`
+	Version            int        `json:"version"`
+	Task               string     `json:"task"`
+	Depth              AgentDepth `json:"depth"`
+	StartedAt          time.Time  `json:"started_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	PreTaskHead        string     `json:"pre_task_head,omitempty"`
+	CurrentSubtask     int        `json:"current_subtask"`
+	CompletedSubtasks  int        `json:"completed_subtasks"`
+	TotalSubtasks      int        `json:"total_subtasks"`
+	Status             string     `json:"status"`
+	GitCommit          string     `json:"git_commit,omitempty"`
+	UndoCommit         string     `json:"undo_commit,omitempty"`
+	ResumedFrom        string     `json:"resumed_from,omitempty"`
+	SubtaskCommits     []string   `json:"subtask_commits,omitempty"`
+	LastSubtask        int        `json:"last_subtask,omitempty"`
+	LastSubtaskFiles   []string   `json:"last_subtask_files,omitempty"`
+	LastSubtaskDelta   string     `json:"last_subtask_delta,omitempty"`
+	CurrentContextHash string     `json:"current_context_hash,omitempty"`
+	PlanRevision       int        `json:"plan_revision,omitempty"`
 }
 
 func (r agentGateReport) toDomain() domain.QualityGateStatus {
@@ -233,13 +238,12 @@ type agentGateReport struct {
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
-
 func (s *Service) runAgentDeepQualityGates(
-ctx context.Context,
-emit func(domain.Event),
-taskIndex int,
-skipTests bool,
-changedFiles []string,
+	ctx context.Context,
+	emit func(domain.Event),
+	taskIndex int,
+	skipTests bool,
+	changedFiles []string,
 ) agentGateReport {
 	report := agentGateReport{
 		TaskIndex: taskIndex,
@@ -408,44 +412,44 @@ changedFiles []string,
 	// 5. golangci-lint
 	// --------------------------------------------------
 
-    if len(changedFiles) > 0 && !hasGoFiles(changedFiles) {
-    report.Lint = true
-    report.LintInstalled = true
-    report.Warnings = append(
-    report.Warnings,
-    "lint gate skipped: only non-Go files were changed",
-    )
-    } else if _, err := exec.LookPath("golangci-lint"); err != nil {
-    report.LintInstalled = false
-    report.Warnings = append(
-    report.Warnings,
-    "golangci-lint is not installed; lint gate skipped",
-    )
-    } else {
-    report.LintInstalled = true
-    // Собираем базовую линию: линт ДО изменений подзадачи
-    baselineIssues := s.getLintBaseline(ctx, sandbox)
-    // Линт ПОСЛЕ изменений
-    newIssues, lintOut, lintErr :=
-    s.Runner.LintWithBaseline(ctx, sandbox, baselineIssues)
-    report.LintIssues = len(newIssues)
-    if lintErr != nil && len(newIssues) > 0 {
-    report.Lint = false
-    report.Errors = append(
-    report.Errors,
-    fmt.Sprintf("lint failed (%d NEW issues): %s", len(newIssues), trim(lintOut, 3000)),
-    )
-    } else if lintErr != nil && len(newIssues) == 0 {
-    // Ошибка линта, но все проблемы предсуществующие
-    report.Lint = true
-    report.Warnings = append(
-    report.Warnings,
-    fmt.Sprintf("lint returned pre-existing issues only; %d total, 0 new", len(baselineIssues)),
-    )
-    } else {
-    report.Lint = true
-    }
-    }
+	if len(changedFiles) > 0 && !hasGoFiles(changedFiles) {
+		report.Lint = true
+		report.LintInstalled = true
+		report.Warnings = append(
+			report.Warnings,
+			"lint gate skipped: only non-Go files were changed",
+		)
+	} else if _, err := exec.LookPath("golangci-lint"); err != nil {
+		report.LintInstalled = false
+		report.Warnings = append(
+			report.Warnings,
+			"golangci-lint is not installed; lint gate skipped",
+		)
+	} else {
+		report.LintInstalled = true
+		// Собираем базовую линию: линт ДО изменений подзадачи
+		baselineIssues := s.getLintBaseline(ctx, sandbox)
+		// Линт ПОСЛЕ изменений
+		newIssues, lintOut, lintErr :=
+			s.Runner.LintWithBaseline(ctx, sandbox, baselineIssues)
+		report.LintIssues = len(newIssues)
+		if lintErr != nil && len(newIssues) > 0 {
+			report.Lint = false
+			report.Errors = append(
+				report.Errors,
+				fmt.Sprintf("lint failed (%d NEW issues): %s", len(newIssues), trim(lintOut, 3000)),
+			)
+		} else if lintErr != nil && len(newIssues) == 0 {
+			// Ошибка линта, но все проблемы предсуществующие
+			report.Lint = true
+			report.Warnings = append(
+				report.Warnings,
+				fmt.Sprintf("lint returned pre-existing issues only; %d total, 0 new", len(baselineIssues)),
+			)
+		} else {
+			report.Lint = true
+		}
+	}
 
 	report.Passed =
 		len(report.Errors) == 0 &&
@@ -695,6 +699,9 @@ func formatAgentTask(originalTask string, plan *fullPlan, sub fullPlanSubtask, i
 	b.WriteString("=== CONTEXT BOUNDARY ===\n")
 	b.WriteString("- The current repository state is the source of truth.\n")
 	b.WriteString("- Previous successful Agent tasks MAY already have changed the project.\n")
+	b.WriteString("- A fresh source snapshot is supplied for the current coding step.\n")
+	b.WriteString("- That snapshot overrides older task history and planner assumptions.\n")
+	b.WriteString("- If the requested change is already present, do not reproduce it.\n")
 	b.WriteString("- Do NOT assume future tasks have already been implemented.\n")
 	b.WriteString("- Do NOT invent files, functions, types or APIs that are not present.\n")
 	b.WriteString("- Implement ONLY the current task.\n")
@@ -1471,49 +1478,49 @@ func (s *Service) ExecuteAgentResume(
 		}
 	}
 
-    plan, err :=
-    loadAgentPlan(dir)
-    if err != nil {
-    return domain.Result{
-    Success: false,
-    Mode:    "agent-resume",
-    Errors: []string{
-    fmt.Sprintf(
-    "cannot load saved agent plan: %v",
-    err,
-    ),
-    },
-    }
-    }
-    // Проверяем, не вызвана ли ошибка предсуществующими проблемами проекта.
-    // Если последняя ошибка — только предсуществующие линт-проблемы,
-    // предлагаем пользователю их исправить перед повтором.
-    if state.Status == "failed" {
-    lastGateData, gateErr := os.ReadFile(
-    filepath.Join(dir, fmt.Sprintf("gate-task-%02d.json", state.CurrentSubtask)),
-    )
-    if gateErr == nil {
-    var lastGate agentGateReport
-    if json.Unmarshal(lastGateData, &lastGate) == nil {
-    hasPreexistingOnly := true
-    for _, e := range lastGate.Errors {
-    if strings.Contains(e, "NEW") {
-    hasPreexistingOnly = false
-    break
-    }
-    }
-    if hasPreexistingOnly && len(lastGate.Errors) > 0 {
-    sendEvent(
-    emit,
-    domain.EventWarn,
-    "Previous failure was caused by pre-existing project issues. "+
-    "Consider fixing them first: ':fix' or ':test lint'. "+
-    "Proceeding with resume anyway.",
-    )
-    }
-    }
-    }
-    }
+	plan, err :=
+		loadAgentPlan(dir)
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "agent-resume",
+			Errors: []string{
+				fmt.Sprintf(
+					"cannot load saved agent plan: %v",
+					err,
+				),
+			},
+		}
+	}
+	// Проверяем, не вызвана ли ошибка предсуществующими проблемами проекта.
+	// Если последняя ошибка — только предсуществующие линт-проблемы,
+	// предлагаем пользователю их исправить перед повтором.
+	if state.Status == "failed" {
+		lastGateData, gateErr := os.ReadFile(
+			filepath.Join(dir, fmt.Sprintf("gate-task-%02d.json", state.CurrentSubtask)),
+		)
+		if gateErr == nil {
+			var lastGate agentGateReport
+			if json.Unmarshal(lastGateData, &lastGate) == nil {
+				hasPreexistingOnly := true
+				for _, e := range lastGate.Errors {
+					if strings.Contains(e, "NEW") {
+						hasPreexistingOnly = false
+						break
+					}
+				}
+				if hasPreexistingOnly && len(lastGate.Errors) > 0 {
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						"Previous failure was caused by pre-existing project issues. "+
+							"Consider fixing them first: ':fix' or ':test lint'. "+
+							"Proceeding with resume anyway.",
+					)
+				}
+			}
+		}
+	}
 
 	if state.CompletedSubtasks >= len(plan.Subtasks) {
 		return domain.Result{
@@ -1629,12 +1636,12 @@ func formatAgentTaskReport(
 		depth,
 	)
 
-    fmt.Fprintf(
-    	&b,
-    	"Subtasks: %d/%d\n",
-    	completedSubtasks,
-    	totalSubtasks,
-    )
+	fmt.Fprintf(
+		&b,
+		"Subtasks: %d/%d\n",
+		completedSubtasks,
+		totalSubtasks,
+	)
 	if result.Iterations > 0 {
 		fmt.Fprintf(
 			&b,
@@ -1808,16 +1815,16 @@ func reportMark(ok bool) string {
 // getLintBaseline возвращает проблемы линта до начала подзадачи.
 // Вызывается на копии песочницы ДО применения изменений.
 func (s *Service) getLintBaseline(ctx context.Context, sandbox string) []runner.LintIssue {
-baselineSandbox, err := s.WS.PrepareSandbox(ctx)
-if err != nil {
-return nil
-}
-defer os.RemoveAll(baselineSandbox)
-if _, err := exec.LookPath("golangci-lint"); err != nil {
-return nil
-}
-lintOut, _ := s.Runner.Lint(ctx, baselineSandbox)
-return runner.ParseLintOutput(lintOut)
+	baselineSandbox, err := s.WS.PrepareSandbox(ctx)
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(baselineSandbox)
+	if _, err := exec.LookPath("golangci-lint"); err != nil {
+		return nil
+	}
+	lintOut, _ := s.Runner.Lint(ctx, baselineSandbox)
+	return runner.ParseLintOutput(lintOut)
 }
 
 // hasGoFiles проверяет, есть ли в списке изменённых файлов .go файлы.

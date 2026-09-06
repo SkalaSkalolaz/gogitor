@@ -301,3 +301,43 @@ func TestApproachSelection(t *testing.T) {
 		t.Error("missing action options")
 	}
 }
+
+func TestValidateAgentPlan(t *testing.T) {
+	prompt := ValidateAgentPlan(
+		"Add cleanup goroutine",
+		`--- File: repository.go ---
+type Paste struct {
+	ExpiresAt time.Time
+}
+`,
+		`{
+		  "goal": "cleanup",
+		  "acceptance": ["expired entries are removed"],
+		  "subtasks": [
+		    {
+		      "task": "Add ExpiresAt field",
+		      "acceptance": [],
+		      "needs_search": false
+		    }
+		  ]
+		}`,
+	)
+
+	for _, want := range []string{
+		"CURRENT PROJECT SOURCE",
+		"PLAN TO VALIDATE",
+		"already present",
+		"contradicts existing required behavior",
+		"Do not add a new feature",
+	} {
+		if !strings.Contains(
+			prompt,
+			want,
+		) {
+			t.Errorf(
+				"ValidateAgentPlan prompt missing %q",
+				want,
+			)
+		}
+	}
+}

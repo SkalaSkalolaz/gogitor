@@ -423,13 +423,17 @@ TASK:
 	b.WriteString(task)
 	b.WriteString(`
 
-EXISTING PROJECT FILES:
+CURRENT PROJECT SOURCE SNAPSHOT:
 `)
 	b.WriteString(projectContext)
 	b.WriteString(`
 
 CRITICAL RULES:
 1. The existing project files above are the source of truth.
+1a. This source snapshot was captured immediately before the current coding attempt.
+1b. This snapshot overrides older conversation history, memory, previous plans, and assumptions.
+1c. Previous Agent subtasks may already have changed the project.
+1d. Do not recreate functionality that is already present in this snapshot.
 2. Do NOT rewrite code arbitrarily.
 3. Do NOT invent new behavior unless the task explicitly asks for it.
 4. Preserve existing logic, names, types, constants, imports, and behavior unless they must change.

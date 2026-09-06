@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"gogitor/internal/prompts"
 	"gogitor/internal/runner"
 	"gogitor/internal/security"
+	"gogitor/internal/textutil"
 )
 
 // fullPlan — структурированный план от planner agent.
@@ -27,6 +30,25 @@ type fullPlanSubtask struct {
 	Acceptance  []string `json:"acceptance"`
 	NeedsSearch bool     `json:"needs_search"`
 }
+
+type agentSubtaskState string
+
+const (
+	agentSubtaskRequired         agentSubtaskState = "required"
+	agentSubtaskAlreadySatisfied agentSubtaskState = "already_satisfied"
+	agentSubtaskUnknown          agentSubtaskState = "unknown"
+)
+
+type agentSubtaskAssessment struct {
+	State  agentSubtaskState
+	Reason string
+}
+
+const (
+	maxAgentPlanContextBytes     = 96000
+	maxPreviousSubtaskDeltaBytes = 24000
+	maxAgentSubtaskAttempts      = 2
+)
 
 // agentReview — результат работы reviewer agent.
 // Используется как итоговая структура после гибкого парсинга.
@@ -43,6 +65,321 @@ type rawAgentReview struct {
 	Approved       bool  `json:"approved"`
 	CriticalIssues []any `json:"critical_issues"`
 	Suggestions    []any `json:"suggestions"`
+}
+
+func hashAgentContext(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func sortedUniqueStrings(
+	values []string,
+) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	set := make(
+		map[string]bool,
+		len(values),
+	)
+
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+
+		if value == "" {
+			continue
+		}
+
+		set[value] = true
+	}
+
+	return sortedKeys(set)
+}
+
+func (s *Service) buildFreshAgentSubtaskContext(
+	task string,
+) string {
+	targetFiles := extractTargetFiles(task)
+
+	cc := s.buildCodeContext(
+		task,
+		targetFiles,
+	)
+
+	return strings.TrimSpace(cc.Context)
+}
+
+func extractAgentTaskIdentifiers(task string) []string {
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, raw := range strings.Fields(task) {
+		token := strings.Trim(
+			raw,
+			"`\"'(),.:;[]{}<>",
+		)
+
+		if len(token) < 3 {
+			continue
+		}
+
+		first := token[0]
+		if first < 'A' || first > 'Z' {
+			continue
+		}
+
+		if seen[token] {
+			continue
+		}
+
+		seen[token] = true
+		result = append(result, token)
+
+		if len(result) >= 12 {
+			break
+		}
+	}
+
+	return result
+}
+
+func sourceHasAgentField(
+	source string,
+	name string,
+) bool {
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, name+" ") ||
+			strings.HasPrefix(trimmed, name+"\t") ||
+			strings.HasPrefix(trimmed, name+"`") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func sourceHasAgentMethod(
+	source string,
+	name string,
+) bool {
+	return strings.Contains(
+		source,
+		"func "+name+"(",
+	) ||
+		strings.Contains(
+			source,
+			") "+name+"(",
+		)
+}
+
+func sourceHasAgentTicker(
+	source string,
+) bool {
+	return strings.Contains(
+		source,
+		"time.NewTicker(",
+	)
+}
+
+func (s *Service) assessAgentSubtask(
+	sub fullPlanSubtask,
+) agentSubtaskAssessment {
+	task := strings.TrimSpace(sub.Task)
+	if task == "" {
+		return agentSubtaskAssessment{
+			State:  agentSubtaskUnknown,
+			Reason: "empty subtask",
+		}
+	}
+
+	source := s.buildFreshAgentSubtaskContext(task)
+	if source == "" {
+		return agentSubtaskAssessment{
+			State:  agentSubtaskUnknown,
+			Reason: "current project source is unavailable",
+		}
+	}
+
+	lower := strings.ToLower(task)
+
+	// ------------------------------------------------------------
+	// 1. Добавление файла
+	// ------------------------------------------------------------
+	if containsAny(
+		lower,
+		[]string{
+			"create file",
+			"add file",
+			"создай файл",
+			"создать файл",
+			"добавь файл",
+			"добавить файл",
+		},
+	) {
+		targetFiles := extractTargetFiles(task)
+
+		if len(targetFiles) > 0 &&
+			len(s.WS.ExistingFiles(targetFiles)) ==
+				len(targetFiles) {
+
+			return agentSubtaskAssessment{
+				State:  agentSubtaskAlreadySatisfied,
+				Reason: "requested file already exists",
+			}
+		}
+	}
+
+	// ------------------------------------------------------------
+	// 2. Добавление поля
+	// ------------------------------------------------------------
+	if containsAny(
+		lower,
+		[]string{
+			"add field",
+			"field to",
+			"добавь поле",
+			"добавить поле",
+			"добавить свойство",
+		},
+	) {
+		for _, id := range extractAgentTaskIdentifiers(task) {
+			if sourceHasAgentField(source, id) {
+				return agentSubtaskAssessment{
+					State: agentSubtaskAlreadySatisfied,
+					Reason: fmt.Sprintf(
+						"field %s already exists in current source",
+						id,
+					),
+				}
+			}
+		}
+	}
+
+	// ------------------------------------------------------------
+	// 3. Добавление метода/функции
+	// ------------------------------------------------------------
+	if containsAny(
+		lower,
+		[]string{
+			"add method",
+			"add function",
+			"добавь метод",
+			"добавить метод",
+			"добавь функцию",
+			"добавить функцию",
+		},
+	) {
+		for _, id := range extractAgentTaskIdentifiers(task) {
+			if sourceHasAgentMethod(source, id) {
+				return agentSubtaskAssessment{
+					State: agentSubtaskAlreadySatisfied,
+					Reason: fmt.Sprintf(
+						"method or function %s already exists",
+						id,
+					),
+				}
+			}
+		}
+	}
+
+	// ------------------------------------------------------------
+	// 4. Ticker / background cleanup
+	// ------------------------------------------------------------
+	if containsAny(
+		lower,
+		[]string{
+			"ticker",
+			"newticker",
+			"таймер",
+			"горутин",
+			"фоновой очист",
+		},
+	) {
+		if sourceHasAgentTicker(source) {
+			return agentSubtaskAssessment{
+				State:  agentSubtaskAlreadySatisfied,
+				Reason: "time.NewTicker already exists in current source",
+			}
+		}
+	}
+
+	// ------------------------------------------------------------
+	// 5. Endpoint / route
+	// ------------------------------------------------------------
+	if containsAny(
+		lower,
+		[]string{
+			"endpoint",
+			"route",
+			"маршрут",
+			"эндпоинт",
+		},
+	) {
+		targetFiles := extractTargetFiles(task)
+		if len(targetFiles) > 0 &&
+			len(s.WS.ExistingFiles(targetFiles)) ==
+				len(targetFiles) {
+		}
+
+		if strings.Contains(
+			source,
+			"DELETE",
+		) &&
+			strings.Contains(
+				source,
+				"/paste/",
+			) {
+
+			return agentSubtaskAssessment{
+				State:  agentSubtaskAlreadySatisfied,
+				Reason: "DELETE /paste route already appears in current source",
+			}
+		}
+	}
+
+	return agentSubtaskAssessment{
+		State:  agentSubtaskRequired,
+		Reason: "no deterministic evidence that the subtask is already satisfied",
+	}
+}
+
+func isRecoverableAgentSubtaskFailure(
+	errors []string,
+) bool {
+	text := strings.ToLower(
+		strings.Join(errors, "\n"),
+	)
+
+	recoverableMarkers := []string{
+		"llm did not return a valid search/replace patch",
+		"expected format: --- patch:",
+		"patch repair required",
+		"no_op_patch",
+		"symbol_not_found",
+		"strict_symbol_required",
+		"search block not found",
+		"preflight",
+		"stale source",
+		"source mismatch",
+		"duplicate patch",
+		"patch parse",
+	}
+
+	for _, marker := range recoverableMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // convertRawReview конвертирует гибко распарсенный ответ в строгую структуру.
@@ -412,6 +749,14 @@ func (s *Service) executeAgentFull(
 		)
 	}
 
+	if opts.AgentResumePlan == nil {
+		plan = s.validateAgentPlanAgainstSource(
+			ctx,
+			query,
+			plan,
+			emit,
+		)
+	}
 	if session != nil {
 		if err := saveAgentPlan(
 			session,
@@ -544,7 +889,91 @@ func (s *Service) executeAgentFull(
 		subOpts.ProgressItem = i + 1
 		subOpts.ProgressTotal = len(plan.Subtasks)
 
+		// ------------------------------------------------------------
+		// CURRENT SUBTASK STATE
+		// ------------------------------------------------------------
+
+		assessment := s.assessAgentSubtask(sub)
+
+		if assessment.State == agentSubtaskAlreadySatisfied {
+			markPlan(
+				i+1,
+				domain.PlanDone,
+				"already satisfied in current project state: "+assessment.Reason,
+			)
+
+			sendEvent(
+				emit,
+				domain.EventLog,
+				fmt.Sprintf(
+					"Skipping already satisfied subtask %d/%d: %s",
+					i+1,
+					len(plan.Subtasks),
+					assessment.Reason,
+				),
+			)
+
+			completedSubtasks = i + 1
+			state.CompletedSubtasks = completedSubtasks
+			state.CurrentSubtask = completedSubtasks
+
+			if session != nil {
+				_ = saveAgentState(
+					session,
+					state,
+				)
+			}
+
+			continue
+		}
+
+		// ------------------------------------------------------------
+		// FRESH SOURCE SNAPSHOT FOR THIS SUBTASK
+		// ------------------------------------------------------------
+
+		freshSubtaskContext :=
+			s.buildFreshAgentSubtaskContext(sub.Task)
+
+		if freshSubtaskContext != "" {
+			subOpts.AgentProjectContext =
+				freshSubtaskContext
+
+			state.CurrentContextHash =
+				hashAgentContext(freshSubtaskContext)
+
+			sendEvent(
+				emit,
+				domain.EventLog,
+				fmt.Sprintf(
+					"Fresh subtask source context: %d bytes",
+					len(freshSubtaskContext),
+				),
+			)
+		} else {
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				"Fresh subtask source context is empty; executeSimple will use fallback context",
+			)
+		}
+
+		// ------------------------------------------------------------
+		// Дополнительный delta предыдущей успешной подзадачи.
+		// Полный текущий source всё равно передаётся отдельно.
+		// ------------------------------------------------------------
+
 		taskForCoder := sub.Task
+
+		if strings.TrimSpace(state.LastSubtaskDelta) != "" {
+			taskForCoder +=
+				"\n\n=== PREVIOUS SUBTASK CHANGE SUMMARY ===\n" +
+					textutil.TruncateStringBytes(
+						state.LastSubtaskDelta,
+						maxPreviousSubtaskDeltaBytes,
+					) +
+					"\n=== END PREVIOUS SUBTASK CHANGE SUMMARY ==="
+		}
+
 		searchContext := ""
 
 		if sub.NeedsSearch &&
@@ -620,14 +1049,83 @@ func (s *Service) executeAgentFull(
 					"or explicit new external-information need is discovered during validation."
 		}
 
-		res := s.executeSimple(subCtx, taskForCoder, subOpts, emit)
-		final.Iterations += res.Iterations
+		var res domain.Result
+
+		for attempt := 1; attempt <= maxAgentSubtaskAttempts; attempt++ {
+			if attempt > 1 {
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					fmt.Sprintf(
+						"Retrying Agent subtask %d/%d with refreshed source context (attempt %d/%d)",
+						i+1,
+						len(plan.Subtasks),
+						attempt,
+						maxAgentSubtaskAttempts,
+					),
+				)
+
+				freshSubtaskContext =
+					s.buildFreshAgentSubtaskContext(sub.Task)
+
+				if freshSubtaskContext != "" {
+					subOpts.AgentProjectContext =
+						freshSubtaskContext
+
+					state.CurrentContextHash =
+						hashAgentContext(freshSubtaskContext)
+
+					if session != nil {
+						_ = saveAgentState(
+							session,
+							state,
+						)
+					}
+				}
+			}
+
+			res = s.executeSimple(
+				subCtx,
+				taskForCoder,
+				subOpts,
+				emit,
+			)
+
+			final.Iterations += res.Iterations
+
+			if res.Success {
+				break
+			}
+
+			if attempt >= maxAgentSubtaskAttempts ||
+				!isRecoverableAgentSubtaskFailure(res.Errors) {
+
+				break
+			}
+
+			rollbackSubtask(
+				"recoverable subtask failure before retry",
+			)
+		}
+
 		addFiles(res)
 
 		if !res.Success {
-			markPlan(i+1, domain.PlanFailed, truncate(strings.Join(res.Errors, "; "), 200))
+			markPlan(
+				i+1,
+				domain.PlanFailed,
+				truncate(
+					strings.Join(res.Errors, "; "),
+					200,
+				),
+			)
+
 			final.Success = false
-			final.Errors = append(final.Errors, res.Errors...)
+			final.Errors = append(
+				final.Errors,
+				res.Errors...,
+			)
+
 			rollbackSubtask("subtask failed")
 			return final
 		}
@@ -825,6 +1323,37 @@ func (s *Service) executeAgentFull(
 				)
 			}
 		}
+
+		state.LastSubtask = i + 1
+
+		state.LastSubtaskFiles = append(
+			[]string{},
+			res.FilesCreated...,
+		)
+
+		state.LastSubtaskFiles = append(
+			state.LastSubtaskFiles,
+			res.FilesModified...,
+		)
+
+		state.LastSubtaskFiles = append(
+			state.LastSubtaskFiles,
+			res.FilesPatched...,
+		)
+
+		state.LastSubtaskFiles = append(
+			state.LastSubtaskFiles,
+			res.FilesFullRewritten...,
+		)
+
+		// Удаляем дубликаты через уже существующий helper.
+		state.LastSubtaskFiles =
+			sortedUniqueStrings(
+				state.LastSubtaskFiles,
+			)
+
+		state.LastSubtaskDelta =
+			buildAgentSubtaskDelta(res)
 
 		// ─── Промежуточный git-коммит (только normal) ─────
 		// Deep-режим сохраняет атомарность: коммит создаётся
@@ -1225,6 +1754,61 @@ func (s *Service) executeAgentFull(
 	return final
 }
 
+func buildAgentSubtaskDelta(
+	res domain.Result,
+) string {
+	var b strings.Builder
+
+	b.WriteString("Changed files:\n")
+
+	seen := make(map[string]bool)
+
+	appendFiles := func(label string, files []string) {
+		for _, path := range files {
+			path = strings.TrimSpace(path)
+			if path == "" || seen[path] {
+				continue
+			}
+
+			seen[path] = true
+
+			b.WriteString("- ")
+			b.WriteString(label)
+			b.WriteString(": ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+
+	appendFiles("created", res.FilesCreated)
+	appendFiles("modified", res.FilesModified)
+	appendFiles("patched", res.FilesPatched)
+	appendFiles("full-rewritten", res.FilesFullRewritten)
+
+	if strings.TrimSpace(res.Response) != "" {
+		b.WriteString("\nResult summary:\n")
+		b.WriteString(
+			textutil.TruncateStringBytes(
+				res.Response,
+				8000,
+			),
+		)
+	}
+
+	result := strings.TrimSpace(b.String())
+
+	if len(result) > maxPreviousSubtaskDeltaBytes {
+		result =
+			textutil.TruncateStringBytes(
+				result,
+				maxPreviousSubtaskDeltaBytes,
+			) +
+				"\n... delta truncated ..."
+	}
+
+	return result
+}
+
 func saveAgentResult(
 	session *agentSession,
 	result *domain.Result,
@@ -1349,6 +1933,27 @@ func (s *Service) planFullOrFallback(
 
 	prompt = s.appendProjectInstructions(prompt)
 
+	planContext := s.buildFreshAgentSubtaskContext(query)
+
+	if planContext != "" {
+		if len(planContext) > maxAgentPlanContextBytes {
+			planContext =
+				textutil.TruncateStringBytes(
+					planContext,
+					maxAgentPlanContextBytes,
+				) +
+					"\n... current project source truncated for planning ..."
+		}
+
+		prompt +=
+			"\n\n" +
+				"=== CURRENT PROJECT SOURCE OF TRUTH ===\n" +
+				planContext +
+				"\n=== END CURRENT PROJECT SOURCE ===\n"
+	}
+
+	prompt = s.appendProjectInstructions(prompt)
+
 	var plan fullPlan
 	err := s.sendAgentJSON(
 		ctx,
@@ -1395,6 +2000,110 @@ func (s *Service) planFullOrFallback(
 	)
 
 	return s.limitAgentPlan(validated)
+}
+
+func (s *Service) validateAgentPlanAgainstSource(
+	ctx context.Context,
+	originalTask string,
+	plan *fullPlan,
+	emit func(domain.Event),
+) *fullPlan {
+	if plan == nil {
+		return nil
+	}
+
+	// Однопунктный план не требует дополнительного LLM-вызова:
+	// экономим время и токены.
+	if len(plan.Subtasks) <= 1 {
+		return plan
+	}
+
+	projectContext := s.buildFreshAgentSubtaskContext(originalTask)
+	if projectContext == "" {
+		return plan
+	}
+
+	if len(projectContext) > maxAgentPlanContextBytes {
+		projectContext =
+			textutil.TruncateStringBytes(
+				projectContext,
+				maxAgentPlanContextBytes,
+			) +
+				"\n... current project source truncated ..."
+	}
+
+	data, err := json.Marshal(plan)
+	if err != nil {
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			fmt.Sprintf(
+				"agent plan validation skipped: cannot marshal plan: %v",
+				err,
+			),
+		)
+		return plan
+	}
+
+	prompt := prompts.ValidateAgentPlan(
+		originalTask,
+		projectContext,
+		string(data),
+	)
+
+	prompt = s.appendProjectInstructions(prompt)
+
+	var validated fullPlan
+
+	err = s.sendAgentJSON(
+		ctx,
+		agent.RolePlanner,
+		agent.PriorityHigh,
+		"validate agent plan",
+		prompt,
+		&validated,
+	)
+	if err != nil {
+		// Это защитный слой, поэтому failure-open.
+		// Если validator недоступен, оригинальный план сохраняется.
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			fmt.Sprintf(
+				"agent plan validation failed; keeping original plan: %v",
+				err,
+			),
+		)
+		return plan
+	}
+
+	validated = *validateAgentPlan(
+		&validated,
+		originalTask,
+	)
+
+	if len(validated.Subtasks) == 0 &&
+		len(plan.Subtasks) > 0 {
+
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			"agent plan validator returned empty plan; keeping original plan",
+		)
+
+		return plan
+	}
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		fmt.Sprintf(
+			"agent plan validated against current source: %d subtasks",
+			len(validated.Subtasks),
+		),
+	)
+
+	return &validated
 }
 
 func (s *Service) runReviewer(

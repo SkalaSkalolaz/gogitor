@@ -45,6 +45,7 @@ type Options struct {
 	AgentResumePlan   *fullPlan
 	AgentResumeFrom   int
 	AgentResumeSource string
+	AgentProjectContext string
 }
 
 type PendingComparison struct {
@@ -1561,10 +1562,19 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			"Deep Agent: strict patch policy enabled",
 		)
 	}
-	targetFiles := extractTargetFiles(query)
-	cc := s.buildCodeContext(query, targetFiles)
-	originalContext := cc.Context
-	defaultPath := defaultPath(query, targetFiles)
+
+    targetFiles := extractTargetFiles(query)
+    
+    cc := s.buildCodeContext(query, targetFiles)
+    
+    if strings.TrimSpace(opts.AgentProjectContext) != "" {
+    	cc.Context = opts.AgentProjectContext
+    	cc.HasExisting = true
+    	cc.ExistingTargets = s.WS.ExistingFiles(targetFiles)
+    }
+    
+    originalContext := cc.Context
+    defaultPath := defaultPath(query, targetFiles)
 	var lastErrors []string
 	var lastChanges []domain.FileChange
 
