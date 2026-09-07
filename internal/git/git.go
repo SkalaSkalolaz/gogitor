@@ -419,7 +419,7 @@ func (g *Git) Push(ctx context.Context, remote, branch string, force bool) (stri
 			args = append(args, cur)
 		}
 	}
-	return g.runNet(ctx, 2*time.Minute, args...)
+	return g.runNet(ctx, 10*time.Minute, args...)
 }
 
 func (g *Git) Pull(ctx context.Context, remote, branch string) (string, error) {
@@ -427,14 +427,14 @@ func (g *Git) Pull(ctx context.Context, remote, branch string) (string, error) {
 	if branch != "" {
 		args = append(args, branch)
 	}
-	return g.runNet(ctx, 2*time.Minute, args...)
+	return g.runNet(ctx, 10*time.Minute, args...)
 }
 
 func (g *Git) Fetch(ctx context.Context, remote string) (string, error) {
 	if remote == "" {
 		remote = "--all"
 	}
-	return g.runNet(ctx, 2*time.Minute, "-c", "credential.helper=", "fetch", remote)
+	return g.runNet(ctx, 20*time.Minute, "-c", "credential.helper=", "fetch", remote)
 }
 
 func (g *Git) Clone(ctx context.Context, repoURL, dir string) (string, error) {
@@ -442,7 +442,7 @@ func (g *Git) Clone(ctx context.Context, repoURL, dir string) (string, error) {
 	if dir != "" {
 		args = append(args, dir)
 	}
-	return g.runNet(ctx, 5*time.Minute, args...)
+	return g.runNet(ctx, 15*time.Minute, args...)
 }
 
 func (g *Git) RemoteList(ctx context.Context) (string, error) {
