@@ -3,6 +3,7 @@ package prompts
 import (
 	"fmt"
 	"strings"
+	"sort"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/textutil"
@@ -1315,6 +1316,185 @@ Do NOT omit the Symbol line for multi-line SEARCH blocks.
 	return b.String()
 }
 
+func PatchRepairTargetLock(
+	changes []domain.FileChange,
+	errorCode domain.PatchErrorCode,
+) string {
+	if len(changes) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	b.WriteString(`
+=== REPAIR TARGET LOCK ===
+
+You are repairing the previously rejected patch.
+This is a correction operation, NOT a redesign.
+
+The original repair target is locked.
+
+MANDATORY:
+1. Preserve every original target file listed below.
+2. Preserve every original non-empty Symbol listed below.
+3. Do NOT replace a locked Symbol with another function, method, type, or declaration.
+4. Do NOT move the repair to another file.
+5. Re-read CURRENT PROJECT SOURCE before constructing SEARCH/REPLACE.
+6. Fix the reported structural problem itself.
+7. Do NOT introduce unrelated changes.
+`)
+
+	type target struct {
+		path   string
+		symbol string
+	}
+
+	var targets []target
+
+	seen := make(map[string]bool)
+
+	for _, ch := range changes {
+		path :=
+			strings.TrimSpace(ch.Path)
+
+		if path == "" {
+			continue
+		}
+
+		for _, p := range ch.Patches {
+			symbol :=
+				strings.TrimSpace(p.Symbol)
+
+			key :=
+				path + "\x00" + symbol
+
+			if seen[key] {
+				continue
+			}
+
+			seen[key] = true
+
+			targets = append(
+				targets,
+				target{
+					path:   path,
+					symbol: symbol,
+				},
+			)
+		}
+	}
+
+	sort.Slice(
+		targets,
+		func(i, j int) bool {
+			if targets[i].path == targets[j].path {
+				return targets[i].symbol <
+					targets[j].symbol
+			}
+
+			return targets[i].path <
+				targets[j].path
+		},
+	)
+
+	b.WriteString("\nLOCKED TARGETS:\n")
+
+	for _, t := range targets {
+		if t.symbol == "" {
+			b.WriteString(
+				"- file: " + t.path +
+					" | no Symbol lock\n",
+			)
+			continue
+		}
+
+		b.WriteString(
+			"- file: " + t.path +
+				" | Symbol: " + t.symbol +
+				"\n",
+		)
+	}
+
+	if errorCode ==
+		domain.PatchErrorSymbolNotFound {
+
+		b.WriteString(`
+SPECIAL EXCEPTION:
+The previous error was symbol_not_found.
+The previous Symbol was proven invalid, so a different real Symbol MAY
+be selected only after verifying it against CURRENT PROJECT SOURCE.
+
+Do not change Symbol merely because SEARCH is inconvenient.
+`)
+	} else {
+		b.WriteString(`
+SYMBOL LOCK:
+All listed Symbols are immutable for this repair attempt.
+A repair that changes one of these Symbols will be rejected before
+the patch reaches the workspace validator.
+`)
+	}
+
+	switch errorCode {
+
+	case domain.PatchErrorSearchOutsideSymbol:
+		b.WriteString(`
+SCOPE CORRECTION (search_outside_symbol):
+KEEP Symbol — Do NOT replace the Symbol.
+The previous SEARCH exists in the source but belongs to a different
+declaration than the locked Symbol.
+Do NOT choose the other declaration as the new Symbol.
+Keep the locked Symbol and rebuild SEARCH so it is entirely inside
+that Symbol.
+`)
+
+	case domain.PatchErrorSearchCrossesSymbolBoundary:
+		b.WriteString(`
+BOUNDARY CORRECTION:
+The previous SEARCH crosses declaration boundaries.
+
+Keep the locked Symbol.
+Split the modification into smaller independent SEARCH/REPLACE blocks.
+Each block must belong to one valid declaration.
+`)
+	case domain.PatchErrorAmbiguousSearch:
+		b.WriteString(`
+AMBIGUITY CORRECTION:
+The previous SEARCH matched multiple locations.
+
+Keep the locked Symbol.
+Make SEARCH more specific by adding nearby unique source lines.
+Do not resolve ambiguity by changing Symbol.
+`)
+	case domain.PatchErrorRepairSymbolDrift:
+		b.WriteString(`
+DRIFT CORRECTION:
+The previous repair changed the target Symbol.
+Restore the original locked Symbol and fix only SEARCH/REPLACE.
+`)
+	case domain.PatchErrorRepairFileDrift:
+		b.WriteString(`
+FILE DRIFT CORRECTION:
+The previous repair removed or replaced an original target file.
+Restore the original target file and repair only its patch content.
+`)
+	case domain.PatchErrorRepairProtocolDrift:
+		b.WriteString(`
+PROTOCOL CORRECTION:
+The previous repair escaped the patch protocol.
+
+Return the active SEARCH/REPLACE or REPLACE_ONLY patch protocol.
+Do NOT return a complete existing file.
+`)
+	}
+
+	b.WriteString(`
+END REPAIR TARGET LOCK
+`)
+
+	return b.String()
+}
+
 func patchRepairGuidance(
 	errors string,
 ) string {
@@ -1527,6 +1707,121 @@ exact existing function fragment
 =======
 correct replacement fragment
 >>>>>>> REPLACE`
+
+    case domain.PatchErrorSearchOutsideSymbol:
+    	return `ERROR CODE: search_outside_symbol
+
+The previous Symbol is valid, but the SEARCH block belongs to another Go declaration.
+
+MANDATORY CORRECTION:
+1. KEEP THE SAME Symbol.
+2. Do NOT replace the Symbol with the declaration that currently contains SEARCH.
+3. Re-read CURRENT PROJECT SOURCE.
+4. Rebuild SEARCH so the entire SEARCH block belongs to the locked Symbol.
+5. Keep SEARCH as small as safely possible.
+6. Do not change unrelated declarations.
+7. Return only the active patch protocol.
+8. Do not return a complete file.`
+
+    case domain.PatchErrorSearchNotFoundInsideSymbol:
+    	return `ERROR CODE: search_not_found_inside_symbol
+
+The SEARCH block could not be safely found inside the specified Symbol.
+
+MANDATORY CORRECTION:
+1. KEEP THE SAME Symbol.
+2. Re-read CURRENT PROJECT SOURCE.
+3. Copy SEARCH verbatim from the current Symbol.
+4. Reduce SEARCH to the smallest unique safe source fragment.
+5. Do not replace the Symbol merely because SEARCH is difficult to match.
+6. Do not return unrelated changes.
+7. Return only the active patch protocol.`
+
+    case domain.PatchErrorSearchCrossesSymbolBoundary:
+    	return `ERROR CODE: search_crosses_symbol_boundary
+
+The previous SEARCH block crosses the boundaries of multiple Go declarations.
+
+MANDATORY CORRECTION:
+1. KEEP THE SAME Symbol for the affected declaration.
+2. Split the modification into separate SEARCH/REPLACE blocks.
+3. Each SEARCH block must belong to one declaration only.
+4. Do not solve the error by changing Symbol.
+5. Keep one Patch header per file.
+6. Do not return a complete file.`
+
+    case domain.PatchErrorAmbiguousSearch:
+    	return `ERROR CODE: ambiguous_search
+
+The previous SEARCH block has multiple valid matches.
+
+MANDATORY CORRECTION:
+1. KEEP THE SAME Symbol.
+2. Add nearby unique source context to SEARCH.
+3. Copy SEARCH from CURRENT PROJECT SOURCE.
+4. Do not select another Symbol to avoid the ambiguity.
+5. Return only corrected patch blocks.
+6. Do not return a complete file.`
+
+    case domain.PatchErrorRepairSymbolDrift:
+    	return `ERROR CODE: repair_symbol_drift
+
+The previous repair changed the target Symbol of the rejected patch.
+
+MANDATORY CORRECTION:
+1. Restore the original Symbol exactly.
+2. Do NOT select another function, method, type, or declaration.
+3. Fix the SEARCH/REPLACE content instead.
+4. Re-read CURRENT PROJECT SOURCE.
+5. Return only the corrected patch.`
+
+    case domain.PatchErrorRepairFileDrift:
+    	return `ERROR CODE: repair_file_drift
+
+The previous repair changed the target file set.
+
+MANDATORY CORRECTION:
+1. Restore every original target file.
+2. Do not move the repair to another file.
+3. Correct the patch inside the original target.
+4. Do not introduce unrelated files.
+5. Return only corrected patch blocks.`
+
+    case domain.PatchErrorRepairProtocolDrift:
+    	return `ERROR CODE: repair_protocol_drift
+
+The previous patch repair escaped the active patch protocol.
+
+MANDATORY CORRECTION:
+1. Continue using the active patch protocol.
+2. Do not return a complete existing file.
+3. Return only SEARCH/REPLACE or REPLACE_ONLY blocks required by the protocol.
+4. Preserve the original repair target.
+5. Do not use full-file output as a workaround.`
+
+    case domain.PatchErrorSourceChanged:
+    	return `ERROR CODE: source_changed_since_patch_generation
+
+The source used to generate the patch is no longer identical to the current source.
+
+MANDATORY CORRECTION:
+1. Re-read CURRENT PROJECT SOURCE.
+2. Preserve the original target file and Symbol.
+3. Rebuild SEARCH from CURRENT PROJECT SOURCE.
+4. Do not apply the patch to stale source.
+5. Do not change the task scope.`
+
+    case domain.PatchErrorStaleSymbol:
+    	return `ERROR CODE: stale_symbol
+
+The target Symbol changed after the patch was generated.
+
+MANDATORY CORRECTION:
+1. KEEP THE SAME Symbol.
+2. Re-read CURRENT PROJECT SOURCE.
+3. Rebuild SEARCH/REPLACE against the current Symbol.
+4. Do not choose another Symbol merely because the old source fragment changed.
+5. Return only the corrected patch.`
 
 	case domain.PatchErrorNoOpPatch:
 		return `ERROR CODE: no_op_patch

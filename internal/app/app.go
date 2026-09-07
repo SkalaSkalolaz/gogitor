@@ -1591,6 +1591,8 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	var lastPatchContent string
 	patchAppliedSuccessfully := false
 	patchRepairPending := false
+    var lastRepairChanges []domain.FileChange
+    var lastRepairErrorCode domain.PatchErrorCode
 
 	// Оценка ETA для простых задач (не multi-agent подзадач).
 	if opts.ProgressItem == 0 && s.Stats != nil && emit != nil {
@@ -1653,6 +1655,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		allowFallback := false
 		usePatchPrompt := false
 		diffMatchingConfigLogged := false
+        repairAttempt := false
 
 		if i == 1 {
 			existingTargets := cc.ExistingTargets
@@ -1757,51 +1760,61 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				allowFallback = true
 			}
 
-		} else if (patchAppliedSuccessfully || patchRepairPending) &&
-			!forceFull &&
-			patchFixAttempts < maxPatchFixAttempts {
-			// ─── НОВОЕ: исправление патча вместо полного файла ─────
-			patchFixAttempts++
-			sendEvent(emit, domain.EventLog,
-				fmt.Sprintf("Patch applied but caused error. Requesting patch fix (attempt %d/%d)",
-					patchFixAttempts, maxPatchFixAttempts))
-			prompt = prompts.CodeFixPatchWithProtocol(
-				query,
-				originalContext,
-				lastPatchContent,
-				strings.Join(lastErrors, "\n"),
-				patchProtocol.String(),
-			)
-
-			if s.Cfg.DiffTrace {
-				errorCode :=
-					domain.PatchErrorCodeFromText(
-						strings.Join(
-							lastErrors,
-							"\n",
-						),
-					)
-
-				if errorCode != "" {
-					sendEvent(
-						emit,
-						domain.EventLog,
-						fmt.Sprintf(
-							"[DIFF] phase=REPAIR stage=CLASSIFY decision=TARGETED error_code=%s",
-							errorCode,
-						),
-					)
-				} else {
-					sendEvent(
-						emit,
-						domain.EventLog,
-						"[DIFF] phase=REPAIR stage=CLASSIFY decision=GENERIC",
-					)
-				}
-			}
-			usePatchPrompt = true
-			patchRepairPending = false
-			patchAppliedSuccessfully = false
+        } else if (patchAppliedSuccessfully || patchRepairPending) &&
+        	!forceFull &&
+        	patchFixAttempts < maxPatchFixAttempts {
+        
+        	repairAttempt = true
+        
+        	patchFixAttempts++
+        
+        	repairErrorCode :=
+        		domain.PatchErrorCodeFromText(
+        			strings.Join(
+        				lastErrors,
+        				"\n",
+        			),
+        		)
+        
+        	prompt = prompts.CodeFixPatchWithProtocol(
+        		query,
+        		originalContext,
+        		lastPatchContent,
+        		strings.Join(lastErrors, "\n"),
+        		patchProtocol.String(),
+        	)
+        
+        	if len(lastRepairChanges) > 0 {
+        		prompt +=
+        			"\n\n" +
+        				prompts.PatchRepairTargetLock(
+        					lastRepairChanges,
+        					repairErrorCode,
+        				)
+        	}
+        
+        	if s.Cfg.DiffTrace {
+        		if repairErrorCode != "" {
+        			sendEvent(
+        				emit,
+        				domain.EventLog,
+        				fmt.Sprintf(
+        					"[DIFF] phase=REPAIR stage=CLASSIFY decision=TARGETED error_code=%s",
+        					repairErrorCode,
+        				),
+        			)
+        		} else {
+        			sendEvent(
+        				emit,
+        				domain.EventLog,
+        				"[DIFF] phase=REPAIR stage=CLASSIFY decision=GENERIC",
+        			)
+        		}
+        	}
+        
+        	usePatchPrompt = true
+        	patchRepairPending = false
+        	patchAppliedSuccessfully = false
 		} else {
 			contextForFix := originalContext
 			if !forceFull && !patchAttempted && len(lastChanges) > 0 {
@@ -1941,6 +1954,91 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		)
 
 		patchModeChanges := hasPatches(changes)
+
+        if repairAttempt &&
+        	len(lastRepairChanges) > 0 {
+        
+        	if driftErr :=
+        		validateRepairTargetContract(
+        			lastRepairChanges,
+        			changes,
+        			lastRepairErrorCode,
+        		); driftErr != nil {
+        
+        		lastErrors = []string{
+        			driftErr.Error(),
+        		}
+        
+        		if s.Cfg.DiffTrace {
+        			sendEvent(
+        				emit,
+        				domain.EventLog,
+        				fmt.Sprintf(
+        					"[DIFF] phase=REPAIR stage=TARGET_GUARD decision=REJECT error_code=%s reason=%s",
+        					domain.PatchErrorCodeFromError(
+        						driftErr,
+        					),
+        					strings.ReplaceAll(
+        						driftErr.Error(),
+        						"\n",
+        						" ",
+        					),
+        				),
+        			)
+        		}
+        
+        		if patchFixAttempts >=
+        			maxPatchFixAttempts {
+        
+        			result.Success = false
+        			result.Errors =
+        				append(
+        					result.Errors,
+        					driftErr.Error(),
+        				)
+        
+        			break
+        		}
+        
+        		patchRepairPending = true
+        		continue
+        	}
+        
+        	if fullRewritePath :=
+        		s.repairHasExistingFullRewrite(
+        			changes,
+        		); fullRewritePath != "" {
+        
+        		driftErr :=
+        			domain.NewPatchError(
+        				domain.PatchErrorRepairProtocolDrift,
+        				fmt.Sprintf(
+        					"repair returned a full-file rewrite for existing target %q instead of a patch",
+        					fullRewritePath,
+        				),
+        			)
+        
+        		lastErrors = []string{
+        			driftErr.Error(),
+        		}
+        
+        		if patchFixAttempts >=
+        			maxPatchFixAttempts {
+        
+        			result.Success = false
+        			result.Errors =
+        				append(
+        					result.Errors,
+        					driftErr.Error(),
+        				)
+        
+        			break
+        		}
+        
+        		patchRepairPending = true
+        		continue
+        	}
+        }
 		if len(changes) == 0 {
 			if usePatchPrompt {
 				lastErrors = []string{
@@ -1998,6 +2096,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		if err := codegen.Validate(changes, s.Cfg.WorkDir); err != nil {
 			lastErrors = []string{err.Error()}
+        	if usePatchPrompt {
+        		rememberRejectedPatch(
+        			&lastRepairChanges,
+        			&lastRepairErrorCode,
+        			changes,
+        			err.Error(),
+        		)
+        	}
 
 			if usePatchPrompt && s.Cfg.DiffTrace {
 				reason := strings.TrimSpace(err.Error())
@@ -2144,6 +2250,15 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			errMsg := preflightErr.Error()
 			lastErrors = []string{errMsg}
 
+            if usePatchPrompt {
+            	rememberRejectedPatch(
+            		&lastRepairChanges,
+            		&lastRepairErrorCode,
+            		changes,
+            		errMsg,
+            	)
+            }
+
 			if s.Cfg.DiffTrace {
 				errorCode :=
 					domain.PatchErrorCodeFromText(errMsg)
@@ -2242,9 +2357,19 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 						)
 				}
 
-				lastErrors = []string{msg}
-				patchRepairPending = true
-				continue
+                lastErrors = []string{
+                	msg,
+                }
+                
+                rememberRejectedPatch(
+                	&lastRepairChanges,
+                	&lastRepairErrorCode,
+                	changes,
+                	msg,
+                )
+                
+                patchRepairPending = true
+                continue
 			}
 
 			sendEvent(
@@ -2265,6 +2390,12 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			lastErrors = []string{err.Error()}
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
+                    rememberRejectedPatch(
+                    	&lastRepairChanges,
+                    	&lastRepairErrorCode,
+                    	changes,
+                    	err.Error(),
+                    )
 					patchRepairPending = true
 					sendEvent(
 						emit,
@@ -2354,6 +2485,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 							lastErrors,
 							research,
 						)
+                        if patchModeChanges {
+                        	rememberRejectedPatch(
+                        		&lastRepairChanges,
+                        		&lastRepairErrorCode,
+                        		changes,
+                        		buildError,
+                        	)
+                        }
 					}
 				}
 			}
@@ -2577,6 +2716,18 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					formatTestFeedback(tests, err),
 				}
 
+
+                if patchModeChanges {
+                	rememberRejectedPatch(
+                		&lastRepairChanges,
+                		&lastRepairErrorCode,
+                		changes,
+                		strings.Join(
+                			lastErrors,
+                			"\n",
+                		),
+                	)
+                }
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
@@ -2602,6 +2753,18 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					runner.FormatFeedback(tests),
 				}
 
+
+                if patchModeChanges {
+                	rememberRejectedPatch(
+                		&lastRepairChanges,
+                		&lastRepairErrorCode,
+                		changes,
+                		strings.Join(
+                			lastErrors,
+                			"\n",
+                		),
+                	)
+                }
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
@@ -2648,6 +2811,12 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					effectivenessErr.Error(),
 				}
 
+                rememberRejectedPatch(
+                	&lastRepairChanges,
+                	&lastRepairErrorCode,
+                	changes,
+                	effectivenessErr.Error(),
+                )
 				if s.Cfg.DiffTrace {
 					sendEvent(
 						emit,
@@ -2746,6 +2915,12 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					).Error(),
 				}
 
+                rememberRejectedPatch(
+                	&lastRepairChanges,
+                	&lastRepairErrorCode,
+                	changes,
+                	reason,
+                )
 				if s.Cfg.DiffTrace {
 					sendEvent(
 						emit,

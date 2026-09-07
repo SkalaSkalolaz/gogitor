@@ -133,9 +133,11 @@ func applyOnePatchWithPolicyCoreChecked(
 					"expected source hash does not match original file",
 				)
 
-				return "", fmt.Errorf(
-					"expected source hash does not match original file",
-				)
+                return "", domain.NewPatchError(
+                	domain.PatchErrorSourceChanged,
+                	"expected source hash does not match original file",
+                )
+
 			}
 
 			trace.emit(
@@ -272,11 +274,14 @@ func applyOnePatchWithPolicyCoreChecked(
         
         		return updated, nil
         	}
-        
-        	return "", fmt.Errorf(
-        		"symbol %q could not be resolved safely",
-        		p.Symbol,
-        	)
+            return "", domain.NewPatchError(
+            	domain.PatchErrorStaleSymbol,
+            	fmt.Sprintf(
+            		"symbol %q changed since patch generation",
+            		p.Symbol,
+            	),
+            )
+
         }
 
 		trace.emit(
@@ -451,53 +456,38 @@ func applyOnePatchWithPolicyCoreChecked(
 		)
 	}
 
-	// ------------------------------------------------------------
-	// FILE-SCOPED PATCH
-	// ------------------------------------------------------------
-	updated, matched, err :=
-		applyPatchTextCore(
-			content,
-			search,
-			replace,
-			policy,
-			minConfidenceOverride,
-			matching,
-			trace,
-		)
-	if err != nil {
-		trace.emit(
-			"APPLY",
-			"REJECT",
-			"error=%q",
-			err.Error(),
-		)
-
-		return "", err
-	}
-
-	if !matched {
-		trace.emit(
-			"APPLY",
-			"MISS",
-			"SEARCH block not found",
-		)
-
-		return "", fmt.Errorf(
-			"SEARCH block not found",
-		)
-	}
-
-	trace.emit(
-		"APPLY",
-		"OK",
-		"method=%s start=%d",
-		trace.method,
-		trace.startLine,
-	)
-
-	return updated, nil
+    // ------------------------------------------------------------
+    // FILE-SCOPED PATCH
+    // ------------------------------------------------------------
+    updated, matched, err :=
+        applyPatchTextCore(
+            content,
+            search,
+            replace,
+            policy,
+            minConfidenceOverride,
+            matching,
+            trace,
+        )
+    if err != nil {
+        return "", err
+    }
+    if matched {
+        result, _, finishErr :=
+            finishPatchResult(
+                content,
+                updated,
+                trace,
+            )
+        if finishErr != nil {
+            return "", finishErr
+        }
+        return result, nil
+    }
+    return "", fmt.Errorf(
+        "SEARCH block not found in file content",
+    )
 }
-
 func isSafeSymbolRecoveryMethod(
 	method string,
 ) bool {
@@ -515,12 +505,6 @@ func isSafeSymbolRecoveryMethod(
 	}
 }
 
-// finishPatchResult проверяет, привёл ли успешно найденный
-// SEARCH/REPLACE к реальному изменению содержимого.
-//
-// Это отдельная защита от no-op patch:
-// SEARCH и REPLACE могут быть формально валидными,
-// но итоговый файл может остаться полностью неизменным.
 func finishPatchResult(
 	original string,
 	updated string,
@@ -534,13 +518,18 @@ func finishPatchResult(
 				"error_code=no_op_patch replacement produced no effective change",
 			)
 		}
-
 		return "", false, domain.NewPatchError(
 			domain.PatchErrorNoOpPatch,
 			"patch produced no effective change",
 		)
 	}
-
+	if trace != nil {
+		trace.emit(
+			"APPLY",
+			"OK",
+			"",
+		)
+	}
 	return updated, true, nil
 }
 

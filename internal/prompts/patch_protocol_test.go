@@ -3,7 +3,45 @@ package prompts
 import (
 	"strings"
 	"testing"
+
+    "gogitor/internal/domain"
 )
+
+func TestPatchRepairTargetLock(t *testing.T) {
+	prompt :=
+		PatchRepairTargetLock(
+			[]domain.FileChange{
+				{
+					Path: "internal/repository/paste.go",
+					Patches: []domain.Patch{
+						{
+							Symbol: "Store",
+						},
+					},
+				},
+			},
+			domain.PatchErrorSearchOutsideSymbol,
+		)
+
+	for _, want := range []string{
+		"REPAIR TARGET LOCK",
+		"internal/repository/paste.go",
+		"Symbol: Store",
+		"KEEP Symbol",
+		"Do NOT replace the Symbol",
+		"search_outside_symbol",
+	} {
+		if !strings.Contains(
+			strings.ToLower(prompt),
+			strings.ToLower(want),
+		) {
+			t.Fatalf(
+				"prompt missing %q",
+				want,
+			)
+		}
+	}
+}
 
 func TestCodeFixPatch_NoOpRepairGuidance(
 	t *testing.T,
