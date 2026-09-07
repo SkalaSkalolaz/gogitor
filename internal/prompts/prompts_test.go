@@ -7,6 +7,33 @@ import (
 	"gogitor/internal/domain"
 )
 
+func TestPlanFullWithApproachAtomicityRules(
+	t *testing.T,
+) {
+	prompt :=
+		PlanFullWithApproach(
+			"refactor handlers",
+			"Handler -> Service -> Repository",
+			"",
+		)
+
+	for _, want := range []string{
+		"Each subtask must contain exactly ONE code or file operation",
+		"split them into separate subtasks",
+		"two independent functions or methods",
+	} {
+		if !strings.Contains(
+			prompt,
+			want,
+		) {
+			t.Fatalf(
+				"PlanFullWithApproach() missing %q",
+				want,
+			)
+		}
+	}
+}
+
 func TestCodeCreate(t *testing.T) {
 	p := CodeCreate("create hello world", "")
 	for _, kw := range []string{"senior Go engineer", "create hello world", "--- File:"} {

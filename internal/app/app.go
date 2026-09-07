@@ -1503,6 +1503,233 @@ func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, e
 	}
 }
 
+type patchRepairState struct {
+	Active bool
+
+	// Неизменяемая исходная точка repair-цикла.
+	// Используется для target lock.
+	OriginalChanges []domain.FileChange
+	OriginalPatch   string
+	OriginalCode    domain.PatchErrorCode
+	OriginalError   string
+
+	// Последний разобранный patch, который можно предъявить
+	// LLM как предыдущую попытку ремонта.
+	LastRejectedChanges []domain.FileChange
+	LastRejectedPatch   string
+
+	// Последняя содержательная причина отказа.
+	// Невалидный ответ LLM НЕ должен её уничтожать.
+	CurrentCode  domain.PatchErrorCode
+	CurrentError string
+
+	// Последний ответ модели оказался вообще не patch-ответом.
+	LastResponseInvalid    bool
+	LastResponseErrorText  string
+}
+
+func (r *patchRepairState) rememberRejectedCandidate(
+	changes []domain.FileChange,
+	patchContent string,
+	errorText string,
+) {
+	if len(changes) == 0 {
+		return
+	}
+
+	patchContent = strings.TrimSpace(patchContent)
+	errorText = strings.TrimSpace(errorText)
+
+	code := domain.PatchErrorCodeFromText(errorText)
+
+	if !r.Active {
+		r.Active = true
+
+		r.OriginalChanges =
+			cloneRepairChanges(changes)
+
+		r.OriginalPatch =
+			patchContent
+
+		r.OriginalCode =
+			code
+
+		r.OriginalError =
+			errorText
+	}
+
+	// Последний реально разобранный patch.
+	r.LastRejectedChanges =
+		cloneRepairChanges(changes)
+
+	if patchContent != "" {
+		r.LastRejectedPatch =
+			patchContent
+	}
+
+	// Последняя содержательная ошибка.
+	// Пустой code допустим для build/test/general errors.
+	r.CurrentCode =
+		code
+
+	if errorText != "" {
+		r.CurrentError =
+			errorText
+	}
+
+	r.LastResponseInvalid = false
+	r.LastResponseErrorText = ""
+}
+
+func (r *patchRepairState) noteInvalidResponse(
+	errorText string,
+) {
+	if !r.Active {
+		return
+	}
+
+	r.LastResponseInvalid = true
+	r.LastResponseErrorText =
+		truncate(
+			strings.TrimSpace(errorText),
+			2000,
+		)
+
+	// КРИТИЧНО:
+	// CurrentCode и CurrentError здесь НЕ меняются.
+	//
+	// Например:
+	//
+	// no_op_patch
+	//      ↓
+	// repair model returned garbage
+	//
+	// После этого код всё ещё должен помнить:
+	// CurrentCode = no_op_patch
+}
+
+func (r *patchRepairState) setCurrentError(
+	errorText string,
+) {
+	errorText = strings.TrimSpace(errorText)
+	if errorText == "" {
+		return
+	}
+
+	r.CurrentError = errorText
+	r.CurrentCode =
+		domain.PatchErrorCodeFromText(errorText)
+}
+
+func (r *patchRepairState) repairCode() domain.PatchErrorCode {
+	if r.CurrentCode != "" {
+		return r.CurrentCode
+	}
+
+	return r.OriginalCode
+}
+
+func (r *patchRepairState) repairError() string {
+	if strings.TrimSpace(r.CurrentError) != "" {
+		return r.CurrentError
+	}
+
+	return r.OriginalError
+}
+
+func (r *patchRepairState) repairPatch() string {
+	if strings.TrimSpace(r.LastRejectedPatch) != "" {
+		return r.LastRejectedPatch
+	}
+
+	return r.OriginalPatch
+}
+
+func (r *patchRepairState) recoveryContext() string {
+	if !r.Active {
+		return ""
+	}
+
+	var b strings.Builder
+
+	b.WriteString("=== PATCH REPAIR RECOVERY CONTEXT ===\n")
+	b.WriteString(
+		"This context belongs to a previous failed repair attempt.\n",
+	)
+	b.WriteString(
+		"Do not discard it merely because the immediately previous model response was invalid.\n\n",
+	)
+
+	if r.OriginalCode != "" {
+		fmt.Fprintf(
+			&b,
+			"ORIGINAL ERROR CODE: %s\n",
+			r.OriginalCode,
+		)
+	}
+
+	if strings.TrimSpace(r.OriginalError) != "" {
+		b.WriteString("ORIGINAL ERROR:\n")
+		b.WriteString(
+			truncate(r.OriginalError, 4000),
+		)
+		b.WriteString("\n\n")
+	}
+
+	currentCode := r.repairCode()
+	if currentCode != "" &&
+		currentCode != r.OriginalCode {
+		fmt.Fprintf(
+			&b,
+			"CURRENT ERROR CODE: %s\n",
+			currentCode,
+		)
+	}
+
+	currentError := r.repairError()
+	if strings.TrimSpace(currentError) != "" &&
+		currentError != r.OriginalError {
+		b.WriteString("CURRENT ERROR:\n")
+		b.WriteString(
+			truncate(currentError, 4000),
+		)
+		b.WriteString("\n\n")
+	}
+
+	if patch := r.repairPatch(); patch != "" {
+		b.WriteString("LAST REJECTED PATCH:\n")
+		b.WriteString(
+			truncate(patch, 12000),
+		)
+		b.WriteString("\n\n")
+	}
+
+	if r.LastResponseInvalid &&
+		strings.TrimSpace(r.LastResponseErrorText) != "" {
+
+		b.WriteString(
+			"IMPORTANT: The immediately previous repair response was invalid and was NOT a valid patch.\n",
+		)
+		b.WriteString(
+			"That invalid response must NOT replace the last rejected patch shown above.\n",
+		)
+		b.WriteString(
+			"INVALID RESPONSE DIAGNOSTIC:\n",
+		)
+		b.WriteString(
+			r.LastResponseErrorText,
+		)
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString("=== END PATCH REPAIR RECOVERY CONTEXT ===")
+
+	return textutil.TruncateStringBytes(
+		b.String(),
+		30000,
+	)
+}
+
 func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	if agent.RoleFromContext(ctx) == agent.RoleDefault {
 		ctx = agent.WithRole(ctx, agent.RoleCoder)
@@ -1588,12 +1815,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 	if patchPolicy == workspace.PatchPolicyStrict {
 		maxPatchFixAttempts = 4
 	}
-	var lastPatchContent string
-	patchAppliedSuccessfully := false
-	patchRepairPending := false
-    var lastRepairChanges []domain.FileChange
-    var lastRepairErrorCode domain.PatchErrorCode
 
+    var lastPatchContent string
+    
+    patchAppliedSuccessfully := false
+    patchRepairPending := false
+    
+    var repairState patchRepairState
 	// Оценка ETA для простых задач (не multi-agent подзадач).
 	if opts.ProgressItem == 0 && s.Stats != nil && emit != nil {
 		simpleETA := s.Stats.estimateSubtask(query, false)
@@ -1765,32 +1993,57 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
         	patchFixAttempts < maxPatchFixAttempts {
         
         	repairAttempt = true
-        
         	patchFixAttempts++
         
         	repairErrorCode :=
-        		domain.PatchErrorCodeFromText(
+        		repairState.repairCode()
+        
+        	repairErrorText :=
+        		repairState.repairError()
+        
+        	repairPatchContent :=
+        		repairState.repairPatch()
+        
+        	// Fallback только для случаев, когда repair state ещё
+        	// не был создан. Например, первый ответ LLM вообще
+        	// не содержал ни одного patch-блока.
+        	if repairErrorText == "" {
+        		repairErrorText =
         			strings.Join(
         				lastErrors,
         				"\n",
-        			),
-        		)
+        			)
+        	}
+        
+        	if repairPatchContent == "" {
+        		repairPatchContent =
+        			lastPatchContent
+        	}
         
         	prompt = prompts.CodeFixPatchWithProtocol(
         		query,
         		originalContext,
-        		lastPatchContent,
-        		strings.Join(lastErrors, "\n"),
+        		repairPatchContent,
+        		repairErrorText,
         		patchProtocol.String(),
         	)
         
-        	if len(lastRepairChanges) > 0 {
+        	if len(repairState.OriginalChanges) > 0 {
         		prompt +=
         			"\n\n" +
         				prompts.PatchRepairTargetLock(
-        					lastRepairChanges,
+        					repairState.OriginalChanges,
         					repairErrorCode,
         				)
+        	}
+        
+        	if recoveryContext :=
+        		repairState.recoveryContext();
+        		strings.TrimSpace(recoveryContext) != "" {
+        
+        		prompt +=
+        			"\n\n" +
+        				recoveryContext
         	}
         
         	if s.Cfg.DiffTrace {
@@ -1815,6 +2068,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
         	usePatchPrompt = true
         	patchRepairPending = false
         	patchAppliedSuccessfully = false
+        
 		} else {
 			contextForFix := originalContext
 			if !forceFull && !patchAttempted && len(lastChanges) > 0 {
@@ -1922,9 +2176,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			continue
 		}
 
-		if usePatchPrompt {
-			lastPatchContent = strings.TrimSpace(response)
-		}
+        if usePatchPrompt {
+        	lastPatchContent = ""
+        }
 
 		var changes []domain.FileChange
 
@@ -1939,6 +2193,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				allowFallback,
 			)
 		}
+
+        if usePatchPrompt &&
+        	hasPatches(changes) {
+        
+        	lastPatchContent =
+        		strings.TrimSpace(response)
+        }
 
 		if s.Cfg.DiffTrace && usePatchPrompt {
 			emitParsedDiffTrace(
@@ -1955,116 +2216,141 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		patchModeChanges := hasPatches(changes)
 
-        if repairAttempt &&
-        	len(lastRepairChanges) > 0 {
-        
-        	if driftErr :=
-        		validateRepairTargetContract(
-        			lastRepairChanges,
-        			changes,
-        			lastRepairErrorCode,
-        		); driftErr != nil {
-        
-        		lastErrors = []string{
-        			driftErr.Error(),
-        		}
-        
-        		if s.Cfg.DiffTrace {
-        			sendEvent(
-        				emit,
-        				domain.EventLog,
-        				fmt.Sprintf(
-        					"[DIFF] phase=REPAIR stage=TARGET_GUARD decision=REJECT error_code=%s reason=%s",
-        					domain.PatchErrorCodeFromError(
-        						driftErr,
-        					),
-        					strings.ReplaceAll(
-        						driftErr.Error(),
-        						"\n",
-        						" ",
-        					),
-        				),
-        			)
-        		}
-        
-        		if patchFixAttempts >=
-        			maxPatchFixAttempts {
-        
-        			result.Success = false
-        			result.Errors =
-        				append(
-        					result.Errors,
-        					driftErr.Error(),
-        				)
-        
-        			break
-        		}
-        
-        		patchRepairPending = true
-        		continue
-        	}
-        
-        	if fullRewritePath :=
-        		s.repairHasExistingFullRewrite(
-        			changes,
-        		); fullRewritePath != "" {
-        
-        		driftErr :=
-        			domain.NewPatchError(
-        				domain.PatchErrorRepairProtocolDrift,
-        				fmt.Sprintf(
-        					"repair returned a full-file rewrite for existing target %q instead of a patch",
-        					fullRewritePath,
-        				),
-        			)
-        
-        		lastErrors = []string{
-        			driftErr.Error(),
-        		}
-        
-        		if patchFixAttempts >=
-        			maxPatchFixAttempts {
-        
-        			result.Success = false
-        			result.Errors =
-        				append(
-        					result.Errors,
-        					driftErr.Error(),
-        				)
-        
-        			break
-        		}
-        
-        		patchRepairPending = true
-        		continue
-        	}
-        }
-		if len(changes) == 0 {
-			if usePatchPrompt {
+
+		if repairAttempt &&
+			repairState.Active &&
+			len(changes) > 0 {
+
+			if driftErr :=
+				validateRepairTargetContract(
+					repairState.OriginalChanges,
+					changes,
+					repairState.repairCode(),
+				); driftErr != nil {
+
+				repairState.setCurrentError(
+					driftErr.Error(),
+				)
+
 				lastErrors = []string{
-					"LLM did not return a valid SEARCH/REPLACE patch. Expected format: --- Patch: path --- with SEARCH/REPLACE blocks.",
+					driftErr.Error(),
 				}
 
-				if patchFixAttempts < maxPatchFixAttempts {
-					patchRepairPending = true
-
+				if s.Cfg.DiffTrace {
 					sendEvent(
 						emit,
-						domain.EventWarn,
-						"Patch repair required: model did not return a valid patch.",
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=REPAIR stage=TARGET_GUARD decision=REJECT error_code=%s reason=%s",
+							domain.PatchErrorCodeFromError(
+								driftErr,
+							),
+							strings.ReplaceAll(
+								driftErr.Error(),
+								"\n",
+								" ",
+							),
+						),
 					)
-				} else {
-					forceFull = true
 				}
 
+				if patchFixAttempts >=
+					maxPatchFixAttempts {
+
+					result.Success = false
+					result.Errors = append(
+						result.Errors,
+						driftErr.Error(),
+					)
+
+					break
+				}
+
+				patchRepairPending = true
 				continue
 			}
 
-			lastErrors = []string{
-				"LLM did not return file blocks. Expected format: --- File: path ---",
+			if fullRewritePath :=
+				s.repairHasExistingFullRewrite(
+					changes,
+				); fullRewritePath != "" {
+
+				driftErr :=
+					domain.NewPatchError(
+						domain.PatchErrorRepairProtocolDrift,
+						fmt.Sprintf(
+							"repair returned a full-file rewrite for existing target %q instead of a patch",
+							fullRewritePath,
+						),
+					)
+
+				repairState.setCurrentError(
+					driftErr.Error(),
+				)
+
+				lastErrors = []string{
+					driftErr.Error(),
+				}
+
+				if patchFixAttempts >=
+					maxPatchFixAttempts {
+
+					result.Success = false
+					result.Errors = append(
+						result.Errors,
+						driftErr.Error(),
+					)
+
+					break
+				}
+
+				patchRepairPending = true
+				continue
 			}
-			continue
 		}
+
+        if len(changes) == 0 {
+        	if usePatchPrompt {
+        
+        		invalidPatchError :=
+        			"LLM did not return a valid SEARCH/REPLACE patch. Expected format: --- Patch: path --- with SEARCH/REPLACE blocks."
+        
+        		if repairState.Active {
+        			repairState.noteInvalidResponse(
+        				invalidPatchError,
+        			)
+        
+        			// Не уничтожаем основную причину предыдущего отказа.
+        			lastErrors = []string{
+        				repairState.repairError(),
+        				invalidPatchError,
+        			}
+        		} else {
+        			lastErrors = []string{
+        				invalidPatchError,
+        			}
+        		}
+        
+        		if patchFixAttempts < maxPatchFixAttempts {
+        			patchRepairPending = true
+        
+        			sendEvent(
+        				emit,
+        				domain.EventWarn,
+        				"Patch repair required: model did not return a valid patch.",
+        			)
+        		} else {
+        			forceFull = true
+        		}
+        
+        		continue
+        	}
+        
+        	lastErrors = []string{
+        		"LLM did not return file blocks. Expected format: --- File: path ---",
+        	}
+        	continue
+        }
 
 		// Patch можно применять только к существующим файлам.
 		if patchModeChanges {
@@ -2096,13 +2382,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		if err := codegen.Validate(changes, s.Cfg.WorkDir); err != nil {
 			lastErrors = []string{err.Error()}
-        	if usePatchPrompt {
-        		rememberRejectedPatch(
-        			&lastRepairChanges,
-        			&lastRepairErrorCode,
-        			changes,
+        	if usePatchPrompt && hasPatches(changes) {
+                repairState.rememberRejectedCandidate(
+                	changes,
+                	lastPatchContent,
         			err.Error(),
         		)
+
         	}
 
 			if usePatchPrompt && s.Cfg.DiffTrace {
@@ -2250,11 +2536,10 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			errMsg := preflightErr.Error()
 			lastErrors = []string{errMsg}
 
-            if usePatchPrompt {
-            	rememberRejectedPatch(
-            		&lastRepairChanges,
-            		&lastRepairErrorCode,
-            		changes,
+            if usePatchPrompt && hasPatches(changes){
+                repairState.rememberRejectedCandidate(
+                	changes,
+                	lastPatchContent,
             		errMsg,
             	)
             }
@@ -2349,25 +2634,28 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				_ = os.RemoveAll(sandbox)
 
 				msg := "Patch Auditor rejected generated patch"
-				if len(audit.CriticalIssues) > 0 {
-					msg += ": " +
-						strings.Join(
-							audit.CriticalIssues,
-							"; ",
-						)
-				}
-
-                lastErrors = []string{
-                	msg,
+                auditErrorText :=
+                	msg
+                
+                if len(audit.CriticalIssues) > 0 {
+                	auditErrorText +=
+                		": " +
+                		strings.Join(
+                			audit.CriticalIssues,
+                			"; ",
+                		)
                 }
                 
-                rememberRejectedPatch(
-                	&lastRepairChanges,
-                	&lastRepairErrorCode,
-                	changes,
-                	msg,
-                )
+                lastErrors = []string{
+                	auditErrorText,
+                }
                 
+                repairState.rememberRejectedCandidate(
+                	changes,
+                	lastPatchContent,
+                	auditErrorText,
+                )
+
                 patchRepairPending = true
                 continue
 			}
@@ -2390,10 +2678,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			lastErrors = []string{err.Error()}
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
-                    rememberRejectedPatch(
-                    	&lastRepairChanges,
-                    	&lastRepairErrorCode,
+                    repairState.rememberRejectedCandidate(
                     	changes,
+                    	lastPatchContent,
                     	err.Error(),
                     )
 					patchRepairPending = true
@@ -2486,10 +2773,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 							research,
 						)
                         if patchModeChanges {
-                        	rememberRejectedPatch(
-                        		&lastRepairChanges,
-                        		&lastRepairErrorCode,
-                        		changes,
+                            repairState.rememberRejectedCandidate(
+                            	changes,
+                            	lastPatchContent,
                         		buildError,
                         	)
                         }
@@ -2718,10 +3004,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 
                 if patchModeChanges {
-                	rememberRejectedPatch(
-                		&lastRepairChanges,
-                		&lastRepairErrorCode,
-                		changes,
+                    repairState.rememberRejectedCandidate(
+                    	changes,
+                    	lastPatchContent,
                 		strings.Join(
                 			lastErrors,
                 			"\n",
@@ -2755,10 +3040,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 
                 if patchModeChanges {
-                	rememberRejectedPatch(
-                		&lastRepairChanges,
-                		&lastRepairErrorCode,
-                		changes,
+                    repairState.rememberRejectedCandidate(
+                    	changes,
+                    	lastPatchContent,
                 		strings.Join(
                 			lastErrors,
                 			"\n",
@@ -2810,11 +3094,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				lastErrors = []string{
 					effectivenessErr.Error(),
 				}
-
-                rememberRejectedPatch(
-                	&lastRepairChanges,
-                	&lastRepairErrorCode,
+                repairState.rememberRejectedCandidate(
                 	changes,
+                	lastPatchContent,
                 	effectivenessErr.Error(),
                 )
 				if s.Cfg.DiffTrace {
@@ -2914,11 +3196,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 						reason,
 					).Error(),
 				}
-
-                rememberRejectedPatch(
-                	&lastRepairChanges,
-                	&lastRepairErrorCode,
+                repairState.rememberRejectedCandidate(
                 	changes,
+                	lastPatchContent,
                 	reason,
                 )
 				if s.Cfg.DiffTrace {
@@ -3045,12 +3325,28 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		}
 		return result
 	}
-	result.Success = false
-	if len(lastErrors) == 0 {
-		lastErrors = []string{"unknown error"}
-	}
-	result.Errors = append(result.Errors, lastErrors...)
-	return result
+
+    result.Success = false
+    
+    if len(lastErrors) == 0 {
+    	lastErrors = []string{
+    		"unknown error",
+    	}
+    }
+    
+    result.Errors =
+    	append(
+    		result.Errors,
+    		lastErrors...,
+    	)
+    
+    if repairState.Active {
+    	result.PatchRepairContext =
+    		repairState.recoveryContext()
+    }
+    
+    return result
+
 }
 
 // formatPatchContent форматирует патчи для передачи в промпт исправления.

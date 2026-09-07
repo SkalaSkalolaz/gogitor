@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"regexp"
+	"sort"
 
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
@@ -65,6 +67,322 @@ type rawAgentReview struct {
 	Approved       bool  `json:"approved"`
 	CriticalIssues []any `json:"critical_issues"`
 	Suggestions    []any `json:"suggestions"`
+}
+
+type agentTaskSymbolSpan struct {
+	Name  string
+	Start int
+	End   int
+}
+
+func sourceFunctionNames(
+	source string,
+) map[string]bool {
+
+	names := make(map[string]bool)
+
+	re :=
+		regexp.MustCompile(
+			`(?m)^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
+		)
+
+	matches :=
+		re.FindAllStringSubmatch(source, -1)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+
+		name :=
+			strings.TrimSpace(match[1])
+
+		if name != "" {
+			names[name] = true
+		}
+	}
+
+	return names
+}
+
+func taskSymbolSpans(
+	task string,
+	names map[string]bool,
+) []agentTaskSymbolSpan {
+
+	var spans []agentTaskSymbolSpan
+	seen := make(map[string]bool)
+
+	for name := range names {
+		if seen[name] {
+			continue
+		}
+
+		re :=
+			regexp.MustCompile(
+				`\b` +
+					regexp.QuoteMeta(name) +
+					`\b`,
+			)
+
+		locs :=
+			re.FindAllStringIndex(
+				task,
+				-1,
+			)
+
+		for _, loc := range locs {
+			if len(loc) != 2 {
+				continue
+			}
+
+			spans = append(
+				spans,
+				agentTaskSymbolSpan{
+					Name:  name,
+					Start: loc[0],
+					End:   loc[1],
+				},
+			)
+		}
+
+		if len(locs) > 0 {
+			seen[name] = true
+		}
+	}
+
+	sort.Slice(
+		spans,
+		func(i, j int) bool {
+			return spans[i].Start <
+				spans[j].Start
+		},
+	)
+
+	return spans
+}
+
+func isAtomicTaskJoiner(
+	text string,
+) bool {
+
+	text =
+		strings.ToLower(
+			strings.TrimSpace(text),
+		)
+
+	text =
+		strings.Trim(
+			text,
+			" \t\r\n,;+&",
+		)
+
+	switch text {
+	case "":
+		return true
+
+	case "and":
+		return true
+
+	case "и":
+		return true
+	}
+
+	return false
+}
+
+func splitCompoundAgentSubtask(
+	sub fullPlanSubtask,
+	source string,
+) []fullPlanSubtask {
+
+	task :=
+		strings.TrimSpace(
+			sub.Task,
+		)
+
+	if task == "" {
+		return []fullPlanSubtask{sub}
+	}
+
+	names :=
+		sourceFunctionNames(source)
+
+	if len(names) < 2 {
+		return []fullPlanSubtask{sub}
+	}
+
+	spans :=
+		taskSymbolSpans(
+			task,
+			names,
+		)
+
+	if len(spans) < 2 {
+		return []fullPlanSubtask{sub}
+	}
+
+	// Удаляем повторные упоминания одного и того же
+	// символа из рассмотрения.
+	var unique []agentTaskSymbolSpan
+	seen := make(map[string]bool)
+
+	for _, span := range spans {
+		if seen[span.Name] {
+			continue
+		}
+
+		seen[span.Name] = true
+		unique = append(
+			unique,
+			span,
+		)
+	}
+
+	if len(unique) < 2 {
+		return []fullPlanSubtask{sub}
+	}
+
+	for i := 1; i < len(unique); i++ {
+		gap :=
+			task[unique[i-1].End: unique[i].Start]
+
+		if !isAtomicTaskJoiner(gap) {
+			return []fullPlanSubtask{sub}
+		}
+	}
+
+	prefix :=
+		strings.TrimSpace(
+			task[:unique[0].Start],
+		)
+
+	suffix :=
+		strings.TrimSpace(
+			task[unique[len(unique)-1].End:],
+		)
+
+	out :=
+		make(
+			[]fullPlanSubtask,
+			0,
+			len(unique),
+		)
+
+	for _, span := range unique {
+		parts := make([]string, 0, 3)
+
+		if prefix != "" {
+			parts = append(parts, prefix)
+		}
+
+		parts = append(
+			parts,
+			span.Name,
+		)
+
+		if suffix != "" {
+			parts = append(
+				parts,
+				suffix,
+			)
+		}
+
+		out = append(
+			out,
+			fullPlanSubtask{
+				Task: strings.Join(parts, " "),
+				Acceptance: append(
+					[]string(nil),
+					sub.Acceptance...,
+				),
+				NeedsSearch: sub.NeedsSearch,
+			},
+		)
+	}
+
+	return out
+}
+
+func (s *Service) enforceAtomicAgentPlan(
+	plan *fullPlan,
+	originalTask string,
+	emit func(domain.Event),
+) *fullPlan {
+
+	if plan == nil ||
+		len(plan.Subtasks) == 0 {
+		return plan
+	}
+
+	source :=
+		s.buildFreshAgentSubtaskContext(
+			originalTask,
+		)
+
+	if strings.TrimSpace(source) == "" {
+		return plan
+	}
+
+	maxSubtasks :=
+		s.agentModelCapabilities().MaxSubtasks
+
+	out :=
+		make(
+			[]fullPlanSubtask,
+			0,
+			len(plan.Subtasks),
+		)
+
+	for _, sub := range plan.Subtasks {
+
+		parts :=
+			splitCompoundAgentSubtask(
+				sub,
+				source,
+			)
+
+		if len(parts) <= 1 {
+			out = append(out, sub)
+			continue
+		}
+
+		// Не нарушаем configured max subtasks.
+		if maxSubtasks > 0 &&
+			len(out)+len(parts) > maxSubtasks {
+
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				fmt.Sprintf(
+					"Compound Agent subtask kept because splitting would exceed max subtasks: %s",
+					sub.Task,
+				),
+			)
+
+			out = append(out, sub)
+			continue
+		}
+
+		sendEvent(
+			emit,
+			domain.EventLog,
+			fmt.Sprintf(
+				"Split compound Agent subtask into %d atomic subtasks: %s",
+				len(parts),
+				sub.Task,
+			),
+		)
+
+		out = append(
+			out,
+			parts...,
+		)
+	}
+
+	plan.Subtasks = out
+
+	return plan
 }
 
 func hashAgentContext(s string) string {
@@ -788,6 +1106,24 @@ func (s *Service) executeAgentFull(
 			emit,
 		)
 	}
+
+    plan =
+    	s.enforceAtomicAgentPlan(
+    		plan,
+    		query,
+    		emit,
+    	)
+    
+    plan =
+    	validateAgentPlan(
+    		plan,
+    		query,
+    	)
+    
+    plan =
+    	s.limitAgentPlan(
+    		plan,
+    	)
 	if session != nil {
 		if err := saveAgentPlan(
 			session,
@@ -1081,6 +1417,7 @@ func (s *Service) executeAgentFull(
 		}
 
 		var res domain.Result
+        var previousAttemptRepairContext string
 
 		for attempt := 1; attempt <= maxAgentSubtaskAttempts; attempt++ {
 			if attempt > 1 {
@@ -1115,18 +1452,48 @@ func (s *Service) executeAgentFull(
 				}
 			}
 
-			res = s.executeSimple(
-				subCtx,
-				taskForCoder,
-				subOpts,
-				emit,
-			)
+            attemptTask :=
+            	taskForCoder
+            
+            if strings.TrimSpace(
+            	previousAttemptRepairContext,
+            ) != "" {
+            
+            	attemptTask +=
+            		"\n\n=== PREVIOUS SUBTASK REPAIR CONTEXT ===\n" +
+            			textutil.TruncateStringBytes(
+            				previousAttemptRepairContext,
+            				maxPreviousSubtaskDeltaBytes,
+            			) +
+            			"\n=== END PREVIOUS SUBTASK REPAIR CONTEXT ==="
+            }
+            
+            res = s.executeSimple(
+            	subCtx,
+            	attemptTask,
+            	subOpts,
+            	emit,
+            )
 
 			final.Iterations += res.Iterations
 
 			if res.Success {
 				break
 			}
+
+            if strings.TrimSpace(
+            	res.PatchRepairContext,
+            ) != "" {
+            
+            	previousAttemptRepairContext =
+            		res.PatchRepairContext
+            } else {
+            	previousAttemptRepairContext =
+            		strings.Join(
+            			res.Errors,
+            			"\n",
+            		)
+            }
 
 			if attempt >= maxAgentSubtaskAttempts ||
 				!isRecoverableAgentSubtaskFailure(res.Errors) {

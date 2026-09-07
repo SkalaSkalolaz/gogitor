@@ -30,11 +30,25 @@ RULES:
 1. Maximum 7 subtasks.
 2. Each subtask must be independently executable by a code generation agent.
 3. Prefer small, file-only, verifiable steps.
-3a. GRANULARITY: Each subtask must contain exactly ONE operation.
-    If a task mentions multiple operations joined by "and", ",", or "+",
-    you MUST split them into separate subtasks.
-3b. If a subtask would modify more than 50 lines of code or touch
+3a. GRANULARITY: Each subtask must contain exactly ONE code or file operation.
+    If a task mentions multiple operations, functions, methods, types,
+    files, or independent symbols joined by "and", ",", or "+",
+    split them into separate subtasks.
+
+3b. A subtask should normally target one logical declaration.
+    If two independent functions or methods must change,
+    create two subtasks.
+
+3c. Do not put two independent HTTP handlers,
+    service methods, repository methods, or test functions
+    into one subtask.
+
+3d. If splitting would exceed the maximum subtask count,
+    prefer fewer clearly scoped subtasks, but do not silently
+    merge unrelated operations merely to satisfy the count.
+3e. If a subtask would modify more than 50 lines of code or touch
     more than 2 functions, split it into smaller subtasks.
+
 4. Include practical acceptance criteria.
 5. Do not invent unrelated features.
 6. Do not create separate analysis-only subtasks. If analysis is needed, include it in the first coding subtask as context.
@@ -300,6 +314,21 @@ RULES:
 1. Maximum 5 subtasks.
 2. Each subtask must be independently executable by a code generation agent.
 3. Prefer small, file-only, verifiable steps.
+3a. GRANULARITY: Each subtask must contain exactly ONE code or file operation.
+If a task mentions multiple operations, functions, methods, types,
+files, or independent symbols joined by "and", ",", or "+",
+split them into separate subtasks.
+3b. A subtask should normally target one logical declaration.
+If two independent functions or methods must change,
+create two subtasks.
+3c. Do not put two independent HTTP handlers,
+service methods, repository methods, or test functions
+into one subtask.
+3d. If splitting would exceed the maximum subtask count,
+prefer fewer clearly scoped subtasks, but do not silently
+merge unrelated operations merely to satisfy the count.
+3e. If a subtask would modify more than 50 lines of code or touch
+more than 2 functions, split it into smaller subtasks.
 4. Include practical acceptance criteria.
 5. Do not invent unrelated features.
 6. Do not create separate analysis-only subtasks.

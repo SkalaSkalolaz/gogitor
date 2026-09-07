@@ -33,24 +33,6 @@ func cloneRepairChanges(
 	return out
 }
 
-func rememberRejectedPatch(
-	dst *[]domain.FileChange,
-	code *domain.PatchErrorCode,
-	changes []domain.FileChange,
-	errorText string,
-) {
-	if len(changes) == 0 {
-		return
-	}
-
-	*dst =
-		cloneRepairChanges(changes)
-
-	*code =
-		domain.PatchErrorCodeFromText(
-			errorText,
-		)
-}
 
 func validateRepairTargetContract(
 	previous []domain.FileChange,
