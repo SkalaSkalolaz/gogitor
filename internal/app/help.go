@@ -1675,6 +1675,47 @@ Requires a previous code task to have been executed.
 	},
 }
 
+// sanitizeTUIHelp removes legacy CLI-only documentation from help output.
+// The underlying topic texts remain reusable, but the public interface is now TUI-only.
+func sanitizeTUIHelp(text string) string {
+	lines := strings.Split(text, "\n")
+	result := make([]string, 0, len(lines))
+	skipCLISection := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			upper := strings.ToUpper(trimmed)
+			if strings.Contains(upper, "CLI") {
+				skipCLISection = true
+				continue
+			}
+			if skipCLISection {
+				skipCLISection = false
+			}
+		}
+		if skipCLISection {
+			continue
+		}
+
+		// Remove obsolete executable examples from the old CLI.
+		if strings.HasPrefix(trimmed, "gogitor ") || strings.HasPrefix(trimmed, "./gogitor ") {
+			continue
+		}
+
+		// Keep image help focused on the TUI input syntax.
+		line = strings.ReplaceAll(line, "Use --image flag (CLI) or attach image path in the query (TUI):", "Use an image path in the TUI query:")
+		line = strings.ReplaceAll(line, "Используйте флаг --image (CLI) или укажите путь к изображению (TUI):", "В TUI укажите путь к изображению:")
+		line = strings.ReplaceAll(line, "| Flag | --computer |", "")
+		line = strings.ReplaceAll(line, "| Флаг | --computer |", "")
+		line = strings.ReplaceAll(line, " :fast or --mode fast ", " :fast ")
+		line = strings.ReplaceAll(line, " :agent or --mode agent ", " :agent ")
+		result = append(result, line)
+	}
+
+	return strings.TrimSpace(strings.Join(result, "\n"))
+}
+
 // HelpForCommand возвращает точечную помощь по команде.
 // Если команда не найдена, возвращает список доступных разделов.
 func HelpForCommand(cmd string) domain.Result {
@@ -1690,7 +1731,7 @@ func HelpForCommand(cmd string) domain.Result {
 			return domain.Result{
 				Success:  true,
 				Mode:     "help",
-				Response: text,
+				Response: sanitizeTUIHelp(text),
 			}
 		}
 		for _, alias := range topic.Aliases {
@@ -1702,7 +1743,7 @@ func HelpForCommand(cmd string) domain.Result {
 				return domain.Result{
 					Success:  true,
 					Mode:     "help",
-					Response: text,
+					Response: sanitizeTUIHelp(text),
 				}
 			}
 		}

@@ -31,8 +31,6 @@ const (
 	inputTextAreaHeight     = 3
 	inputHorizontalOverhead = 2
 	inputVerticalOverhead   = 2
-	headerHeight            = 2
-	statusHeight            = 1
 )
 
 type logKind int
@@ -73,8 +71,7 @@ func tickCmd() tea.Cmd {
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("75")).
-			MarginBottom(1)
+			Foreground(lipgloss.Color("75"))
 
 	intentStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -152,42 +149,7 @@ var (
 				Foreground(lipgloss.Color("241"))
 )
 
-var commandSuggestions = []string{
-	":help",
-	":clear",
-	":cls",
-	":save",
-	":load",
-	":code",
-	":fix",
-	":history",
-	":task-diff",
-	":diff-trace",
-	":agent",
-	":agent deep",
-	":agent interview",
-	":agent reflect",
-	":agent report",
-	":agent undo",
-	":agent resume",
-	":ask",
-	":analyze",
-	":search",
-	":run",
-	":test",
-	":git",
-	":decisions",
-	":suggest",
-	":vet",
-	":todo",
-	":reasoning",
-	":computer",
-	":article",
-	":autonomy",
-	":mutate",
-	":autogen-tests",
-	":quit",
-}
+var commandSuggestions = app.CommandNames()
 
 var gitSubcommandSuggestions = []string{
 	"status",
@@ -358,30 +320,9 @@ func newModel(svc *app.Service, cfg *config.Config, log *slog.Logger) *model {
 	m.appendInfo(i18n.T("Type :help for commands."))
 	m.appendInfo(i18n.T("Alt+Enter adds a line. Up/Down move between lines. Tab switches to output."))
 	m.appendInfo(i18n.T("F2 - mode for selecting text with the mouse for copying."))
-	// Сканируем TODO при старте (без LLM, мгновенно).
-	go func() {
-		todoItems := svc.WS.ScanTODOs(10)
-		if len(todoItems) == 0 {
-			return
-		}
-		counts := map[string]int{}
-		for _, item := range todoItems {
-			counts[item.Kind]++
-		}
-		var parts []string
-		for _, kind := range []string{"TODO", "FIXME", "HACK", "BUG"} {
-			if counts[kind] > 0 {
-				parts = append(parts, fmt.Sprintf("%d %s", counts[kind], kind))
-			}
-		}
-		if len(parts) == 0 {
-			return
-		}
-		m.appendInfo(i18n.T(
-			"💡 Found %s in project. Type :todo to see details.",
-			strings.Join(parts, ", "),
-		))
-	}()
+	// Startup diagnostics are scheduled from Init so Bubble Tea remains the only
+	// writer of model state. This avoids a subtle data race while keeping the scan
+	// asynchronous and instant for the user.
 	m.appendInfo(i18n.T("Ctrl+A - copy all output to clipboard."))
 	m.appendInfo(i18n.T("PgUp/PgDn - browse command history."))
 
@@ -391,8 +332,35 @@ func newModel(svc *app.Service, cfg *config.Config, log *slog.Logger) *model {
 	return m
 }
 
+type startupDiagnosticsMsg struct {
+	TODO  int
+	FIXME int
+	HACK  int
+	BUG   int
+}
+
 func (m *model) Init() tea.Cmd {
-	return m.input.Focus()
+	return tea.Batch(m.input.Focus(), m.startupDiagnosticsCmd())
+}
+
+func (m *model) startupDiagnosticsCmd() tea.Cmd {
+	return func() tea.Msg {
+		items := m.svc.WS.ScanTODOs(10)
+		msg := startupDiagnosticsMsg{}
+		for _, item := range items {
+			switch strings.ToUpper(strings.TrimSpace(item.Kind)) {
+			case "TODO":
+				msg.TODO++
+			case "FIXME":
+				msg.FIXME++
+			case "HACK":
+				msg.HACK++
+			case "BUG":
+				msg.BUG++
+			}
+		}
+		return msg
+	}
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -408,6 +376,29 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.running {
 			m.updateProgressDisplay()
 			return m, tickCmd()
+		}
+		return m, nil
+
+	case startupDiagnosticsMsg:
+		var parts []string
+		for _, item := range []struct {
+			name  string
+			count int
+		}{
+			{name: "TODO", count: msg.TODO},
+			{name: "FIXME", count: msg.FIXME},
+			{name: "HACK", count: msg.HACK},
+			{name: "BUG", count: msg.BUG},
+		} {
+			if item.count > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", item.count, item.name))
+			}
+		}
+		if len(parts) > 0 {
+			m.appendInfo(i18n.T(
+				"💡 Found %s in project. Type :todo to see details.",
+				strings.Join(parts, ", "),
+			))
 		}
 		return m, nil
 
@@ -493,6 +484,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				if q == "" {
 					return m, nil
+				}
+				if q == ":quit" || q == ":exit" || q == ":q" {
+					return m, tea.Quit
 				}
 
 				m.taskQuery = q
@@ -693,41 +687,7 @@ func (m *model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return i18n.T("Loading...")
 	}
-	headerText := fmt.Sprintf(
-		"Gogitor TUI | %s/%s | %s",
-		m.cfg.Provider,
-		m.cfg.Model,
-		m.cfg.WorkDir,
-	)
-	header := renderSingleLine(titleStyle, headerText, m.width)
-	input := inputStyle.
-		Width(m.inputContentWidth()).
-		Render(m.input.View())
-	statusText, statusTextStyle := m.statusLine()
-	status := renderSingleLine(statusTextStyle, statusText, m.width)
-	timeline := m.renderTaskTimeline()
-
-	timelineHeight := 0
-	if timeline != "" {
-		timelineHeight = 1
-	}
-	inputHeight := inputTextAreaHeight + inputVerticalOverhead
-	availableHeight := m.height - headerHeight - timelineHeight - inputHeight - statusHeight
-	if availableHeight < 1 {
-		availableHeight = 1
-	}
-	if m.viewport.Height > availableHeight {
-		m.viewport.Height = availableHeight
-	}
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		timeline,
-		m.viewport.View(),
-		input,
-		status,
-	)
+	return m.renderByLayout()
 }
 
 func (m *model) renderTaskTimeline() string {
@@ -832,18 +792,23 @@ func planKindForStatus(st domain.PlanStatus) logKind {
 }
 
 func (m *model) applyLayout() {
-	viewportHeight := m.height - headerHeight - inputTextAreaHeight - inputVerticalOverhead - statusHeight
+	viewportHeight := m.height - inputTextAreaHeight - inputVerticalOverhead - 2
 	if viewportHeight < 1 {
 		viewportHeight = 1
 	}
 
-	m.viewport.Width = m.width
+	viewportWidth := m.width - 2
+	if viewportWidth < 1 {
+		viewportWidth = 1
+	}
+
+	m.viewport.Width = viewportWidth
 	m.viewport.Height = viewportHeight
 
 	m.input.SetWidth(m.inputContentWidth())
 	m.input.SetHeight(inputTextAreaHeight)
 
-	m.setWrapWidth(m.width)
+	m.setWrapWidth(viewportWidth)
 }
 
 func (m *model) inputContentWidth() int {
@@ -855,15 +820,18 @@ func (m *model) inputContentWidth() int {
 }
 
 func (m *model) submit(q string) tea.Cmd {
-	if q == ":quit" || q == ":q" {
-		return tea.Quit
-	}
-
-	if q == ":cls" {
-		m.clearScreen()
+	fields := strings.Fields(q)
+	if len(fields) == 0 {
 		return nil
 	}
-	if strings.HasPrefix(q, ":save") {
+
+	switch strings.ToLower(fields[0]) {
+	case ":quit", ":exit", ":q":
+		return tea.Quit
+	case ":cls":
+		m.clearScreen()
+		return nil
+	case ":save":
 		m.handleSave(q)
 		return nil
 	}
@@ -1780,7 +1748,7 @@ func (m *model) updateSuggestions() {
 		if len(fields) > 1 {
 			prefix = fields[1]
 		}
-		agentSubs := []string{"deep", "interview", "reflect", "undo", "resume", "report"}
+		agentSubs := []string{"enhanced", "interview", "reflect", "undo", "resume", "report"}
 		for _, sub := range agentSubs {
 			if strings.HasPrefix(sub, prefix) {
 				m.suggestions = append(m.suggestions, ":agent "+sub)

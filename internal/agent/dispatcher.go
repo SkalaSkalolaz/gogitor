@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"       
-	"net"        
-	"regexp"     
+	"io"
+	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
-
 
 type Role string
 
@@ -136,15 +135,15 @@ type Config struct {
 	// RoleQuotas — квоты и бонусы по ролям.
 	RoleQuotas map[Role]RoleQuota
 
-    // MaxRetries — максимальное число повторных попыток при
-    // транзитивных ошибках (0 = без retry).
-    MaxRetries int
-    // RetryBaseDelay — начальная задержка перед первым повтором.
-    RetryBaseDelay time.Duration
-    // RetryMaxDelay — потолок задержки (backoff не растёт выше).
-    RetryMaxDelay time.Duration
-    // RetryMultiplier — множитель экспоненциального роста.
-    RetryMultiplier float64
+	// MaxRetries — максимальное число повторных попыток при
+	// транзитивных ошибках (0 = без retry).
+	MaxRetries int
+	// RetryBaseDelay — начальная задержка перед первым повтором.
+	RetryBaseDelay time.Duration
+	// RetryMaxDelay — потолок задержки (backoff не растёт выше).
+	RetryMaxDelay time.Duration
+	// RetryMultiplier — множитель экспоненциального роста.
+	RetryMultiplier float64
 
 	// StatsHook вызывается после завершения LLM-запроса.
 	// Используется для накопления статистики и оценки ETA.
@@ -156,11 +155,11 @@ type Config struct {
 
 // Request — запрос агента к LLM.
 type Request struct {
-	Role     Role
-	Purpose  string
-	Prompt   string
-	Priority Priority
-	Timeout  time.Duration
+	Role       Role
+	Purpose    string
+	Prompt     string
+	Priority   Priority
+	Timeout    time.Duration
 	StreamFunc func(string)
 	Images     [][]byte
 }
@@ -212,12 +211,12 @@ func isRetryable(err error) bool {
 		return true
 	}
 
-    msg := strings.ToLower(err.Error())
-    
-    if strings.Contains(msg, "model not found") ||
-    	strings.Contains(msg, "try pulling it first") {
-    	return false
-    }
+	msg := strings.ToLower(err.Error())
+
+	if strings.Contains(msg, "model not found") ||
+		strings.Contains(msg, "try pulling it first") {
+		return false
+	}
 
 	return false
 }
@@ -265,24 +264,23 @@ func NewDispatcher(llm LLM, cfg Config) *Dispatcher {
 	if cfg.RoleQuotas == nil {
 		cfg.RoleQuotas = map[Role]RoleQuota{}
 	}
-    // ─── Retry defaults ──────────────────────────────────────
-    if cfg.MaxRetries < 0 {
-        cfg.MaxRetries = 0
-    }
-    if cfg.MaxRetries == 0 && cfg.RetryBaseDelay == 0 {
-        // По умолчанию: 2 retry, если пользователь ничего не задал.
-        cfg.MaxRetries = 2
-    }
-    if cfg.RetryBaseDelay <= 0 {
-        cfg.RetryBaseDelay = 1 * time.Second
-    }
-    if cfg.RetryMaxDelay <= 0 {
-        cfg.RetryMaxDelay = 10 * time.Second
-    }
-    if cfg.RetryMultiplier <= 1 {
-        cfg.RetryMultiplier = 2.0
-    }
-
+	// ─── Retry defaults ──────────────────────────────────────
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = 0
+	}
+	if cfg.MaxRetries == 0 && cfg.RetryBaseDelay == 0 {
+		// По умолчанию: 2 retry, если пользователь ничего не задал.
+		cfg.MaxRetries = 2
+	}
+	if cfg.RetryBaseDelay <= 0 {
+		cfg.RetryBaseDelay = 1 * time.Second
+	}
+	if cfg.RetryMaxDelay <= 0 {
+		cfg.RetryMaxDelay = 10 * time.Second
+	}
+	if cfg.RetryMultiplier <= 1 {
+		cfg.RetryMultiplier = 2.0
+	}
 
 	d := &Dispatcher{
 		cfg:    cfg,
@@ -402,11 +400,11 @@ func (d *Dispatcher) Request(ctx context.Context, req Request) (string, Usage, e
 
 	d.wake()
 
-    d.emitStatus(ctx, StatusEvent{
-    		Kind:    StatusQueued,
-    		Role:    req.Role,
-    		Purpose: req.Purpose,
-    	})
+	d.emitStatus(ctx, StatusEvent{
+		Kind:    StatusQueued,
+		Role:    req.Role,
+		Purpose: req.Purpose,
+	})
 
 	select {
 	case res := <-t.result:
@@ -542,182 +540,182 @@ func (d *Dispatcher) roleBoost(r Role) Priority {
 }
 
 func (d *Dispatcher) execute(t *ticket) {
-    defer func() {
-        if r := recover(); r != nil {
-            t.deliver(Result{
-                Err: fmt.Errorf("agent dispatcher: llm panic: %v", r),
-            })
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			t.deliver(Result{
+				Err: fmt.Errorf("agent dispatcher: llm panic: %v", r),
+			})
+		}
+	}()
 
-    if err := t.ctx.Err(); err != nil {
-        t.deliver(Result{Err: err})
-        return
-    }
+	if err := t.ctx.Err(); err != nil {
+		t.deliver(Result{Err: err})
+		return
+	}
 
-    d.mu.Lock()
-    if d.closed {
-        d.mu.Unlock()
-        t.deliver(Result{Err: ErrDispatcherClosed})
-        return
-    }
-    if err := d.checkBudgetLocked(t.req); err != nil {
-        d.mu.Unlock()
-        t.deliver(Result{Err: err})
-        return
-    }
-    timeout := t.req.Timeout
-    if timeout <= 0 {
-        timeout = d.cfg.DefaultTimeout
-    }
-    d.mu.Unlock()
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		t.deliver(Result{Err: ErrDispatcherClosed})
+		return
+	}
+	if err := d.checkBudgetLocked(t.req); err != nil {
+		d.mu.Unlock()
+		t.deliver(Result{Err: err})
+		return
+	}
+	timeout := t.req.Timeout
+	if timeout <= 0 {
+		timeout = d.cfg.DefaultTimeout
+	}
+	d.mu.Unlock()
 
-    d.emitStatus(t.ctx, StatusEvent{
-        Kind:    StatusStart,
-        Role:    t.req.Role,
-        Purpose: t.req.Purpose,
-    })
+	d.emitStatus(t.ctx, StatusEvent{
+		Kind:    StatusStart,
+		Role:    t.req.Role,
+		Purpose: t.req.Purpose,
+	})
 
-    // ─── Retry loop ──────────────────────────────────────────
-    attemptsUsed := 0
-    totalResponseTokens := 0
+	// ─── Retry loop ──────────────────────────────────────────
+	attemptsUsed := 0
+	totalResponseTokens := 0
 
-    maxAttempts := 1 + d.cfg.MaxRetries
-    backoff := d.cfg.RetryBaseDelay
-    
-    var lastErr error
-    var text string
-    var totalDuration time.Duration
-    
-    gotToken := false
-    var onToken func(string)
-    
-    if t.req.StreamFunc != nil {
-    	onToken = func(s string) {
-    		gotToken = true
-    		t.req.StreamFunc(s)
-    	}
-    }
-    
-    for attempt := 1; attempt <= maxAttempts; attempt++ {
-        attemptsUsed++
-    	if t.ctx.Err() != nil {
-    		t.deliver(Result{Err: t.ctx.Err()})
-    		return
-    	}
-    
-    	attemptCtx, cancel := context.WithTimeout(t.ctx, timeout)
-    
-    	// Передаём роль и purpose дальше, чтобы можно было собирать статистику.
-    	attemptCtx = WithRole(attemptCtx, t.req.Role)
-    	attemptCtx = WithPurpose(attemptCtx, t.req.Purpose)
-    	attemptCtx = WithPriority(attemptCtx, t.req.Priority)
-    
-    	start := time.Now()
+	maxAttempts := 1 + d.cfg.MaxRetries
+	backoff := d.cfg.RetryBaseDelay
 
-    	if len(t.req.Images) > 0 {
-    		// Multimodal path: изображения присутствуют
-    		if t.req.StreamFunc != nil {
-    			if sml, ok := d.llm.(StreamMultimodalLLM); ok {
-    				text, lastErr = sml.StreamWithImages(attemptCtx, t.req.Prompt, t.req.Images, onToken)
-    			} else if ml, ok := d.llm.(MultimodalLLM); ok {
-    				text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
-    			} else {
-    				// Fallback: модель не поддерживает vision
-    				text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
-    			}
-    		} else {
-    			if ml, ok := d.llm.(MultimodalLLM); ok {
-    				text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
-    			} else {
-    				text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
-    			}
-    		}
-    	} else if t.req.StreamFunc != nil {
-    		if sl, ok := d.llm.(StreamLLM); ok {
-    			text, lastErr = sl.Stream(attemptCtx, t.req.Prompt, onToken)
-    		} else {
-    			text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
-    		}
-    	} else {
-    		text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
-    	}    
+	var lastErr error
+	var text string
+	var totalDuration time.Duration
 
-        totalResponseTokens += estimateTokens(text)
-    	elapsed := time.Since(start)
-    	totalDuration += elapsed
-    	cancel()
-    
-    	if lastErr == nil {
-    		break
-    	}
-    
-    	// Если уже начался стриминг, retry невозможен: часть ответа могла уйти пользователю.
-    	if gotToken || attempt == maxAttempts || !isRetryable(lastErr) {
-    		break
-    	}
-    
-    	d.emitStatus(t.ctx, StatusEvent{
-    		Kind:    StatusRetry,
-    		Role:    t.req.Role,
-    		Purpose: t.req.Purpose,
-    		Err: fmt.Errorf(
-    			"attempt %d/%d failed: %v; retry in %s",
-    			attempt, maxAttempts, lastErr, backoff.Round(time.Millisecond),
-    		),
-    	})
-    
-    	select {
-    	case <-time.After(backoff):
-    	case <-t.ctx.Done():
-    		t.deliver(Result{Err: t.ctx.Err()})
-    		return
-    	}
-    
-    	backoff = time.Duration(float64(backoff) * d.cfg.RetryMultiplier)
-    	if backoff > d.cfg.RetryMaxDelay {
-    		backoff = d.cfg.RetryMaxDelay
-    	}
-    }
-    
-    estimatedResponseTokens := totalResponseTokens
-    
-    if d.cfg.ReasoningEnabled {
-    	estimatedResponseTokens *= 3
-    }
-    
-    estimatedPromptTokens := estimateTokens(
-    	t.req.Prompt,
-    ) * attemptsUsed
-    
-    usage := Usage{
-    	Requests: attemptsUsed,
-    	EstimatedTokens: estimatedPromptTokens +
-    		estimatedResponseTokens,
-    	Duration: totalDuration,
-    }
+	gotToken := false
+	var onToken func(string)
 
-    d.mu.Lock()
-    d.session = d.session.Add(usage)
-    d.roles[t.req.Role] = d.roles[t.req.Role].Add(usage)
-    d.mu.Unlock()
-    
-    if d.cfg.StatsHook != nil {
-    	d.cfg.StatsHook(t.req, usage, lastErr)
-    }
-    
-    t.deliver(Result{
-    	Text:  text,
-    	Usage: usage,
-    	Err:   lastErr,
-    })
-    
-    d.emitStatus(t.ctx, StatusEvent{
-    	Kind:    StatusDone,
-    	Role:    t.req.Role,
-    	Purpose: t.req.Purpose,
-    	Err:     lastErr,
-    })
+	if t.req.StreamFunc != nil {
+		onToken = func(s string) {
+			gotToken = true
+			t.req.StreamFunc(s)
+		}
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		attemptsUsed++
+		if t.ctx.Err() != nil {
+			t.deliver(Result{Err: t.ctx.Err()})
+			return
+		}
+
+		attemptCtx, cancel := context.WithTimeout(t.ctx, timeout)
+
+		// Передаём роль и purpose дальше, чтобы можно было собирать статистику.
+		attemptCtx = WithRole(attemptCtx, t.req.Role)
+		attemptCtx = WithPurpose(attemptCtx, t.req.Purpose)
+		attemptCtx = WithPriority(attemptCtx, t.req.Priority)
+
+		start := time.Now()
+
+		if len(t.req.Images) > 0 {
+			// Multimodal path: изображения присутствуют
+			if t.req.StreamFunc != nil {
+				if sml, ok := d.llm.(StreamMultimodalLLM); ok {
+					text, lastErr = sml.StreamWithImages(attemptCtx, t.req.Prompt, t.req.Images, onToken)
+				} else if ml, ok := d.llm.(MultimodalLLM); ok {
+					text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
+				} else {
+					// Fallback: модель не поддерживает vision
+					text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+				}
+			} else {
+				if ml, ok := d.llm.(MultimodalLLM); ok {
+					text, lastErr = ml.SendWithImages(attemptCtx, t.req.Prompt, t.req.Images)
+				} else {
+					text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+				}
+			}
+		} else if t.req.StreamFunc != nil {
+			if sl, ok := d.llm.(StreamLLM); ok {
+				text, lastErr = sl.Stream(attemptCtx, t.req.Prompt, onToken)
+			} else {
+				text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+			}
+		} else {
+			text, lastErr = d.llm.Send(attemptCtx, t.req.Prompt)
+		}
+
+		totalResponseTokens += estimateTokens(text)
+		elapsed := time.Since(start)
+		totalDuration += elapsed
+		cancel()
+
+		if lastErr == nil {
+			break
+		}
+
+		// Если уже начался стриминг, retry невозможен: часть ответа могла уйти пользователю.
+		if gotToken || attempt == maxAttempts || !isRetryable(lastErr) {
+			break
+		}
+
+		d.emitStatus(t.ctx, StatusEvent{
+			Kind:    StatusRetry,
+			Role:    t.req.Role,
+			Purpose: t.req.Purpose,
+			Err: fmt.Errorf(
+				"attempt %d/%d failed: %v; retry in %s",
+				attempt, maxAttempts, lastErr, backoff.Round(time.Millisecond),
+			),
+		})
+
+		select {
+		case <-time.After(backoff):
+		case <-t.ctx.Done():
+			t.deliver(Result{Err: t.ctx.Err()})
+			return
+		}
+
+		backoff = time.Duration(float64(backoff) * d.cfg.RetryMultiplier)
+		if backoff > d.cfg.RetryMaxDelay {
+			backoff = d.cfg.RetryMaxDelay
+		}
+	}
+
+	estimatedResponseTokens := totalResponseTokens
+
+	if d.cfg.ReasoningEnabled {
+		estimatedResponseTokens *= 3
+	}
+
+	estimatedPromptTokens := estimateTokens(
+		t.req.Prompt,
+	) * attemptsUsed
+
+	usage := Usage{
+		Requests: attemptsUsed,
+		EstimatedTokens: estimatedPromptTokens +
+			estimatedResponseTokens,
+		Duration: totalDuration,
+	}
+
+	d.mu.Lock()
+	d.session = d.session.Add(usage)
+	d.roles[t.req.Role] = d.roles[t.req.Role].Add(usage)
+	d.mu.Unlock()
+
+	if d.cfg.StatsHook != nil {
+		d.cfg.StatsHook(t.req, usage, lastErr)
+	}
+
+	t.deliver(Result{
+		Text:  text,
+		Usage: usage,
+		Err:   lastErr,
+	})
+
+	d.emitStatus(t.ctx, StatusEvent{
+		Kind:    StatusDone,
+		Role:    t.req.Role,
+		Purpose: t.req.Purpose,
+		Err:     lastErr,
+	})
 }
 
 func (d *Dispatcher) checkBudgetLocked(req Request) error {
@@ -854,7 +852,6 @@ func PurposeFromContext(ctx context.Context) string {
 	}
 	return ""
 }
-
 
 // WithStatusFunc добавляет callback статусных событий в context.
 func WithStatusFunc(ctx context.Context, fn StatusFunc) context.Context {

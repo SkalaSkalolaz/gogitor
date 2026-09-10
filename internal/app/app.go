@@ -22,6 +22,7 @@ import (
 	"gogitor/internal/git"
 	"gogitor/internal/github"
 	"gogitor/internal/i18n"
+	"gogitor/internal/language"
 	"gogitor/internal/llm"
 	"gogitor/internal/prompts"
 	"gogitor/internal/runner"
@@ -101,6 +102,7 @@ type Service struct {
 	ComputerExecutor  *computer.Executor
 	ComputerAudit     *computer.AuditLog
 	ComputerOS        computer.OSInfo
+	Languages         *language.Registry
 	pendingComparison *PendingComparison
 	pendingInterview  *PendingInterview
 	Autonomy          *autonomy.Controller
@@ -529,7 +531,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		return domain.Result{Success: false, Errors: []string{"empty command"}}
 	}
 
-	cmd := strings.ToLower(parts[0])
+	cmd := normalizeTUICommand(parts[0])
 	args := parts[1:]
 	argString := strings.TrimSpace(strings.Join(args, " "))
 
@@ -681,8 +683,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 				Success: false,
 				Mode:    "computer",
 				Errors: []string{
-					"computer mode is disabled; use --computer flag, " +
-						"set GOGITOR_COMPUTER_ENABLED=true, " +
+					"computer mode is disabled; set GOGITOR_COMPUTER_ENABLED=true, " +
 						`or "computer_enabled": true in .gogitor.json`,
 				},
 			}
@@ -697,12 +698,18 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 			Mode:     "help",
 			Response: HelpText(),
 		}
-	case ":clear":
+	case ":clear", ":cls":
 		s.history = nil
 		return domain.Result{
 			Success:  true,
 			Mode:     "clear",
 			Response: "Conversation context cleared.",
+		}
+
+	case ":quit", ":exit":
+		return domain.Result{
+			Success: true,
+			Mode:    "quit",
 		}
 
 	case ":code":
@@ -721,7 +728,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		if argString == "" {
 			return domain.Result{
 				Success: false, Mode: "agent",
-				Errors: []string{"usage: :agent <task> | :agent deep <task>"},
+				Errors: []string{"usage: :agent <task> | :agent enhanced <task>"},
 			}
 		}
 		lowerArgs := strings.ToLower(strings.TrimSpace(argString))
@@ -752,14 +759,18 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		}
 		depth := AgentDepthNormal
 		task := argString
-		if strings.HasPrefix(lowerArgs, "deep ") {
+		if strings.HasPrefix(lowerArgs, "deep ") || strings.HasPrefix(lowerArgs, "enhanced ") {
 			depth = AgentDepthDeep
-			task = strings.TrimSpace(argString[len("deep"):])
+			cut := len("deep")
+			if strings.HasPrefix(lowerArgs, "enhanced ") {
+				cut = len("enhanced")
+			}
+			task = strings.TrimSpace(argString[cut:])
 		}
 		if task == "" {
 			return domain.Result{
 				Success: false, Mode: "agent",
-				Errors: []string{"usage: :agent <task> | :agent deep <task>"},
+				Errors: []string{"usage: :agent <task> | :agent enhanced <task>"},
 			}
 		}
 		return s.ExecuteCode(ctx, task, Options{Mode: "agent", AgentDepth: depth}, emit)
@@ -807,7 +818,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 	case ":decisions", ":journal":
 		return s.DecisionJournal(ctx, emit)
 
-	case "task-diff":
+	case ":task-diff":
 		return s.GitDiffTask(ctx, emit)
 	case ":git":
 		return s.handleGitCommand(ctx, args, emit)
@@ -1524,8 +1535,8 @@ type patchRepairState struct {
 	CurrentError string
 
 	// Последний ответ модели оказался вообще не patch-ответом.
-	LastResponseInvalid    bool
-	LastResponseErrorText  string
+	LastResponseInvalid   bool
+	LastResponseErrorText string
 }
 
 func (r *patchRepairState) rememberRejectedCandidate(
@@ -1816,12 +1827,12 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		maxPatchFixAttempts = 4
 	}
 
-    var lastPatchContent string
-    
-    patchAppliedSuccessfully := false
-    patchRepairPending := false
-    
-    var repairState patchRepairState
+	var lastPatchContent string
+
+	patchAppliedSuccessfully := false
+	patchRepairPending := false
+
+	var repairState patchRepairState
 	// Оценка ETA для простых задач (не multi-agent подзадач).
 	if opts.ProgressItem == 0 && s.Stats != nil && emit != nil {
 		simpleETA := s.Stats.estimateSubtask(query, false)
@@ -1883,7 +1894,7 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		allowFallback := false
 		usePatchPrompt := false
 		diffMatchingConfigLogged := false
-        repairAttempt := false
+		repairAttempt := false
 
 		if i == 1 {
 			existingTargets := cc.ExistingTargets
@@ -1988,87 +1999,86 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				allowFallback = true
 			}
 
-        } else if (patchAppliedSuccessfully || patchRepairPending) &&
-        	!forceFull &&
-        	patchFixAttempts < maxPatchFixAttempts {
-        
-        	repairAttempt = true
-        	patchFixAttempts++
-        
-        	repairErrorCode :=
-        		repairState.repairCode()
-        
-        	repairErrorText :=
-        		repairState.repairError()
-        
-        	repairPatchContent :=
-        		repairState.repairPatch()
-        
-        	// Fallback только для случаев, когда repair state ещё
-        	// не был создан. Например, первый ответ LLM вообще
-        	// не содержал ни одного patch-блока.
-        	if repairErrorText == "" {
-        		repairErrorText =
-        			strings.Join(
-        				lastErrors,
-        				"\n",
-        			)
-        	}
-        
-        	if repairPatchContent == "" {
-        		repairPatchContent =
-        			lastPatchContent
-        	}
-        
-        	prompt = prompts.CodeFixPatchWithProtocol(
-        		query,
-        		originalContext,
-        		repairPatchContent,
-        		repairErrorText,
-        		patchProtocol.String(),
-        	)
-        
-        	if len(repairState.OriginalChanges) > 0 {
-        		prompt +=
-        			"\n\n" +
-        				prompts.PatchRepairTargetLock(
-        					repairState.OriginalChanges,
-        					repairErrorCode,
-        				)
-        	}
-        
-        	if recoveryContext :=
-        		repairState.recoveryContext();
-        		strings.TrimSpace(recoveryContext) != "" {
-        
-        		prompt +=
-        			"\n\n" +
-        				recoveryContext
-        	}
-        
-        	if s.Cfg.DiffTrace {
-        		if repairErrorCode != "" {
-        			sendEvent(
-        				emit,
-        				domain.EventLog,
-        				fmt.Sprintf(
-        					"[DIFF] phase=REPAIR stage=CLASSIFY decision=TARGETED error_code=%s",
-        					repairErrorCode,
-        				),
-        			)
-        		} else {
-        			sendEvent(
-        				emit,
-        				domain.EventLog,
-        				"[DIFF] phase=REPAIR stage=CLASSIFY decision=GENERIC",
-        			)
-        		}
-        	}
-        
-        	usePatchPrompt = true
-        	patchRepairPending = false
-        	patchAppliedSuccessfully = false
-        
+		} else if (patchAppliedSuccessfully || patchRepairPending) &&
+			!forceFull &&
+			patchFixAttempts < maxPatchFixAttempts {
+
+			repairAttempt = true
+			patchFixAttempts++
+
+			repairErrorCode :=
+				repairState.repairCode()
+
+			repairErrorText :=
+				repairState.repairError()
+
+			repairPatchContent :=
+				repairState.repairPatch()
+
+			// Fallback только для случаев, когда repair state ещё
+			// не был создан. Например, первый ответ LLM вообще
+			// не содержал ни одного patch-блока.
+			if repairErrorText == "" {
+				repairErrorText =
+					strings.Join(
+						lastErrors,
+						"\n",
+					)
+			}
+
+			if repairPatchContent == "" {
+				repairPatchContent =
+					lastPatchContent
+			}
+
+			prompt = prompts.CodeFixPatchWithProtocol(
+				query,
+				originalContext,
+				repairPatchContent,
+				repairErrorText,
+				patchProtocol.String(),
+			)
+
+			if len(repairState.OriginalChanges) > 0 {
+				prompt +=
+					"\n\n" +
+						prompts.PatchRepairTargetLock(
+							repairState.OriginalChanges,
+							repairErrorCode,
+						)
+			}
+
+			if recoveryContext :=
+				repairState.recoveryContext(); strings.TrimSpace(recoveryContext) != "" {
+
+				prompt +=
+					"\n\n" +
+						recoveryContext
+			}
+
+			if s.Cfg.DiffTrace {
+				if repairErrorCode != "" {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						fmt.Sprintf(
+							"[DIFF] phase=REPAIR stage=CLASSIFY decision=TARGETED error_code=%s",
+							repairErrorCode,
+						),
+					)
+				} else {
+					sendEvent(
+						emit,
+						domain.EventLog,
+						"[DIFF] phase=REPAIR stage=CLASSIFY decision=GENERIC",
+					)
+				}
+			}
+
+			usePatchPrompt = true
+			patchRepairPending = false
+			patchAppliedSuccessfully = false
+
 		} else {
 			contextForFix := originalContext
 			if !forceFull && !patchAttempted && len(lastChanges) > 0 {
@@ -2176,9 +2186,9 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			continue
 		}
 
-        if usePatchPrompt {
-        	lastPatchContent = ""
-        }
+		if usePatchPrompt {
+			lastPatchContent = ""
+		}
 
 		var changes []domain.FileChange
 
@@ -2194,12 +2204,12 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			)
 		}
 
-        if usePatchPrompt &&
-        	hasPatches(changes) {
-        
-        	lastPatchContent =
-        		strings.TrimSpace(response)
-        }
+		if usePatchPrompt &&
+			hasPatches(changes) {
+
+			lastPatchContent =
+				strings.TrimSpace(response)
+		}
 
 		if s.Cfg.DiffTrace && usePatchPrompt {
 			emitParsedDiffTrace(
@@ -2215,7 +2225,6 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		)
 
 		patchModeChanges := hasPatches(changes)
-
 
 		if repairAttempt &&
 			repairState.Active &&
@@ -2309,48 +2318,48 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			}
 		}
 
-        if len(changes) == 0 {
-        	if usePatchPrompt {
-        
-        		invalidPatchError :=
-        			"LLM did not return a valid SEARCH/REPLACE patch. Expected format: --- Patch: path --- with SEARCH/REPLACE blocks."
-        
-        		if repairState.Active {
-        			repairState.noteInvalidResponse(
-        				invalidPatchError,
-        			)
-        
-        			// Не уничтожаем основную причину предыдущего отказа.
-        			lastErrors = []string{
-        				repairState.repairError(),
-        				invalidPatchError,
-        			}
-        		} else {
-        			lastErrors = []string{
-        				invalidPatchError,
-        			}
-        		}
-        
-        		if patchFixAttempts < maxPatchFixAttempts {
-        			patchRepairPending = true
-        
-        			sendEvent(
-        				emit,
-        				domain.EventWarn,
-        				"Patch repair required: model did not return a valid patch.",
-        			)
-        		} else {
-        			forceFull = true
-        		}
-        
-        		continue
-        	}
-        
-        	lastErrors = []string{
-        		"LLM did not return file blocks. Expected format: --- File: path ---",
-        	}
-        	continue
-        }
+		if len(changes) == 0 {
+			if usePatchPrompt {
+
+				invalidPatchError :=
+					"LLM did not return a valid SEARCH/REPLACE patch. Expected format: --- Patch: path --- with SEARCH/REPLACE blocks."
+
+				if repairState.Active {
+					repairState.noteInvalidResponse(
+						invalidPatchError,
+					)
+
+					// Не уничтожаем основную причину предыдущего отказа.
+					lastErrors = []string{
+						repairState.repairError(),
+						invalidPatchError,
+					}
+				} else {
+					lastErrors = []string{
+						invalidPatchError,
+					}
+				}
+
+				if patchFixAttempts < maxPatchFixAttempts {
+					patchRepairPending = true
+
+					sendEvent(
+						emit,
+						domain.EventWarn,
+						"Patch repair required: model did not return a valid patch.",
+					)
+				} else {
+					forceFull = true
+				}
+
+				continue
+			}
+
+			lastErrors = []string{
+				"LLM did not return file blocks. Expected format: --- File: path ---",
+			}
+			continue
+		}
 
 		// Patch можно применять только к существующим файлам.
 		if patchModeChanges {
@@ -2382,14 +2391,14 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 
 		if err := codegen.Validate(changes, s.Cfg.WorkDir); err != nil {
 			lastErrors = []string{err.Error()}
-        	if usePatchPrompt && hasPatches(changes) {
-                repairState.rememberRejectedCandidate(
-                	changes,
-                	lastPatchContent,
-        			err.Error(),
-        		)
+			if usePatchPrompt && hasPatches(changes) {
+				repairState.rememberRejectedCandidate(
+					changes,
+					lastPatchContent,
+					err.Error(),
+				)
 
-        	}
+			}
 
 			if usePatchPrompt && s.Cfg.DiffTrace {
 				reason := strings.TrimSpace(err.Error())
@@ -2536,13 +2545,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			errMsg := preflightErr.Error()
 			lastErrors = []string{errMsg}
 
-            if usePatchPrompt && hasPatches(changes){
-                repairState.rememberRejectedCandidate(
-                	changes,
-                	lastPatchContent,
-            		errMsg,
-            	)
-            }
+			if usePatchPrompt && hasPatches(changes) {
+				repairState.rememberRejectedCandidate(
+					changes,
+					lastPatchContent,
+					errMsg,
+				)
+			}
 
 			if s.Cfg.DiffTrace {
 				errorCode :=
@@ -2634,30 +2643,30 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				_ = os.RemoveAll(sandbox)
 
 				msg := "Patch Auditor rejected generated patch"
-                auditErrorText :=
-                	msg
-                
-                if len(audit.CriticalIssues) > 0 {
-                	auditErrorText +=
-                		": " +
-                		strings.Join(
-                			audit.CriticalIssues,
-                			"; ",
-                		)
-                }
-                
-                lastErrors = []string{
-                	auditErrorText,
-                }
-                
-                repairState.rememberRejectedCandidate(
-                	changes,
-                	lastPatchContent,
-                	auditErrorText,
-                )
+				auditErrorText :=
+					msg
 
-                patchRepairPending = true
-                continue
+				if len(audit.CriticalIssues) > 0 {
+					auditErrorText +=
+						": " +
+							strings.Join(
+								audit.CriticalIssues,
+								"; ",
+							)
+				}
+
+				lastErrors = []string{
+					auditErrorText,
+				}
+
+				repairState.rememberRejectedCandidate(
+					changes,
+					lastPatchContent,
+					auditErrorText,
+				)
+
+				patchRepairPending = true
+				continue
 			}
 
 			sendEvent(
@@ -2678,11 +2687,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 			lastErrors = []string{err.Error()}
 			if patchModeChanges || usePatchPrompt {
 				if patchFixAttempts < maxPatchFixAttempts {
-                    repairState.rememberRejectedCandidate(
-                    	changes,
-                    	lastPatchContent,
-                    	err.Error(),
-                    )
+					repairState.rememberRejectedCandidate(
+						changes,
+						lastPatchContent,
+						err.Error(),
+					)
 					patchRepairPending = true
 					sendEvent(
 						emit,
@@ -2772,13 +2781,13 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 							lastErrors,
 							research,
 						)
-                        if patchModeChanges {
-                            repairState.rememberRejectedCandidate(
-                            	changes,
-                            	lastPatchContent,
-                        		buildError,
-                        	)
-                        }
+						if patchModeChanges {
+							repairState.rememberRejectedCandidate(
+								changes,
+								lastPatchContent,
+								buildError,
+							)
+						}
 					}
 				}
 			}
@@ -3002,17 +3011,16 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					formatTestFeedback(tests, err),
 				}
 
-
-                if patchModeChanges {
-                    repairState.rememberRejectedCandidate(
-                    	changes,
-                    	lastPatchContent,
-                		strings.Join(
-                			lastErrors,
-                			"\n",
-                		),
-                	)
-                }
+				if patchModeChanges {
+					repairState.rememberRejectedCandidate(
+						changes,
+						lastPatchContent,
+						strings.Join(
+							lastErrors,
+							"\n",
+						),
+					)
+				}
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
@@ -3038,17 +3046,16 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 					runner.FormatFeedback(tests),
 				}
 
-
-                if patchModeChanges {
-                    repairState.rememberRejectedCandidate(
-                    	changes,
-                    	lastPatchContent,
-                		strings.Join(
-                			lastErrors,
-                			"\n",
-                		),
-                	)
-                }
+				if patchModeChanges {
+					repairState.rememberRejectedCandidate(
+						changes,
+						lastPatchContent,
+						strings.Join(
+							lastErrors,
+							"\n",
+						),
+					)
+				}
 				if patchModeChanges || usePatchPrompt {
 					if patchFixAttempts < maxPatchFixAttempts {
 						patchAppliedSuccessfully = true
@@ -3094,11 +3101,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 				lastErrors = []string{
 					effectivenessErr.Error(),
 				}
-                repairState.rememberRejectedCandidate(
-                	changes,
-                	lastPatchContent,
-                	effectivenessErr.Error(),
-                )
+				repairState.rememberRejectedCandidate(
+					changes,
+					lastPatchContent,
+					effectivenessErr.Error(),
+				)
 				if s.Cfg.DiffTrace {
 					sendEvent(
 						emit,
@@ -3196,11 +3203,11 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 						reason,
 					).Error(),
 				}
-                repairState.rememberRejectedCandidate(
-                	changes,
-                	lastPatchContent,
-                	reason,
-                )
+				repairState.rememberRejectedCandidate(
+					changes,
+					lastPatchContent,
+					reason,
+				)
 				if s.Cfg.DiffTrace {
 					sendEvent(
 						emit,
@@ -3326,26 +3333,26 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		return result
 	}
 
-    result.Success = false
-    
-    if len(lastErrors) == 0 {
-    	lastErrors = []string{
-    		"unknown error",
-    	}
-    }
-    
-    result.Errors =
-    	append(
-    		result.Errors,
-    		lastErrors...,
-    	)
-    
-    if repairState.Active {
-    	result.PatchRepairContext =
-    		repairState.recoveryContext()
-    }
-    
-    return result
+	result.Success = false
+
+	if len(lastErrors) == 0 {
+		lastErrors = []string{
+			"unknown error",
+		}
+	}
+
+	result.Errors =
+		append(
+			result.Errors,
+			lastErrors...,
+		)
+
+	if repairState.Active {
+		result.PatchRepairContext =
+			repairState.recoveryContext()
+	}
+
+	return result
 
 }
 
@@ -4467,9 +4474,9 @@ func DetectLanguage() string {
 
 func HelpText() string {
 	if DetectLanguage() == "ru" {
-		return helpTextRu()
+		return sanitizeTUIHelp(helpTextRu())
 	}
-	return helpTextEn()
+	return sanitizeTUIHelp(helpTextEn())
 }
 
 func helpTextEn() string {
@@ -4477,12 +4484,13 @@ func helpTextEn() string {
 
 ## General
 - **:help** — Show help
-- **:clear** — Clear in-memory conversation context
+- **:clear** / **:cls** — Clear in-memory conversation context
 - **:save <file>** — Save last result to file (.md, .txt, .go, .json)
 - **:reasoning** — Show current thinking mode state
 - **:reasoning on/off** — Enable/disable thinking mode
 - **:diff-trace** — Show the state of DIFF insertion diagnostics
 - **:diff-trace on/off** — Enable/disable DIFF insertion diagnostics
+- **:quit** / **:exit** / **:q** — Exit Gogitor
 
 ## Code & Analysis
 - **:code <task>** — Create or modify code
@@ -4500,7 +4508,6 @@ func helpTextEn() string {
 - **:test lint** — Run golangci-lint and auto-fix issues via LLM
 - **:vet** — Run go vet (fast, no LLM required)
 - **:todo** — List TODO/FIXME/HACK markers in project files
-- **:history** — Show recent task execution history
 - **:task-diff** — Show cumulative diff of the last completed task
 
 ## Articles
@@ -4517,7 +4524,7 @@ func helpTextEn() string {
 
 ## Agent
 - **:agent <task>** — Run the full Agent Harness.
-- **:agent deep <task>** — Run the strengthened Agent profile with:
+- **:agent enhanced <task>** — Run the strengthened Agent profile with:
     - task isolation
     - deterministic quality gates
     - session artifacts
@@ -4594,12 +4601,13 @@ func helpTextRu() string {
 
 ## Общие
 - **:help** — Показать справку
-- **:clear** — Очистить контекст разговора
+- **:clear** / **:cls** — Очистить контекст разговора
 - **:save <файл>** — Сохранить результат в файл (.md, .txt, .go, .json)
 - **:reasoning** — Показать состояние режима размышления
 - **:reasoning on/off** — Включить/выключить режим размышления
 - **:diff-trace** — Показать состояние диагностики применения DIFF-вставок
-- **:diff-trace on/off** — Включить.выключить диагностику применения DIFF-вставок
+- **:diff-trace on/off** — Включить/выключить диагностику применения DIFF-вставок
+- **:quit** / **:exit** / **:q** — Выйти из Gogitor
 
 ## Код и Анализ
 - **:code <задача>** — Создать или изменить код
@@ -4617,7 +4625,6 @@ func helpTextRu() string {
 - **:test lint** — Запуск golangci-lint и автоисправление через LLM
 - **:vet** — Запуск go vet (быстро, без LLM)
 - **:todo** — Вывод TODO/FIXME/HACK маркеров
-- **:history** — История выполненных задач
 - **:task-diff** — Накопительный diff последней задачи
 
 ## Статьи
@@ -7431,7 +7438,7 @@ func (s *Service) handleLoad(
 }
 
 // readTaskFile читает и валидирует файл задачи (.txt / .md).
-// Повторяет логику из internal/ui/cli, чтобы TUI не зависел от пакета cli.
+// Keeps this helper local to the application layer so TUI does not need a command-line adapter.
 func readTaskFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -7463,7 +7470,7 @@ func readTaskFile(path string) (string, error) {
 }
 
 // expandHome раскрывает префикс "~/..." в абсолютный путь.
-// Дубликат из пакета cli (функция неэкспортирована и недоступна извне).
+// Local helper retained as application-layer logic.
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {

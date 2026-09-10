@@ -33,7 +33,6 @@ func cloneRepairChanges(
 	return out
 }
 
-
 func validateRepairTargetContract(
 	previous []domain.FileChange,
 	repaired []domain.FileChange,
@@ -115,8 +114,7 @@ func validateRepairTargetContract(
 
 	var paths []string
 
-	for path :=
-		range previousPaths {
+	for path := range previousPaths {
 
 		paths = append(
 			paths,
@@ -148,8 +146,7 @@ func validateRepairTargetContract(
 	}
 
 	for _, path := range paths {
-		for symbol :=
-			range previousSymbols[path] {
+		for symbol := range previousSymbols[path] {
 
 			if !repairedSymbols[path][symbol] {
 				return domain.NewPatchError(

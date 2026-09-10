@@ -8,7 +8,6 @@ import (
 	"gogitor/internal/domain"
 )
 
-
 func TestSemanticScopeAllowsRelatedInterfaceAndImplementationMethod(
 	t *testing.T,
 ) {

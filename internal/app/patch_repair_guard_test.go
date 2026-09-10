@@ -1,9 +1,9 @@
 package app
 
 import (
-	"testing"
-	"strings"
 	"gogitor/internal/domain"
+	"strings"
+	"testing"
 )
 
 func TestValidateRepairTargetContractRejectsSymbolDrift(
@@ -14,7 +14,7 @@ func TestValidateRepairTargetContractRejectsSymbolDrift(
 			Path: "internal/repository/paste.go",
 			Patches: []domain.Patch{
 				{
-					Symbol: "Store",
+					Symbol:  "Store",
 					Search:  "old",
 					Replace: "new",
 				},
@@ -27,7 +27,7 @@ func TestValidateRepairTargetContractRejectsSymbolDrift(
 			Path: "internal/repository/paste.go",
 			Patches: []domain.Patch{
 				{
-					Symbol: "Get",
+					Symbol:  "Get",
 					Search:  "old",
 					Replace: "new",
 				},
@@ -68,7 +68,7 @@ func TestValidateRepairTargetContractAllowsSymbolChangeAfterSymbolNotFound(
 			Path: "main.go",
 			Patches: []domain.Patch{
 				{
-					Symbol: "OldFunction",
+					Symbol:  "OldFunction",
 					Search:  "x",
 					Replace: "y",
 				},
@@ -81,7 +81,7 @@ func TestValidateRepairTargetContractAllowsSymbolChangeAfterSymbolNotFound(
 			Path: "main.go",
 			Patches: []domain.Patch{
 				{
-					Symbol: "RealFunction",
+					Symbol:  "RealFunction",
 					Search:  "x",
 					Replace: "y",
 				},
@@ -162,8 +162,8 @@ func TestPatchRepairStatePreservesPrimaryErrorAfterInvalidResponse(
 			Path: "main.go",
 			Patches: []domain.Patch{
 				{
-					Symbol: "handleListPastes",
-					Search: "old",
+					Symbol:  "handleListPastes",
+					Search:  "old",
 					Replace: "new",
 				},
 			},
@@ -182,8 +182,7 @@ func TestPatchRepairStatePreservesPrimaryErrorAfterInvalidResponse(
 		"LLM returned explanation instead of patch",
 	)
 
-	if got := state.repairCode();
-		got != domain.PatchErrorNoOpPatch {
+	if got := state.repairCode(); got != domain.PatchErrorNoOpPatch {
 
 		t.Fatalf(
 			"repairCode() = %q, want %q",
@@ -192,8 +191,7 @@ func TestPatchRepairStatePreservesPrimaryErrorAfterInvalidResponse(
 		)
 	}
 
-	if got := state.repairPatch();
-		got != "ORIGINAL PATCH CONTENT" {
+	if got := state.repairPatch(); got != "ORIGINAL PATCH CONTENT" {
 
 		t.Fatalf(
 			"repairPatch() = %q, want original patch",

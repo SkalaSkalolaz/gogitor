@@ -25,49 +25,40 @@ const (
 
 	PatchErrorSymbolNotFound PatchErrorCode = "symbol_not_found"
 
-    // PatchErrorSearchOutsideSymbol означает, что SEARCH существует
-    // в исходнике, но находится в другой декларации относительно Symbol.
-    PatchErrorSearchOutsideSymbol PatchErrorCode =
-    	"search_outside_symbol"
-    
-    // PatchErrorSearchNotFoundInsideSymbol означает, что SEARCH
-    // не удалось безопасно найти внутри указанного Symbol,
-    // но принадлежность к другой декларации не доказана.
-    PatchErrorSearchNotFoundInsideSymbol PatchErrorCode =
-    	"search_not_found_inside_symbol"
-    
-    // PatchErrorSearchCrossesSymbolBoundary означает, что SEARCH
-    // пересекает границы двух или более Go declarations.
-    PatchErrorSearchCrossesSymbolBoundary PatchErrorCode =
-    	"search_crosses_symbol_boundary"
-    
-    // PatchErrorAmbiguousSearch означает, что SEARCH имеет
-    // несколько допустимых совпадений.
-    PatchErrorAmbiguousSearch PatchErrorCode =
-    	"ambiguous_search"
-    
-    // PatchErrorRepairSymbolDrift означает, что repair попытался
-    // изменить зафиксированный Symbol исходного rejected patch.
-    PatchErrorRepairSymbolDrift PatchErrorCode =
-    	"repair_symbol_drift"
-    
-    // PatchErrorRepairFileDrift означает, что repair попытался
-    // убрать исходный целевой файл из rejected patch.
-    PatchErrorRepairFileDrift PatchErrorCode =
-    	"repair_file_drift"
-    
-    // PatchErrorRepairProtocolDrift означает, что во время
-    // patch-repair LLM вернула full-file change вместо patch.
-    PatchErrorRepairProtocolDrift PatchErrorCode =
-    	"repair_protocol_drift"
-    
-    // PatchErrorSourceChanged означает, что source hash устарел.
-    PatchErrorSourceChanged PatchErrorCode =
-    	"source_changed_since_patch_generation"
-    
-    // PatchErrorStaleSymbol означает, что fingerprint Symbol устарел.
-    PatchErrorStaleSymbol PatchErrorCode =
-    	"stale_symbol"
+	// PatchErrorSearchOutsideSymbol означает, что SEARCH существует
+	// в исходнике, но находится в другой декларации относительно Symbol.
+	PatchErrorSearchOutsideSymbol PatchErrorCode = "search_outside_symbol"
+
+	// PatchErrorSearchNotFoundInsideSymbol означает, что SEARCH
+	// не удалось безопасно найти внутри указанного Symbol,
+	// но принадлежность к другой декларации не доказана.
+	PatchErrorSearchNotFoundInsideSymbol PatchErrorCode = "search_not_found_inside_symbol"
+
+	// PatchErrorSearchCrossesSymbolBoundary означает, что SEARCH
+	// пересекает границы двух или более Go declarations.
+	PatchErrorSearchCrossesSymbolBoundary PatchErrorCode = "search_crosses_symbol_boundary"
+
+	// PatchErrorAmbiguousSearch означает, что SEARCH имеет
+	// несколько допустимых совпадений.
+	PatchErrorAmbiguousSearch PatchErrorCode = "ambiguous_search"
+
+	// PatchErrorRepairSymbolDrift означает, что repair попытался
+	// изменить зафиксированный Symbol исходного rejected patch.
+	PatchErrorRepairSymbolDrift PatchErrorCode = "repair_symbol_drift"
+
+	// PatchErrorRepairFileDrift означает, что repair попытался
+	// убрать исходный целевой файл из rejected patch.
+	PatchErrorRepairFileDrift PatchErrorCode = "repair_file_drift"
+
+	// PatchErrorRepairProtocolDrift означает, что во время
+	// patch-repair LLM вернула full-file change вместо patch.
+	PatchErrorRepairProtocolDrift PatchErrorCode = "repair_protocol_drift"
+
+	// PatchErrorSourceChanged означает, что source hash устарел.
+	PatchErrorSourceChanged PatchErrorCode = "source_changed_since_patch_generation"
+
+	// PatchErrorStaleSymbol означает, что fingerprint Symbol устарел.
+	PatchErrorStaleSymbol PatchErrorCode = "stale_symbol"
 
 	// PatchErrorNoOpPatch означает, что SEARCH/REPLACE
 	// формально сопоставились, но итоговый файл фактически
@@ -87,7 +78,6 @@ const (
 	PatchErrorImportGuard       PatchErrorCode = "import_guard"
 	PatchErrorGoModGuard        PatchErrorCode = "gomod_guard"
 	PatchErrorPatchTooLarge     PatchErrorCode = "patch_too_large"
-
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -179,32 +169,32 @@ func PatchErrorCodeFromText(
 		value = strings.TrimSpace(value)
 
 		switch PatchErrorCode(value) {
-        case PatchErrorSearchOutsideSymbol:
-        	return PatchErrorSearchOutsideSymbol
-        
-        case PatchErrorSearchNotFoundInsideSymbol:
-        	return PatchErrorSearchNotFoundInsideSymbol
-        
-        case PatchErrorSearchCrossesSymbolBoundary:
-        	return PatchErrorSearchCrossesSymbolBoundary
-        
-        case PatchErrorAmbiguousSearch:
-        	return PatchErrorAmbiguousSearch
-        
-        case PatchErrorRepairSymbolDrift:
-        	return PatchErrorRepairSymbolDrift
-        
-        case PatchErrorRepairFileDrift:
-        	return PatchErrorRepairFileDrift
-        
-        case PatchErrorRepairProtocolDrift:
-        	return PatchErrorRepairProtocolDrift
-        
-        case PatchErrorSourceChanged:
-        	return PatchErrorSourceChanged
-        
-        case PatchErrorStaleSymbol:
-        	return PatchErrorStaleSymbol
+		case PatchErrorSearchOutsideSymbol:
+			return PatchErrorSearchOutsideSymbol
+
+		case PatchErrorSearchNotFoundInsideSymbol:
+			return PatchErrorSearchNotFoundInsideSymbol
+
+		case PatchErrorSearchCrossesSymbolBoundary:
+			return PatchErrorSearchCrossesSymbolBoundary
+
+		case PatchErrorAmbiguousSearch:
+			return PatchErrorAmbiguousSearch
+
+		case PatchErrorRepairSymbolDrift:
+			return PatchErrorRepairSymbolDrift
+
+		case PatchErrorRepairFileDrift:
+			return PatchErrorRepairFileDrift
+
+		case PatchErrorRepairProtocolDrift:
+			return PatchErrorRepairProtocolDrift
+
+		case PatchErrorSourceChanged:
+			return PatchErrorSourceChanged
+
+		case PatchErrorStaleSymbol:
+			return PatchErrorStaleSymbol
 		case PatchErrorDuplicateFileChange:
 			return PatchErrorDuplicateFileChange
 
@@ -261,29 +251,29 @@ func PatchErrorCodeFromText(
 	):
 		return PatchErrorModuleImportMismatch
 
-    case strings.Contains(
-    	lower,
-    	"search crosses declaration boundary",
-    ):
-    	return PatchErrorSearchCrossesSymbolBoundary
-    
-    case strings.Contains(
-    	lower,
-    	"search block is ambiguous",
-    ):
-    	return PatchErrorAmbiguousSearch
-    
-    case strings.Contains(
-    	lower,
-    	"search block not found inside symbol",
-    ):
-    	return PatchErrorSearchNotFoundInsideSymbol
-    
-    case strings.Contains(
-    	lower,
-    	"symbol %q changed since patch generation",
-    ):
-    	return PatchErrorStaleSymbol
+	case strings.Contains(
+		lower,
+		"search crosses declaration boundary",
+	):
+		return PatchErrorSearchCrossesSymbolBoundary
+
+	case strings.Contains(
+		lower,
+		"search block is ambiguous",
+	):
+		return PatchErrorAmbiguousSearch
+
+	case strings.Contains(
+		lower,
+		"search block not found inside symbol",
+	):
+		return PatchErrorSearchNotFoundInsideSymbol
+
+	case strings.Contains(
+		lower,
+		"symbol %q changed since patch generation",
+	):
+		return PatchErrorStaleSymbol
 
 	default:
 		return ""

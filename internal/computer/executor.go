@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
-	"regexp"
 
 	"gogitor/internal/security"
 	"gogitor/internal/textutil"
@@ -16,13 +16,13 @@ import (
 
 // CommandResult — результат выполнения команды.
 type CommandResult struct {
-	Command    string             `json:"command"`
-	ExitCode   int                `json:"exit_code"`
-	Output     string             `json:"output"`
-	Duration   time.Duration      `json:"duration"`
-	TimedOut   bool               `json:"timed_out"`
-	Risk       security.RiskLevel `json:"risk"`
-	Reason     string             `json:"reason"`
+	Command  string             `json:"command"`
+	ExitCode int                `json:"exit_code"`
+	Output   string             `json:"output"`
+	Duration time.Duration      `json:"duration"`
+	TimedOut bool               `json:"timed_out"`
+	Risk     security.RiskLevel `json:"risk"`
+	Reason   string             `json:"reason"`
 }
 
 // ExecutorConfig — конфигурация исполнителя.

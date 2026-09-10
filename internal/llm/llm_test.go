@@ -5,7 +5,10 @@ import (
 )
 
 func TestIsThinkingUnsupported(t *testing.T) {
-	for _, tc := range []struct{ errText string; want bool }{
+	for _, tc := range []struct {
+		errText string
+		want    bool
+	}{
 		{"model does not support thinking", true},
 		{"not support thinking mode", true},
 		{"thinking is not supported", true},

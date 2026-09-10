@@ -19,7 +19,7 @@ type Git struct {
 	Dir string
 	Log *slog.Logger
 
-	authMu sync.Mutex
+	authMu  sync.Mutex
 	authEnv atomic.Value // []string
 }
 
@@ -51,31 +51,31 @@ func (g *Git) Init(ctx context.Context) error {
 }
 
 func (g *Git) ensureGitignore(ctx context.Context) {
-    gitignorePath := filepath.Join(g.Dir, ".gitignore")
-    entries := []string{".gogitor/", ".gogitor.json"}
-    
-    data, err := os.ReadFile(gitignorePath)
-    if err != nil {
-        _ = os.WriteFile(gitignorePath, []byte(strings.Join(entries, "\n")+"\n"), 0o644)
-        return
-    }
-    
-    content := string(data)
-    var missing []string
-    for _, e := range entries {
-        if !strings.Contains(content, e) {
-            missing = append(missing, e)
-        }
-    }
-    if len(missing) == 0 {
-        return
-    }
-    f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
-    if err != nil {
-        return
-    }
-    defer f.Close()
-    _, _ = f.WriteString("\n" + strings.Join(missing, "\n") + "\n")
+	gitignorePath := filepath.Join(g.Dir, ".gitignore")
+	entries := []string{".gogitor/", ".gogitor.json"}
+
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		_ = os.WriteFile(gitignorePath, []byte(strings.Join(entries, "\n")+"\n"), 0o644)
+		return
+	}
+
+	content := string(data)
+	var missing []string
+	for _, e := range entries {
+		if !strings.Contains(content, e) {
+			missing = append(missing, e)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString("\n" + strings.Join(missing, "\n") + "\n")
 }
 
 func (g *Git) EnsureRepo(ctx context.Context, autoInit bool) error {
@@ -259,20 +259,20 @@ func InjectToken(repoURL, token string) string {
 	if token == "" {
 		return repoURL
 	}
-    if strings.HasPrefix(repoURL, "git@") {
-    	rest := strings.TrimPrefix(repoURL, "git@")
-    	parts := strings.SplitN(rest, ":", 2)
-    	if len(parts) == 2 {
-    		credentials := url.UserPassword("x-access-token", token).String()
-    
-    		return fmt.Sprintf(
-    			"https://%s@%s/%s",
-    			credentials,
-    			parts[0],
-    			parts[1],
-    		)
-    	}
-    }
+	if strings.HasPrefix(repoURL, "git@") {
+		rest := strings.TrimPrefix(repoURL, "git@")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) == 2 {
+			credentials := url.UserPassword("x-access-token", token).String()
+
+			return fmt.Sprintf(
+				"https://%s@%s/%s",
+				credentials,
+				parts[0],
+				parts[1],
+			)
+		}
+	}
 
 	u, err := url.Parse(repoURL)
 	if err != nil {
@@ -284,8 +284,6 @@ func InjectToken(repoURL, token string) string {
 	}
 	return repoURL
 }
-
-
 
 func (g *Git) WithCloneAuth(ctx context.Context, repoURL, token string, fn func() (string, error)) (string, error) {
 	if token == "" {
@@ -307,7 +305,7 @@ func (g *Git) WithCloneAuth(ctx context.Context, repoURL, token string, fn func(
 		fmt.Sprintf("GIT_CONFIG_KEY_0=url.%s/.insteadOf", authBase),
 		fmt.Sprintf("GIT_CONFIG_VALUE_0=%s/", cleanBase),
 	}
-	
+
 	old, _ := g.authEnv.Load().([]string)
 	g.authEnv.Store(env)
 	defer g.authEnv.Store(old)
@@ -341,21 +339,21 @@ func (g *Git) WithAuthenticatedRemote(
 
 	// Превращаем SSH/HTTPS URL в аутентифицированный HTTPS URL.
 	authURL := InjectToken(origURL, token)
-    safeAuthURL := authURL
-    
-    if u, err := url.Parse(authURL); err == nil {
-    	u.User = nil
-    	safeAuthURL = u.String()
-    }
-    
-    if g.Log != nil {
-    	g.Log.Debug(
-    		"github authentication configured",
-    		"remote", remote,
-    		"original_url", origURL,
-    		"authenticated_url", safeAuthURL,
-    	)
-    }
+	safeAuthURL := authURL
+
+	if u, err := url.Parse(authURL); err == nil {
+		u.User = nil
+		safeAuthURL = u.String()
+	}
+
+	if g.Log != nil {
+		g.Log.Debug(
+			"github authentication configured",
+			"remote", remote,
+			"original_url", origURL,
+			"authenticated_url", safeAuthURL,
+		)
+	}
 	if authURL == origURL {
 		return fn()
 	}
@@ -475,7 +473,6 @@ func (g *Git) Reset(ctx context.Context, hash string, hard bool) (string, error)
 func (g *Git) runNet(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
 	return g.runWithTimeout(ctx, timeout, args...)
 }
-
 
 // HeadHash возвращает хеш текущего HEAD.
 func (g *Git) HeadHash(ctx context.Context) (string, error) {

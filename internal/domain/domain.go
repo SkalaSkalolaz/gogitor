@@ -279,7 +279,7 @@ type Result struct {
 	Comparison         *ComparisonResult `json:"comparison,omitempty"`
 	AwaitingSelection  bool              `json:"awaiting_selection,omitempty"`
 	SelectedApproach   string            `json:"selected_approach,omitempty"`
-    PatchRepairContext string 			 `json:"-"`
+	PatchRepairContext string            `json:"-"`
 }
 
 type TaskHistoryEntry struct {

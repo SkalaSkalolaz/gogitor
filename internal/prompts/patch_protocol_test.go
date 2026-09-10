@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-    "gogitor/internal/domain"
+	"gogitor/internal/domain"
 )
 
 func TestPatchRepairTargetLock(t *testing.T) {

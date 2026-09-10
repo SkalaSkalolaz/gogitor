@@ -5,7 +5,10 @@ import (
 )
 
 func TestNormalizeTokensV2(t *testing.T) {
-	for _, tc := range []struct{ in string; want []string }{
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
 		{"HelloWorld", []string{"hello", "world"}},
 		{"parse_file", []string{"parse", "file"}},
 		{"main.go", []string{"main", "go"}},
@@ -28,7 +31,10 @@ func TestNormalizeTokensV2(t *testing.T) {
 }
 
 func TestSplitCamelV2(t *testing.T) {
-	for _, tc := range []struct{ in string; want []string }{
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
 		{"HelloWorld", []string{"hello", "world"}},
 		{"HTTPServer", []string{"http", "server"}},
 		{"parseFile", []string{"parse", "file"}},
@@ -72,7 +78,10 @@ func TestExtractKeywordsV2_Russian(t *testing.T) {
 }
 
 func TestDetectTestIntentV2(t *testing.T) {
-	for _, tc := range []struct{ task string; want bool }{
+	for _, tc := range []struct {
+		task string
+		want bool
+	}{
 		{"write tests for the function", true},
 		{"напиши тесты для функции", true},
 		{"test coverage", true},

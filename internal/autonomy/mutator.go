@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-    "gogitor/internal/i18n"
 	"gogitor/internal/domain"
+	"gogitor/internal/i18n"
 	"gogitor/internal/runner"
 	"gogitor/internal/security"
 	"gogitor/internal/workspace"
@@ -179,13 +179,13 @@ func (m *Mutator) Run(ctx context.Context, mutations []Mutation, emit func(domai
 			break
 		}
 
-        if emit != nil {
-            emit(domain.Event{
-                Type:    domain.EventLog,
-                Message: i18n.T("Mutation %d/%d: %s:%d (%s)",
-                    i+1, total, mutations[i].File, mutations[i].Line, mutations[i].Type),
-            })
-        }
+		if emit != nil {
+			emit(domain.Event{
+				Type: domain.EventLog,
+				Message: i18n.T("Mutation %d/%d: %s:%d (%s)",
+					i+1, total, mutations[i].File, mutations[i].Line, mutations[i].Type),
+			})
+		}
 		// Создаём песочницу
 		sandbox, err := m.ws.PrepareSandbox(ctx)
 		if err != nil {

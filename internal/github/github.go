@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"gogitor/internal/textutil"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
-	"gogitor/internal/textutil"
 )
 
 const apiBase = "https://api.github.com"
@@ -111,9 +111,9 @@ func (c *Client) RepoInfo(ctx context.Context, owner, repo string) (*Repo, error
 // CreateRepo создаёт новый репозиторий.
 func (c *Client) CreateRepo(ctx context.Context, name string, private bool, description string) (*Repo, error) {
 	payload := map[string]any{
-		"name":       name,
-		"private":    private,
-		"auto_init":  false,
+		"name":      name,
+		"private":   private,
+		"auto_init": false,
 	}
 	if description != "" {
 		payload["description"] = description
@@ -137,9 +137,10 @@ func (c *Client) CreateRepo(ctx context.Context, name string, private bool, desc
 
 // ParseRepoURL извлекает owner и repo из URL.
 // Поддерживает:
-//   https://github.com/user/repo
-//   https://github.com/user/repo.git
-//   git@github.com:user/repo.git
+//
+//	https://github.com/user/repo
+//	https://github.com/user/repo.git
+//	git@github.com:user/repo.git
 func ParseRepoURL(rawURL string) (owner, repo string, err error) {
 	rawURL = strings.TrimSpace(rawURL)
 	rawURL = strings.TrimSuffix(rawURL, ".git")

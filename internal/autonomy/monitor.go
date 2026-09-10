@@ -11,8 +11,8 @@ import (
 
 	"log/slog"
 
-    "gogitor/internal/i18n"
 	"gogitor/internal/config"
+	"gogitor/internal/i18n"
 	"gogitor/internal/workspace"
 )
 
@@ -174,21 +174,21 @@ func (m *Monitor) checkVet(ctx context.Context) (string, error) {
 // Status возвращает текущее состояние монитора.
 
 func (m *Monitor) Status() string {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-    if !m.running {
-        return i18n.T("Autonomy monitor: stopped")
-    }
-    info := i18n.T("Autonomy monitor: running (last check: %s)", m.lastRun.Format("15:04:05"))
-    if m.lastBuildErr != "" {
-        info += "\n" + i18n.T("⚠ Build: FAILING")
-    } else {
-        info += "\n" + i18n.T("✓ Build: passing")
-    }
-    if m.lastVetOut != "" {
-        info += "\n" + i18n.T("⚠ go vet: issues found")
-    } else {
-        info += "\n" + i18n.T("✓ go vet: clean")
-    }
-    return info
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.running {
+		return i18n.T("Autonomy monitor: stopped")
+	}
+	info := i18n.T("Autonomy monitor: running (last check: %s)", m.lastRun.Format("15:04:05"))
+	if m.lastBuildErr != "" {
+		info += "\n" + i18n.T("⚠ Build: FAILING")
+	} else {
+		info += "\n" + i18n.T("✓ Build: passing")
+	}
+	if m.lastVetOut != "" {
+		info += "\n" + i18n.T("⚠ go vet: issues found")
+	} else {
+		info += "\n" + i18n.T("✓ go vet: clean")
+	}
+	return info
 }

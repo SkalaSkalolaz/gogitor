@@ -11,7 +11,7 @@ func TestClassifyAutoResearch(t *testing.T) {
 	}{
 		{
 			name: "dependency",
-			err: "git@github.com: Permission denied (publickey).",
+			err:  "git@github.com: Permission denied (publickey).",
 			want: AutoResearchDependency,
 		},
 		{

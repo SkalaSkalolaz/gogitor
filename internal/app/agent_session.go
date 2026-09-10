@@ -34,25 +34,27 @@ type agentSession struct {
 }
 
 type agentSessionState struct {
-	Version            int        `json:"version"`
-	Task               string     `json:"task"`
-	Depth              AgentDepth `json:"depth"`
-	StartedAt          time.Time  `json:"started_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	PreTaskHead        string     `json:"pre_task_head,omitempty"`
-	CurrentSubtask     int        `json:"current_subtask"`
-	CompletedSubtasks  int        `json:"completed_subtasks"`
-	TotalSubtasks      int        `json:"total_subtasks"`
-	Status             string     `json:"status"`
-	GitCommit          string     `json:"git_commit,omitempty"`
-	UndoCommit         string     `json:"undo_commit,omitempty"`
-	ResumedFrom        string     `json:"resumed_from,omitempty"`
-	SubtaskCommits     []string   `json:"subtask_commits,omitempty"`
-	LastSubtask        int        `json:"last_subtask,omitempty"`
-	LastSubtaskFiles   []string   `json:"last_subtask_files,omitempty"`
-	LastSubtaskDelta   string     `json:"last_subtask_delta,omitempty"`
-	CurrentContextHash string     `json:"current_context_hash,omitempty"`
-	PlanRevision       int        `json:"plan_revision,omitempty"`
+	Version           int        `json:"version"`
+	Task              string     `json:"task"`
+	Depth             AgentDepth `json:"depth"`
+	StartedAt         time.Time  `json:"started_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	PreTaskHead       string     `json:"pre_task_head,omitempty"`
+	CurrentSubtask    int        `json:"current_subtask"`
+	CompletedSubtasks int        `json:"completed_subtasks"`
+	TotalSubtasks     int        `json:"total_subtasks"`
+	Status            string     `json:"status"`
+	GitCommit         string     `json:"git_commit,omitempty"`
+	UndoCommit        string     `json:"undo_commit,omitempty"`
+	ResumedFrom       string     `json:"resumed_from,omitempty"`
+	// Kept for backward compatibility with older session files. New runs
+	// create a single final commit after successful verification.
+	SubtaskCommits     []string `json:"subtask_commits,omitempty"`
+	LastSubtask        int      `json:"last_subtask,omitempty"`
+	LastSubtaskFiles   []string `json:"last_subtask_files,omitempty"`
+	LastSubtaskDelta   string   `json:"last_subtask_delta,omitempty"`
+	CurrentContextHash string   `json:"current_context_hash,omitempty"`
+	PlanRevision       int      `json:"plan_revision,omitempty"`
 }
 
 func (r agentGateReport) toDomain() domain.QualityGateStatus {

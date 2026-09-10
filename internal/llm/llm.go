@@ -1,23 +1,23 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
-    "bufio"
-	"encoding/base64"
-	"mime"
-	"path/filepath"
 
-	"gogitor/internal/textutil"
 	"gogitor/internal/config"
+	"gogitor/internal/textutil"
 )
 
 type Client struct {
@@ -34,16 +34,16 @@ type reasoningCtxKey struct{}
 
 // WithReasoningDisabled помечает контекст: reasoning для этого запроса отключён.
 func WithReasoningDisabled(ctx context.Context) context.Context {
-    return context.WithValue(ctx, reasoningCtxKey{}, true)
+	return context.WithValue(ctx, reasoningCtxKey{}, true)
 }
 
 // reasoningDisabled проверяет, отключён ли reasoning через контекст.
 func reasoningDisabled(ctx context.Context) bool {
-    if ctx == nil {
-        return false
-    }
-    v, _ := ctx.Value(reasoningCtxKey{}).(bool)
-    return v
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(reasoningCtxKey{}).(bool)
+	return v
 }
 
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
@@ -92,43 +92,43 @@ func (c *Client) Send(ctx context.Context, prompt string) (string, error) {
 }
 
 func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string, error) {
-    endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/generate"
 
-    estimatedTokens := (len(prompt) + 3) / 4
-    
-    // Запас на генерацию ответа масштабируется от размера контекста:
-    // для малых моделей — 2048, для больших — до 16384
-    responseReserve := 2048
-    maxCtx := c.cfg.EffectiveContextTokens()
-    if maxCtx > 65536 {
-        responseReserve = 8192
-    }
-    if maxCtx > 131072 {
-        responseReserve = 16384
-    }
+	estimatedTokens := (len(prompt) + 3) / 4
 
-    numCtx := estimatedTokens + responseReserve
+	// Запас на генерацию ответа масштабируется от размера контекста:
+	// для малых моделей — 2048, для больших — до 16384
+	responseReserve := 2048
+	maxCtx := c.cfg.EffectiveContextTokens()
+	if maxCtx > 65536 {
+		responseReserve = 8192
+	}
+	if maxCtx > 131072 {
+		responseReserve = 16384
+	}
 
-    // Минимум не меняем
-    if numCtx < 4096 {
-        numCtx = 4096
-    }
-    // Потолок теперь конфигурируемый
-    if numCtx > maxCtx {
-        numCtx = maxCtx
-    }
+	numCtx := estimatedTokens + responseReserve
 
-    payload := map[string]any{
-        "model":  c.cfg.Model,
-        "prompt": prompt,
-        "stream": false,
-        "options": map[string]any{
-            "num_ctx": numCtx,
-        },
-    }
-    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
-        payload["think"] = true
-    }
+	// Минимум не меняем
+	if numCtx < 4096 {
+		numCtx = 4096
+	}
+	// Потолок теперь конфигурируемый
+	if numCtx > maxCtx {
+		numCtx = maxCtx
+	}
+
+	payload := map[string]any{
+		"model":  c.cfg.Model,
+		"prompt": prompt,
+		"stream": false,
+		"options": map[string]any{
+			"num_ctx": numCtx,
+		},
+	}
+	if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+		payload["think"] = true
+	}
 	body, status, err := c.postJSON(ctx, endpoint, payload, nil)
 	if err != nil {
 		return "", err
@@ -136,7 +136,7 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 	if status != http.StatusOK {
 		snippet := errorSnippet(body)
 		// Если модель не поддерживает thinking, повторяем без него.
-        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
+		if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			if c.log != nil {
 				c.log.Warn("model does not support thinking, retrying without",
 					"model", c.cfg.Model)
@@ -155,7 +155,7 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 	}
 	var resp struct {
 		Response string `json:"response"`
-        Thinking string `json:"thinking"` 
+		Thinking string `json:"thinking"`
 		Error    string `json:"error"`
 	}
 
@@ -167,16 +167,16 @@ func (c *Client) sendOllama(ctx context.Context, baseURL, prompt string) (string
 		return "", fmt.Errorf("ollama error: %s", resp.Error)
 	}
 
-    // Логируем thinking в debug
-    if resp.Thinking != "" && c.log != nil {
-        c.log.Debug("ollama thinking",
-            "tokens", (len(resp.Thinking)+3)/4,
-            "preview", textutil.LimitRunes(resp.Thinking, 200, "..."))
-    }
+	// Логируем thinking в debug
+	if resp.Thinking != "" && c.log != nil {
+		c.log.Debug("ollama thinking",
+			"tokens", (len(resp.Thinking)+3)/4,
+			"preview", textutil.LimitRunes(resp.Thinking, 200, "..."))
+	}
 
-    if c.cfg.ReasoningShow && resp.Thinking != "" {
-        return strings.TrimSpace(resp.Thinking + "\n\n" + resp.Response), nil
-    }
+	if c.cfg.ReasoningShow && resp.Thinking != "" {
+		return strings.TrimSpace(resp.Thinking + "\n\n" + resp.Response), nil
+	}
 	return strings.TrimSpace(resp.Response), nil
 }
 
@@ -219,14 +219,13 @@ func errorSnippet(body []byte) string {
 func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt string) (string, error) {
 	endpoint := openAIChatEndpoint(baseURL)
 
-    maxTokens := 4096
-    if c.cfg.EffectiveContextTokens() > 65536 {
-        maxTokens = 16384
-    }
-    if c.cfg.EffectiveContextTokens() > 131072 {
-        maxTokens = 32768
-    }
-
+	maxTokens := 4096
+	if c.cfg.EffectiveContextTokens() > 65536 {
+		maxTokens = 16384
+	}
+	if c.cfg.EffectiveContextTokens() > 131072 {
+		maxTokens = 32768
+	}
 
 	payload := map[string]any{
 		"model": c.cfg.Model,
@@ -236,20 +235,20 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 				"content": prompt,
 			},
 		},
-		"stream": false,
+		"stream":     false,
 		"max_tokens": maxTokens,
 	}
-    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
-        effort := c.cfg.ReasoningEffort
-        if effort == "" {
-            effort = "medium"
-        }
-        payload["reasoning_effort"] = effort
+	if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+		effort := c.cfg.ReasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		payload["reasoning_effort"] = effort
 
-        if c.cfg.ReasoningBudget > 0 {
-            payload["max_completion_tokens"] = maxTokens + c.cfg.ReasoningBudget
-        }
-    }
+		if c.cfg.ReasoningBudget > 0 {
+			payload["max_completion_tokens"] = maxTokens + c.cfg.ReasoningBudget
+		}
+	}
 
 	headers := map[string]string{}
 
@@ -264,7 +263,7 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 
 	if status != http.StatusOK {
 		snippet := errorSnippet(body)
-        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
+		if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			c.log.Warn("reasoning not supported by model, retrying without",
 				"model", c.cfg.Model)
 			delete(payload, "reasoning_effort")
@@ -283,12 +282,12 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		}
 	}
 
-    content := parseOpenAIContent(body)
-    if content == "" {
-        return "", fmt.Errorf("openai-compatible returned empty content: %s",
-            errorSnippet(body))
-    }
-    return content, nil
+	content := parseOpenAIContent(body)
+	if content == "" {
+		return "", fmt.Errorf("openai-compatible returned empty content: %s",
+			errorSnippet(body))
+	}
+	return content, nil
 }
 
 func openAIChatEndpoint(baseURL string) string {
@@ -398,7 +397,6 @@ func (c *Client) streamOllama(
 		numCtx = maxCtx
 	}
 
-
 	payload := map[string]any{
 		"model":  c.cfg.Model,
 		"prompt": prompt,
@@ -408,9 +406,9 @@ func (c *Client) streamOllama(
 		},
 	}
 
-    if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
-        payload["think"] = true
-    }
+	if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+		payload["think"] = true
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -431,7 +429,7 @@ func (c *Client) streamOllama(
 		resp.Body.Close()
 		snippet := errorSnippet(body)
 		// Если модель не поддерживает thinking, повторяем без него.
-        if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
+		if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
 			if c.log != nil {
 				c.log.Warn("model does not support thinking, retrying stream without",
 					"model", c.cfg.Model)
@@ -462,7 +460,7 @@ func (c *Client) streamOllama(
 	defer resp.Body.Close()
 
 	var full strings.Builder
-    var thinkingBuf strings.Builder
+	var thinkingBuf strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
@@ -474,7 +472,7 @@ func (c *Client) streamOllama(
 
 		var chunk struct {
 			Response string `json:"response"`
-            Thinking string `json:"thinking"`
+			Thinking string `json:"thinking"`
 			Error    string `json:"error"`
 			Done     bool   `json:"done"`
 		}
@@ -488,33 +486,33 @@ func (c *Client) streamOllama(
 			return full.String(), fmt.Errorf("ollama stream error: %s", chunk.Error)
 		}
 
-       if chunk.Thinking != "" {
-            thinkingBuf.WriteString(chunk.Thinking)
-            if c.cfg.ReasoningShow && onToken != nil {
-                onToken(chunk.Thinking) // показываем если включено
-            }
-        }
-        if chunk.Response != "" {
-            full.WriteString(chunk.Response)
-            if onToken != nil {
-                onToken(chunk.Response)
-            }
-        }
-        if chunk.Done {
-            break
-        }
-    }
+		if chunk.Thinking != "" {
+			thinkingBuf.WriteString(chunk.Thinking)
+			if c.cfg.ReasoningShow && onToken != nil {
+				onToken(chunk.Thinking) // показываем если включено
+			}
+		}
+		if chunk.Response != "" {
+			full.WriteString(chunk.Response)
+			if onToken != nil {
+				onToken(chunk.Response)
+			}
+		}
+		if chunk.Done {
+			break
+		}
+	}
 
-    if thinkingBuf.Len() > 0 && c.log != nil {
-        c.log.Debug("ollama stream thinking",
-            "tokens", (thinkingBuf.Len()+3)/4)
-    }
+	if thinkingBuf.Len() > 0 && c.log != nil {
+		c.log.Debug("ollama stream thinking",
+			"tokens", (thinkingBuf.Len()+3)/4)
+	}
 
-    if c.cfg.ReasoningShow && thinkingBuf.Len() > 0 {
-        return strings.TrimSpace(thinkingBuf.String() + "\n\n" + full.String()), nil
-    }
-    
-    return strings.TrimSpace(full.String()), nil
+	if c.cfg.ReasoningShow && thinkingBuf.Len() > 0 {
+		return strings.TrimSpace(thinkingBuf.String() + "\n\n" + full.String()), nil
+	}
+
+	return strings.TrimSpace(full.String()), nil
 }
 
 func (c *Client) streamOpenAICompatible(
@@ -589,18 +587,18 @@ func (c *Client) streamOpenAICompatible(
 				if dataPart == "[DONE]" {
 					break
 				}
-    			content, reasoning := parseOpenAIStreamChunk([]byte(dataPart))
-    			if reasoning != "" && c.log != nil {
-    				c.log.Debug("openai-compatible reasoning chunk",
-    					"len", len(reasoning))
-    			}
-    			if content != "" {
-    				full.WriteString(content)
-    				if onToken != nil {
-    					onToken(content)
-    				}
-    			}
-    
+				content, reasoning := parseOpenAIStreamChunk([]byte(dataPart))
+				if reasoning != "" && c.log != nil {
+					c.log.Debug("openai-compatible reasoning chunk",
+						"len", len(reasoning))
+				}
+				if content != "" {
+					full.WriteString(content)
+					if onToken != nil {
+						onToken(content)
+					}
+				}
+
 			}
 		}
 
@@ -616,26 +614,26 @@ func (c *Client) streamOpenAICompatible(
 }
 
 func parseOpenAIStreamChunk(data []byte) (content, reasoning string) {
-    var resp struct {
-        Choices []struct {
-            Delta struct {
-                Content          string `json:"content"`
-                ReasoningContent string `json:"reasoning_content"` // DeepSeek/vLLM
-            } `json:"delta"`
-            Text string `json:"text"`
-        } `json:"choices"`
-    }
-    if err := json.Unmarshal(data, &resp); err != nil {
-        return "", ""
-    }
-    if len(resp.Choices) == 0 {
-        return "", ""
-    }
-    delta := resp.Choices[0].Delta
-    if delta.Content != "" {
-        return delta.Content, delta.ReasoningContent
-    }
-    return resp.Choices[0].Text, delta.ReasoningContent
+	var resp struct {
+		Choices []struct {
+			Delta struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"` // DeepSeek/vLLM
+			} `json:"delta"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", ""
+	}
+	if len(resp.Choices) == 0 {
+		return "", ""
+	}
+	delta := resp.Choices[0].Delta
+	if delta.Content != "" {
+		return delta.Content, delta.ReasoningContent
+	}
+	return resp.Choices[0].Text, delta.ReasoningContent
 }
 
 // ─── Multimodal (Vision) ─────────────────────────────────────────────

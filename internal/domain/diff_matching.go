@@ -42,14 +42,14 @@ type DiffMatchingConfig struct {
 // DefaultDiffMatchingConfig возвращает безопасные исходные значения.
 func DefaultDiffMatchingConfig() DiffMatchingConfig {
 	return DiffMatchingConfig{
-		ASTWeight:           0.85,
-		LineWeight:          0.15,
-		ASTMinStructure:     0.82,
-		FuzzyBaseThreshold:  0.60,
-		BalancedThreshold:   0.82,
-		BalancedMargin:      0.08,
-		AdvancedThreshold:   0.85,
-		AdvancedMargin:      0.05,
+		ASTWeight:          0.85,
+		LineWeight:         0.15,
+		ASTMinStructure:    0.82,
+		FuzzyBaseThreshold: 0.60,
+		BalancedThreshold:  0.82,
+		BalancedMargin:     0.08,
+		AdvancedThreshold:  0.85,
+		AdvancedMargin:     0.05,
 	}
 }
 

@@ -133,10 +133,10 @@ func applyOnePatchWithPolicyCoreChecked(
 					"expected source hash does not match original file",
 				)
 
-                return "", domain.NewPatchError(
-                	domain.PatchErrorSourceChanged,
-                	"expected source hash does not match original file",
-                )
+				return "", domain.NewPatchError(
+					domain.PatchErrorSourceChanged,
+					"expected source hash does not match original file",
+				)
 
 			}
 
@@ -214,75 +214,74 @@ func applyOnePatchWithPolicyCoreChecked(
 			)
 		}
 
+		start, end, err :=
+			findSymbolRange(
+				content,
+				p.Symbol,
+			)
 
-        start, end, err :=
-        	findSymbolRange(
-        		content,
-        		p.Symbol,
-        	)
-        
-        if err != nil {
-        
-        	// REPLACE_ONLY никогда не должен
-        	// терять Symbol-based safety.
-        	if replaceOnly ||
-        		policy == PatchPolicyStrict {
-        
-        		trace.emit(
-        			"SYMBOL",
-        			"REJECT",
-        			"error=%q",
-        			err.Error(),
-        		)
-        
-        		return "", err
-        	}
-        
-        	trace.emit(
-        		"SYMBOL",
-        		"WARN",
-        		"symbol=%q unresolved; attempting high-confidence file-scope recovery",
-        		p.Symbol,
-        	)
-        
-        	updated, matched, fallbackErr :=
-        		applyPatchTextCore(
-        			content,
-        			search,
-        			replace,
-        			policy,
-        			minConfidenceOverride,
-        			matching,
-        			trace,
-        		)
-        
-        	if fallbackErr != nil {
-        		return "", fallbackErr
-        	}
-        
-        	if matched &&
-        		isSafeSymbolRecoveryMethod(
-        			trace.method,
-        		) {
-        
-        		trace.emit(
-        			"SYMBOL",
-        			"RECOVER",
-        			"method=%s",
-        			trace.method,
-        		)
-        
-        		return updated, nil
-        	}
-            return "", domain.NewPatchError(
-            	domain.PatchErrorStaleSymbol,
-            	fmt.Sprintf(
-            		"symbol %q changed since patch generation",
-            		p.Symbol,
-            	),
-            )
+		if err != nil {
 
-        }
+			// REPLACE_ONLY никогда не должен
+			// терять Symbol-based safety.
+			if replaceOnly ||
+				policy == PatchPolicyStrict {
+
+				trace.emit(
+					"SYMBOL",
+					"REJECT",
+					"error=%q",
+					err.Error(),
+				)
+
+				return "", err
+			}
+
+			trace.emit(
+				"SYMBOL",
+				"WARN",
+				"symbol=%q unresolved; attempting high-confidence file-scope recovery",
+				p.Symbol,
+			)
+
+			updated, matched, fallbackErr :=
+				applyPatchTextCore(
+					content,
+					search,
+					replace,
+					policy,
+					minConfidenceOverride,
+					matching,
+					trace,
+				)
+
+			if fallbackErr != nil {
+				return "", fallbackErr
+			}
+
+			if matched &&
+				isSafeSymbolRecoveryMethod(
+					trace.method,
+				) {
+
+				trace.emit(
+					"SYMBOL",
+					"RECOVER",
+					"method=%s",
+					trace.method,
+				)
+
+				return updated, nil
+			}
+			return "", domain.NewPatchError(
+				domain.PatchErrorStaleSymbol,
+				fmt.Sprintf(
+					"symbol %q changed since patch generation",
+					p.Symbol,
+				),
+			)
+
+		}
 
 		trace.emit(
 			"SYMBOL",
@@ -456,37 +455,37 @@ func applyOnePatchWithPolicyCoreChecked(
 		)
 	}
 
-    // ------------------------------------------------------------
-    // FILE-SCOPED PATCH
-    // ------------------------------------------------------------
-    updated, matched, err :=
-        applyPatchTextCore(
-            content,
-            search,
-            replace,
-            policy,
-            minConfidenceOverride,
-            matching,
-            trace,
-        )
-    if err != nil {
-        return "", err
-    }
-    if matched {
-        result, _, finishErr :=
-            finishPatchResult(
-                content,
-                updated,
-                trace,
-            )
-        if finishErr != nil {
-            return "", finishErr
-        }
-        return result, nil
-    }
-    return "", fmt.Errorf(
-        "SEARCH block not found in file content",
-    )
+	// ------------------------------------------------------------
+	// FILE-SCOPED PATCH
+	// ------------------------------------------------------------
+	updated, matched, err :=
+		applyPatchTextCore(
+			content,
+			search,
+			replace,
+			policy,
+			minConfidenceOverride,
+			matching,
+			trace,
+		)
+	if err != nil {
+		return "", err
+	}
+	if matched {
+		result, _, finishErr :=
+			finishPatchResult(
+				content,
+				updated,
+				trace,
+			)
+		if finishErr != nil {
+			return "", finishErr
+		}
+		return result, nil
+	}
+	return "", fmt.Errorf(
+		"SEARCH block not found in file content",
+	)
 }
 func isSafeSymbolRecoveryMethod(
 	method string,

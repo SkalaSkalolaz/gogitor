@@ -6,7 +6,10 @@ import (
 )
 
 func TestExtractRedirectPaths(t *testing.T) {
-	for _, tc := range []struct{ name, cmd string; want int }{
+	for _, tc := range []struct {
+		name, cmd string
+		want      int
+	}{
 		{"simple", "echo hello > output.txt", 1},
 		{"append", "echo hello >> output.txt", 1},
 		{"dev null", "cmd > /dev/null", 0},

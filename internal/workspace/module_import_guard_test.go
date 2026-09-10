@@ -69,8 +69,7 @@ func main() {
 	}
 
 	if code :=
-		domain.PatchErrorCodeFromError(err);
-		code != domain.PatchErrorModuleImportMismatch {
+		domain.PatchErrorCodeFromError(err); code != domain.PatchErrorModuleImportMismatch {
 
 		t.Fatalf(
 			"error code = %q, want %q",

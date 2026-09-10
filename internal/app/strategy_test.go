@@ -142,8 +142,8 @@ func TestValidateEditRecommendationRefactorPrefersPatch(
 	t *testing.T,
 ) {
 	signals := executionSignals{
-		Score:       6,
-		TargetFiles: 1,
+		Score:         6,
+		TargetFiles:   1,
 		RequiresAgent: true,
 	}
 
@@ -318,9 +318,9 @@ func TestCloudModelIsRemoteOnLocalOllama(
 
 func TestTaskRequiresAgent(t *testing.T) {
 	tests := []struct {
-		name  string
-		task  string
-		want  bool
+		name string
+		task string
+		want bool
 	}{
 		{
 			name: "health endpoint is simple",
@@ -506,17 +506,17 @@ func TestTaskComplexityDoesNotOverrateCommonDevelopmentTerms(
 		{
 			name: "health endpoint",
 			task: "add HTTP GET /health endpoint returning OK",
-			max: 2,
+			max:  2,
 		},
 		{
 			name: "API endpoint",
 			task: "add GET /api/cars endpoint returning JSON",
-			max: 2,
+			max:  2,
 		},
 		{
 			name: "server check",
 			task: "add a server health check with timeout",
-			max: 2,
+			max:  2,
 		},
 	}
 

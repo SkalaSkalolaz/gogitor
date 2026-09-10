@@ -267,8 +267,8 @@ func TestExecutionStrategy(t *testing.T) {
 		"simple|agent",
 		"agent_depth",
 		"normal|deep",
-        "edit_mode",
-        "patch|full",
+		"edit_mode",
+		"patch|full",
 	} {
 		if !strings.Contains(p, kw) {
 			t.Errorf(

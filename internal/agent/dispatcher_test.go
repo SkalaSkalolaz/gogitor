@@ -39,7 +39,7 @@ func TestIsRetryable(t *testing.T) {
 		{"429", errors.New("HTTP 429 Too Many Requests"), true},
 		{"502", errors.New("HTTP 502 Bad Gateway"), true},
 		{"503", errors.New("HTTP 503"), true},
-        {"model not found", errors.New("model not found"), false},
+		{"model not found", errors.New("model not found"), false},
 		{"random", errors.New("some error"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

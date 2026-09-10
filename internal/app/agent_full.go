@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
-	"time"
 	"regexp"
 	"sort"
+	"strings"
+	"time"
 
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
@@ -245,7 +245,7 @@ func splitCompoundAgentSubtask(
 
 	for i := 1; i < len(unique); i++ {
 		gap :=
-			task[unique[i-1].End: unique[i].Start]
+			task[unique[i-1].End:unique[i].Start]
 
 		if !isAtomicTaskJoiner(gap) {
 			return []fullPlanSubtask{sub}
@@ -1107,23 +1107,23 @@ func (s *Service) executeAgentFull(
 		)
 	}
 
-    plan =
-    	s.enforceAtomicAgentPlan(
-    		plan,
-    		query,
-    		emit,
-    	)
-    
-    plan =
-    	validateAgentPlan(
-    		plan,
-    		query,
-    	)
-    
-    plan =
-    	s.limitAgentPlan(
-    		plan,
-    	)
+	plan =
+		s.enforceAtomicAgentPlan(
+			plan,
+			query,
+			emit,
+		)
+
+	plan =
+		validateAgentPlan(
+			plan,
+			query,
+		)
+
+	plan =
+		s.limitAgentPlan(
+			plan,
+		)
 	if session != nil {
 		if err := saveAgentPlan(
 			session,
@@ -1417,7 +1417,7 @@ func (s *Service) executeAgentFull(
 		}
 
 		var res domain.Result
-        var previousAttemptRepairContext string
+		var previousAttemptRepairContext string
 
 		for attempt := 1; attempt <= maxAgentSubtaskAttempts; attempt++ {
 			if attempt > 1 {
@@ -1452,28 +1452,28 @@ func (s *Service) executeAgentFull(
 				}
 			}
 
-            attemptTask :=
-            	taskForCoder
-            
-            if strings.TrimSpace(
-            	previousAttemptRepairContext,
-            ) != "" {
-            
-            	attemptTask +=
-            		"\n\n=== PREVIOUS SUBTASK REPAIR CONTEXT ===\n" +
-            			textutil.TruncateStringBytes(
-            				previousAttemptRepairContext,
-            				maxPreviousSubtaskDeltaBytes,
-            			) +
-            			"\n=== END PREVIOUS SUBTASK REPAIR CONTEXT ==="
-            }
-            
-            res = s.executeSimple(
-            	subCtx,
-            	attemptTask,
-            	subOpts,
-            	emit,
-            )
+			attemptTask :=
+				taskForCoder
+
+			if strings.TrimSpace(
+				previousAttemptRepairContext,
+			) != "" {
+
+				attemptTask +=
+					"\n\n=== PREVIOUS SUBTASK REPAIR CONTEXT ===\n" +
+						textutil.TruncateStringBytes(
+							previousAttemptRepairContext,
+							maxPreviousSubtaskDeltaBytes,
+						) +
+						"\n=== END PREVIOUS SUBTASK REPAIR CONTEXT ==="
+			}
+
+			res = s.executeSimple(
+				subCtx,
+				attemptTask,
+				subOpts,
+				emit,
+			)
 
 			final.Iterations += res.Iterations
 
@@ -1481,19 +1481,19 @@ func (s *Service) executeAgentFull(
 				break
 			}
 
-            if strings.TrimSpace(
-            	res.PatchRepairContext,
-            ) != "" {
-            
-            	previousAttemptRepairContext =
-            		res.PatchRepairContext
-            } else {
-            	previousAttemptRepairContext =
-            		strings.Join(
-            			res.Errors,
-            			"\n",
-            		)
-            }
+			if strings.TrimSpace(
+				res.PatchRepairContext,
+			) != "" {
+
+				previousAttemptRepairContext =
+					res.PatchRepairContext
+			} else {
+				previousAttemptRepairContext =
+					strings.Join(
+						res.Errors,
+						"\n",
+					)
+			}
 
 			if attempt >= maxAgentSubtaskAttempts ||
 				!isRecoverableAgentSubtaskFailure(res.Errors) {
@@ -1870,48 +1870,8 @@ func (s *Service) executeAgentFull(
 		state.LastSubtaskDelta =
 			buildAgentSubtaskDelta(res)
 
-		// ─── Промежуточный git-коммит (только normal) ─────
-		// Deep-режим сохраняет атомарность: коммит создаётся
-		// только один раз в самом конце.
-		if depth == AgentDepthNormal &&
-			!opts.DryRun &&
-			!opts.NoCommit &&
-			s.Cfg.AutoGitCommit {
-
-			commitMsg := fmt.Sprintf(
-				"[agent] subtask %d/%d: %s",
-				i+1,
-				len(plan.Subtasks),
-				truncate(sub.Task, 60),
-			)
-			if hash, cErr := s.Git.AutoCommit(
-				ctx,
-				commitMsg,
-			); cErr != nil {
-				final.AddWarning(
-					fmt.Sprintf(
-						"subtask %d git commit failed: %v",
-						i+1,
-						cErr,
-					),
-				)
-			} else if hash != "" {
-				state.SubtaskCommits = append(
-					state.SubtaskCommits,
-					hash,
-				)
-				sendEvent(
-					emit,
-					domain.EventLog,
-					fmt.Sprintf(
-						"Subtask %d/%d committed: %s",
-						i+1,
-						len(plan.Subtasks),
-						hash,
-					),
-				)
-			}
-		}
+		// Git commit is intentionally deferred until the complete agent run
+		// has passed final verification. This keeps one user task = one commit.
 
 		// ─── Статус и сохранение состояния ────────────────
 		markPlan(

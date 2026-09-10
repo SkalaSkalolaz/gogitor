@@ -50,9 +50,9 @@ type Config struct {
 	DryRun                       bool                            `json:"dry_run"`
 	LLMTimeout                   int                             `json:"llm_timeout"`
 	MaxIterations                int                             `json:"max_iterations"`
-    LLMMaxSessionRequests        int 							 `json:"llm_max_session_requests"`
-    LLMCoderRequestMultiplier 	 int 							 `json:"llm_coder_request_multiplier"`
-    LLMCoderMinRequests 		 int 							 `json:"llm_coder_min_requests"`
+	LLMMaxSessionRequests        int                             `json:"llm_max_session_requests"`
+	LLMCoderRequestMultiplier    int                             `json:"llm_coder_request_multiplier"`
+	LLMCoderMinRequests          int                             `json:"llm_coder_min_requests"`
 	AgentTimeouts                AgentTimeoutConfig              `json:"agent_timeouts"`
 	RunnerTimeout                int                             `json:"runner_timeout"`
 	AutoGitCommit                bool                            `json:"auto_git_commit"`
@@ -121,9 +121,9 @@ func Default() *Config {
 		},
 		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
-        LLMMaxSessionRequests:        960,
-        LLMCoderRequestMultiplier:    64,
-        LLMCoderMinRequests:          192,
+		LLMMaxSessionRequests:        960,
+		LLMCoderRequestMultiplier:    64,
+		LLMCoderMinRequests:          192,
 		AutoGitCommit:                true,
 		GitAutoInit:                  true,
 		MultiAgent:                   true,
@@ -212,7 +212,7 @@ func defaultPatchPolicies() map[string]string {
 		"ornith-1.5:9b":    "strict",
 		"qwen3.8:27b":      "balanced",
 		"gemma4:26b":       "balanced",
-		"gpt-oss:20b":      "strict",
+		"gpt-oss:20b":      "balanced",
 		"gemma4:31b-cloud": "advanced",
 		"openai-compatible+http://localhost:8000/v1": "advanced",
 		"llama3": "balanced",
@@ -279,8 +279,8 @@ func Load() (*Config, error) {
 
 	if err == nil {
 		if jerr := json.Unmarshal(data, cfg); jerr != nil {
-			cfg.loadEnv()
 			cfg.loadLocal()
+			cfg.loadEnv()
 
 			return cfg, fmt.Errorf(
 				"invalid config %s: %w",
@@ -298,8 +298,8 @@ func Load() (*Config, error) {
 		}
 	} else if os.IsNotExist(err) {
 		if serr := cfg.Save(); serr != nil {
-			cfg.loadEnv()
 			cfg.loadLocal()
+			cfg.loadEnv()
 
 			return cfg, fmt.Errorf(
 				"created default config in memory, but cannot write %s: %w",
@@ -308,14 +308,14 @@ func Load() (*Config, error) {
 			)
 		}
 	} else {
-		cfg.loadEnv()
 		cfg.loadLocal()
+		cfg.loadEnv()
 
 		return cfg, err
 	}
 
-	cfg.loadEnv()
 	cfg.loadLocal()
+	cfg.loadEnv()
 
 	cfg.normalizeTimeouts()
 
@@ -345,6 +345,9 @@ func (c *Config) loadEnv() {
 	}
 	if v := os.Getenv("GOGITOR_PROVIDER"); v != "" {
 		c.Provider = v
+	}
+	if v := os.Getenv("GOGITOR_REPO"); v != "" {
+		c.WorkDir = v
 	}
 
 	if v := os.Getenv("GOGITOR_GITHUB_URL"); v != "" {
@@ -491,6 +494,9 @@ func (c *Config) loadLocal() {
 		c.CompareApproaches = v
 	}
 
+	if v, ok := local["work_dir"].(string); ok && strings.TrimSpace(v) != "" {
+		c.WorkDir = strings.TrimSpace(v)
+	}
 	if v, ok := local["provider"].(string); ok && v != "" {
 		c.Provider = v
 	}

@@ -9,9 +9,8 @@ import (
 	"sort"
 	"strings"
 
-    "gogitor/internal/domain"
+	"gogitor/internal/domain"
 )
-
 
 type astFragmentShape struct {
 	NodeCounts  map[string]int
@@ -25,8 +24,8 @@ func findASTAwareBlockWithConfig(
 	searchLines []string,
 	matching domain.DiffMatchingConfig,
 ) *fuzzyMatch {
-    matching =
-    	matching.Normalized()
+	matching =
+		matching.Normalized()
 	if len(searchLines) == 0 ||
 		len(searchLines) > len(origLines) {
 		return nil
@@ -160,19 +159,19 @@ func findASTAwareBlockWithConfig(
 				actualShape,
 			)
 
-		// --------------------------------------------------------
-		// Это внутренний AST safety gate.
-		// --------------------------------------------------------
-        if structuralSim <
-        	matching.ASTMinStructure {
-        	continue
-        }
+			// --------------------------------------------------------
+			// Это внутренний AST safety gate.
+			// --------------------------------------------------------
+		if structuralSim <
+			matching.ASTMinStructure {
+			continue
+		}
 		// --------------------------------------------------------
 		// ФИНАЛЬНАЯ ОЦЕНКА.
 		// --------------------------------------------------------
-        confidence :=
-        	structuralSim*matching.ASTWeight +
-        		lineSim*matching.LineWeight
+		confidence :=
+			structuralSim*matching.ASTWeight +
+				lineSim*matching.LineWeight
 
 		current, exists :=
 			candidatesByStart[start]

@@ -12,11 +12,11 @@ func TestIsFalsePositive(t *testing.T) {
 		op   string
 		want bool
 	}{
-		{"normal >=", "if x >= 10 {", 5, ">=", false},       // '>' находится на индексе 5
-		{"part of !=", "if x != 10 {", 6, "==", true},       // '=' находится на индексе 6 (проверяем line[5] == '!')
-		{"triple =", "if x === 10 {", 5, "==", true},        // первое '=' на индексе 5 (проверяем line[7] == '=')
-		{"normal &&", "if a && b {", 5, "&&", false},        // '&' находится на индексе 5
-		{"normal ==", "if a == b {", 5, "==", false},        // '=' находится на индексе 5
+		{"normal >=", "if x >= 10 {", 5, ">=", false}, // '>' находится на индексе 5
+		{"part of !=", "if x != 10 {", 6, "==", true}, // '=' находится на индексе 6 (проверяем line[5] == '!')
+		{"triple =", "if x === 10 {", 5, "==", true},  // первое '=' на индексе 5 (проверяем line[7] == '=')
+		{"normal &&", "if a && b {", 5, "&&", false},  // '&' находится на индексе 5
+		{"normal ==", "if a == b {", 5, "==", false},  // '=' находится на индексе 5
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := isFalsePositive(tc.line, tc.idx, tc.op); got != tc.want {

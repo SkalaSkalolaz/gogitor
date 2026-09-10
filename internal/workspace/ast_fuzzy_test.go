@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-    "gogitor/internal/domain"
+	"gogitor/internal/domain"
 )
 
 func TestFindASTAwareBlock_LiteralChange(t *testing.T) {
@@ -69,8 +69,6 @@ func findASTAwareBlock(
 		domain.DefaultDiffMatchingConfig(),
 	)
 }
-
-
 
 func TestFindASTAwareBlock_RejectsDifferentStatementKind(
 	t *testing.T,

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-    "gogitor/internal/i18n"
 	"gogitor/internal/domain"
+	"gogitor/internal/i18n"
 	"gogitor/internal/runner"
 	"gogitor/internal/security"
 	"gogitor/internal/workspace"
@@ -234,31 +234,31 @@ func (g *TestGenerator) ApplyTest(
 		return "", fmt.Errorf("cannot write test file: %w", err)
 	}
 
-    if emit != nil {
-        emit(domain.Event{
-            Type:    domain.EventLog,
-            Message: i18n.T("Test file created: %s — running tests...", testRelPath),
-        })
-    }
+	if emit != nil {
+		emit(domain.Event{
+			Type:    domain.EventLog,
+			Message: i18n.T("Test file created: %s — running tests...", testRelPath),
+		})
+	}
 	// Проверяем: запускаем тесты
 	tests, err := r.Test(ctx, g.ws.Root)
-    if err != nil || tests.Failed > 0 {
-        os.Remove(testFullPath)
-        if emit != nil {
-            emit(domain.Event{
-                Type:    domain.EventWarn,
-                Message: i18n.T("Generated tests failed (%d passed, %d failed). File removed.",
-                    tests.Passed, tests.Failed),
-            })
-        }
-        return "", fmt.Errorf("generated tests failed: %d passed, %d failed", tests.Passed, tests.Failed)
-    }
-    if emit != nil {
-        emit(domain.Event{
-            Type:    domain.EventLog,
-            Message: i18n.T("Tests pass (%d passed). File kept: %s", tests.Passed, testRelPath),
-        })
-    }
+	if err != nil || tests.Failed > 0 {
+		os.Remove(testFullPath)
+		if emit != nil {
+			emit(domain.Event{
+				Type: domain.EventWarn,
+				Message: i18n.T("Generated tests failed (%d passed, %d failed). File removed.",
+					tests.Passed, tests.Failed),
+			})
+		}
+		return "", fmt.Errorf("generated tests failed: %d passed, %d failed", tests.Passed, tests.Failed)
+	}
+	if emit != nil {
+		emit(domain.Event{
+			Type:    domain.EventLog,
+			Message: i18n.T("Tests pass (%d passed). File kept: %s", tests.Passed, testRelPath),
+		})
+	}
 	return testRelPath, nil
 }
 

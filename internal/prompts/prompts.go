@@ -2,8 +2,8 @@ package prompts
 
 import (
 	"fmt"
-	"strings"
 	"sort"
+	"strings"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/textutil"
@@ -1708,8 +1708,8 @@ exact existing function fragment
 correct replacement fragment
 >>>>>>> REPLACE`
 
-    case domain.PatchErrorSearchOutsideSymbol:
-    	return `ERROR CODE: search_outside_symbol
+	case domain.PatchErrorSearchOutsideSymbol:
+		return `ERROR CODE: search_outside_symbol
 
 The previous Symbol is valid, but the SEARCH block belongs to another Go declaration.
 
@@ -1723,8 +1723,8 @@ MANDATORY CORRECTION:
 7. Return only the active patch protocol.
 8. Do not return a complete file.`
 
-    case domain.PatchErrorSearchNotFoundInsideSymbol:
-    	return `ERROR CODE: search_not_found_inside_symbol
+	case domain.PatchErrorSearchNotFoundInsideSymbol:
+		return `ERROR CODE: search_not_found_inside_symbol
 
 The SEARCH block could not be safely found inside the specified Symbol.
 
@@ -1737,8 +1737,8 @@ MANDATORY CORRECTION:
 6. Do not return unrelated changes.
 7. Return only the active patch protocol.`
 
-    case domain.PatchErrorSearchCrossesSymbolBoundary:
-    	return `ERROR CODE: search_crosses_symbol_boundary
+	case domain.PatchErrorSearchCrossesSymbolBoundary:
+		return `ERROR CODE: search_crosses_symbol_boundary
 
 The previous SEARCH block crosses the boundaries of multiple Go declarations.
 
@@ -1750,8 +1750,8 @@ MANDATORY CORRECTION:
 5. Keep one Patch header per file.
 6. Do not return a complete file.`
 
-    case domain.PatchErrorAmbiguousSearch:
-    	return `ERROR CODE: ambiguous_search
+	case domain.PatchErrorAmbiguousSearch:
+		return `ERROR CODE: ambiguous_search
 
 The previous SEARCH block has multiple valid matches.
 
@@ -1763,8 +1763,8 @@ MANDATORY CORRECTION:
 5. Return only corrected patch blocks.
 6. Do not return a complete file.`
 
-    case domain.PatchErrorRepairSymbolDrift:
-    	return `ERROR CODE: repair_symbol_drift
+	case domain.PatchErrorRepairSymbolDrift:
+		return `ERROR CODE: repair_symbol_drift
 
 The previous repair changed the target Symbol of the rejected patch.
 
@@ -1775,8 +1775,8 @@ MANDATORY CORRECTION:
 4. Re-read CURRENT PROJECT SOURCE.
 5. Return only the corrected patch.`
 
-    case domain.PatchErrorRepairFileDrift:
-    	return `ERROR CODE: repair_file_drift
+	case domain.PatchErrorRepairFileDrift:
+		return `ERROR CODE: repair_file_drift
 
 The previous repair changed the target file set.
 
@@ -1787,8 +1787,8 @@ MANDATORY CORRECTION:
 4. Do not introduce unrelated files.
 5. Return only corrected patch blocks.`
 
-    case domain.PatchErrorRepairProtocolDrift:
-    	return `ERROR CODE: repair_protocol_drift
+	case domain.PatchErrorRepairProtocolDrift:
+		return `ERROR CODE: repair_protocol_drift
 
 The previous patch repair escaped the active patch protocol.
 
@@ -1799,8 +1799,8 @@ MANDATORY CORRECTION:
 4. Preserve the original repair target.
 5. Do not use full-file output as a workaround.`
 
-    case domain.PatchErrorSourceChanged:
-    	return `ERROR CODE: source_changed_since_patch_generation
+	case domain.PatchErrorSourceChanged:
+		return `ERROR CODE: source_changed_since_patch_generation
 
 The source used to generate the patch is no longer identical to the current source.
 
@@ -1811,8 +1811,8 @@ MANDATORY CORRECTION:
 4. Do not apply the patch to stale source.
 5. Do not change the task scope.`
 
-    case domain.PatchErrorStaleSymbol:
-    	return `ERROR CODE: stale_symbol
+	case domain.PatchErrorStaleSymbol:
+		return `ERROR CODE: stale_symbol
 
 The target Symbol changed after the patch was generated.
 

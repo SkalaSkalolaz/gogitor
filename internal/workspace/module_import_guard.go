@@ -145,9 +145,7 @@ func parseGoModImportText(
 			if len(fields) >= 1 &&
 				fields[0] != "" {
 
-				ctx.RequiredModule[
-					fields[0],
-				] = true
+				ctx.RequiredModule[fields[0]] = true
 			}
 
 			continue
@@ -163,9 +161,7 @@ func parseGoModImportText(
 			if len(fields) >= 1 &&
 				fields[0] != "" {
 
-				ctx.RequiredModule[
-					fields[0],
-				] = true
+				ctx.RequiredModule[fields[0]] = true
 			}
 		}
 	}
