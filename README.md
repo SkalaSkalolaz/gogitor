@@ -4,7 +4,7 @@ Terminal AI coding assistant for Go projects. Gogitor is now a **TUI-only applic
 
 [Русская версия](README_RU.md)
 
-## What changed in 2.2
+## What changed in 2.0
 
 - one TUI entry point, without the old CLI branch;
 - one catalog of TUI commands reused by completion;
