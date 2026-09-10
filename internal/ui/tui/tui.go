@@ -318,8 +318,8 @@ func newModel(svc *app.Service, cfg *config.Config, log *slog.Logger) *model {
 		)
 	}
 	m.appendInfo(i18n.T("Type :help for commands."))
-	m.appendInfo(i18n.T("Alt+Enter adds a line. Up/Down move between lines. Tab switches to output."))
-	m.appendInfo(i18n.T("F2 - mode for selecting text with the mouse for copying."))
+	// m.appendInfo(i18n.T("Alt+Enter adds a line. Up/Down move between lines. Tab switches to output."))
+	// m.appendInfo(i18n.T("F2 - mode for selecting text with the mouse for copying."))
 	// Startup diagnostics are scheduled from Init so Bubble Tea remains the only
 	// writer of model state. This avoids a subtle data race while keeping the scan
 	// asynchronous and instant for the user.

@@ -89,6 +89,7 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 	logLevel := fs.String("log-level", cfg.LogLevel, "log level: debug, info, warn, error")
 	saveConfig := fs.Bool("save-config", false, "save the resulting configuration to ~/.gogitor/config.json")
 	version := fs.Bool("version", false, "print Gogitor version and exit")
+	fs.BoolVar(version, "v", false, "alias for --version")
 
 	args = normalizeBooleanFlags(args)
 	if err := fs.Parse(args); err != nil {
