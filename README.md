@@ -1,4 +1,4 @@
-# Gogitor 2.2
+# Gogitor 2.0
 
 Terminal AI coding assistant for Go projects. Gogitor is now a **TUI-only application**: there is no separate CLI mode or CLI package.
 
