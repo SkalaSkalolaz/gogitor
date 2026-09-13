@@ -39,7 +39,6 @@ type Options struct {
 	NoCompare           bool
 	ProgressItem        int
 	ProgressTotal       int
-	Mode                string
 	AgentDepth          AgentDepth
 	EditMode            EditMode
 	InterviewAnswers    []prompts.AgentInterviewAnswer
@@ -718,12 +717,6 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		}
 		return s.ExecuteCode(ctx, argString, Options{}, emit)
 
-	case ":fast":
-		if argString == "" {
-			return domain.Result{Success: false, Mode: "code", Errors: []string{"usage: :fast <task>"}}
-		}
-		return s.ExecuteCode(ctx, argString, Options{Mode: "fast"}, emit)
-
 	case ":agent":
 		if argString == "" {
 			return domain.Result{
@@ -757,7 +750,8 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 			task := strings.TrimSpace(argString[len("interview"):])
 			return s.ExecuteAgentInterview(ctx, task, emit)
 		}
-		depth := AgentDepthNormal
+
+		depth := AgentDepthAuto
 		task := argString
 		if strings.HasPrefix(lowerArgs, "deep ") || strings.HasPrefix(lowerArgs, "enhanced ") {
 			depth = AgentDepthDeep
@@ -773,7 +767,14 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 				Errors: []string{"usage: :agent <task> | :agent enhanced <task>"},
 			}
 		}
-		return s.ExecuteCode(ctx, task, Options{Mode: "agent", AgentDepth: depth}, emit)
+		return s.ExecuteCode(
+			ctx,
+			task,
+			Options{
+				AgentDepth: depth,
+			},
+			emit,
+		)
 	case ":fix":
 		if argString == "" {
 			return domain.Result{
@@ -1420,98 +1421,102 @@ func (s *Service) SearchAnswer(ctx context.Context, query string, emit func(doma
 	}
 }
 
-func (s *Service) ExecuteCode(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
-	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
+func (s *Service) ExecuteCode(
+	ctx context.Context,
+	query string,
+	opts Options,
+	emit func(domain.Event),
+) domain.Result {
+	ctx = agent.WithStatusFunc(
+		ctx,
+		s.agentStatusEmitter(emit),
+	)
 
 	stopDiffTrace := s.installDiffTrace(emit)
 	defer stopDiffTrace()
 
-	if isRemovedWorkflowMode(opts.Mode) {
-		return domain.Result{
-			Success: false,
-			Mode:    "code",
-			Errors: []string{
-				"workflow mode was removed; use agent or agent deep",
-			},
-		}
-	}
-
 	if opts.DryRun {
-		sendEvent(emit, domain.EventWarn, "Dry-run mode enabled: changes will be validated but not applied")
-	}
-	analysisOnly := s.isAnalysisOnlyTask(query)
-
-	if analysisOnly {
-		sendEvent(emit, domain.EventLog, "Analysis-only task detected: no file changes will be made")
-		return s.executeSimple(ctx, query, opts, emit)
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			"Dry-run mode enabled: changes will be validated but not applied",
+		)
 	}
 
-	strategy := s.chooseExecutionStrategy(ctx, query, opts, emit)
-
-	sendEvent(
-		emit,
-		domain.EventLog,
-		fmt.Sprintf(
-			"Execution strategy: %s (source=%s, reason=%s)",
-			strategy.Mode,
-			strategy.Source,
-			strategy.Reason,
-		),
-	)
-	if strategy.EditMode != "" &&
-		strategy.EditMode != EditModeAuto {
-
+	// Аналитические задачи по-прежнему не должны изменять файлы.
+	// Это отдельная семантика задачи, а не отдельный execution mode.
+	if s.isAnalysisOnlyTask(query) {
 		sendEvent(
 			emit,
 			domain.EventLog,
-			fmt.Sprintf(
-				"Edit strategy: %s",
-				strategy.EditMode,
-			),
-		)
-	}
-
-	switch strategy.Mode {
-	case ExecutionModeSimple:
-		simpleOpts := opts
-		simpleOpts.EditMode = strategy.EditMode
-
-		return s.executeSimple(
-			ctx,
-			query,
-			simpleOpts,
-			emit,
+			"Analysis-only task detected: no file changes will be made",
 		)
 
-	case ExecutionModeAgent:
-		agentOpts := opts
-
-		if strategy.AgentDepth != "" &&
-			strategy.AgentDepth != AgentDepthAuto {
-
-			agentOpts.AgentDepth =
-				strategy.AgentDepth
-		}
-
-		agentOpts.EditMode =
-			strategy.EditMode
-
-		return s.executeAgentFull(
-			ctx,
-			query,
-			"",
-			agentOpts,
-			emit,
-		)
-
-	default:
-		return s.executeSimple(
+		return s.executeCoderPass(
 			ctx,
 			query,
 			opts,
 			emit,
 		)
 	}
+
+	// Gogitor использует Agent как единственный pipeline
+	// для задач создания и изменения кода.
+	agentOpts := opts
+
+	// Пустое значение трактуем как adaptive depth.
+	if normalizeAgentDepth(
+		string(agentOpts.AgentDepth),
+	) == AgentDepthAuto {
+		agentOpts.AgentDepth = AgentDepthAuto
+	}
+
+	// Edit mode по умолчанию — PATCH.
+	// Явное требование полной перезаписи файла сохраняется.
+	agentOpts.EditMode =
+		agentEditModeForTask(
+			query,
+			agentOpts.EditMode,
+		)
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		"Execution mode: Agent",
+	)
+
+	if agentOpts.AgentDepth == AgentDepthDeep {
+		sendEvent(
+			emit,
+			domain.EventLog,
+			"Agent depth: deep",
+		)
+	} else {
+		sendEvent(
+			emit,
+			domain.EventLog,
+			"Agent depth: adaptive",
+		)
+	}
+
+	if agentOpts.EditMode != EditModeAuto {
+		sendEvent(
+			emit,
+			domain.EventLog,
+			fmt.Sprintf(
+				"Edit strategy: %s",
+				agentOpts.EditMode,
+			),
+		)
+	}
+
+	return s.executeAgentFull(
+		ctx,
+		query,
+		"",
+		agentOpts,
+		emit,
+	)
 }
 
 type patchRepairState struct {
@@ -1741,7 +1746,7 @@ func (r *patchRepairState) recoveryContext() string {
 	)
 }
 
-func (s *Service) executeSimple(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
+func (s *Service) executeCoderPass(ctx context.Context, query string, opts Options, emit func(domain.Event)) domain.Result {
 	if agent.RoleFromContext(ctx) == agent.RoleDefault {
 		ctx = agent.WithRole(ctx, agent.RoleCoder)
 	}
@@ -1775,14 +1780,10 @@ func (s *Service) executeSimple(ctx context.Context, query string, opts Options,
 		s.Cfg.PatchProtocolMode,
 	)
 
-	editMode := normalizeEditMode(
-		string(opts.EditMode),
+	editMode := agentEditModeForTask(
+		query,
+		opts.EditMode,
 	)
-
-	if editMode == EditModeAuto {
-		editMode = EditModePatch
-	}
-
 	sourceSnapshot, snapshotErr :=
 		s.WS.CaptureProjectSnapshot()
 
@@ -4493,8 +4494,7 @@ func helpTextEn() string {
 - **:quit** / **:exit** / **:q** — Exit Gogitor
 
 ## Code & Analysis
-- **:code <task>** — Create or modify code
-- **:fast <task>** — Quick single-pass code generation (no multi-agent pipeline)
+- **:code <task>** — Create or modify code via the Agent Harness.
 - **:load <file>** — Load a task from a .txt/.md file and route it
 - **:fix <error>** — Fix error from stack trace / terminal output
 - **:ask <question>** — Chat mode
@@ -4610,8 +4610,7 @@ func helpTextRu() string {
 - **:quit** / **:exit** / **:q** — Выйти из Gogitor
 
 ## Код и Анализ
-- **:code <задача>** — Создать или изменить код
-- **:fast <задача>** — Быстрая генерация кода без мультиагентного конвейера
+- **:code <задача>** — Создать или изменить код через Agent Harness.
 - **:load <файл>** — Загрузить задачу из файла .txt/.md и передать роутеру
 - **:fix <ошибка>** — Исправить ошибку по stack trace / выводу терминала
 - **:ask <вопрос>** — Режим чата

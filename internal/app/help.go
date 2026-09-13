@@ -578,8 +578,7 @@ You can paste an error directly without using :fix explicitly.
 ### Related Commands
 | Command | Description |
 |---------|-------------|
-| :code <task> | Auto-selects execution strategy |
-| :fast <task> | Single-pass mode (no agent pipeline) |
+| :code <task> | Create or modify code via the Agent Harness. |
 ### Examples
 :agent refactor authentication module into separate package
 :agent deep create REST API with middleware and tests
@@ -619,8 +618,7 @@ You can paste an error directly without using :fix explicitly.
 ### Связанные команды
 | Команда | Описание |
 |---------|----------|
-| :code <задача> | Автоматический выбор стратегии |
-| :fast <задача> | Однопроходный режим (без конвейера) |
+| :code <задача> | Создать или изменить код через Agent Harness. |
 ### Примеры
 :agent отрефакторить модуль аутентификации в отдельный пакет
 :agent deep создать REST API с middleware и тестами
@@ -1287,12 +1285,13 @@ _test.go file, then generates table-driven tests via LLM.
 Creates or modifies Go code based on the task description.
 Uses the project index for relevant context selection.
 Validates changes in a sandbox before applying.
-### Execution Modes
-| Mode | Trigger | Description |
-|------|---------|-------------|
-| auto | Default | Gogitor selects the best strategy |
-| simple/fast | :fast or --mode fast | Single-pass generation |
-| agent | :agent or --mode agent | Full 4-stage pipeline |
+### Execution
+| Command | Behavior |
+|---------|----------|
+| :code <task> | Run Agent with adaptive depth |
+| :agent <task> | Run Agent with adaptive depth |
+| :agent deep <task> | Force deep Agent profile |
+| :agent enhanced <task> | Force deep Agent profile |
 ### Patch vs Full File
 | Condition | Output format |
 |-----------|---------------|
@@ -1306,17 +1305,6 @@ Validates changes in a sandbox before applying.
 | 2 | gofmt |
 | 3 | go build |
 | 4 | go test -v -cover |
-### CLI Flags
-| Flag | Description |
-|------|-------------|
-| --mode <auto\|simple\|agent> | Execution mode |
-| --agent | Force agent mode |
-| --deep | Force deep agent profile |
-| --dry-run | Validate without applying |
-| --no-commit | Disable auto git commit |
-| --no-tests | Skip tests |
-| --no-compare | Skip approach comparison |
-| --json | JSON output |
 ### Examples
 :code create a REST API with /health endpoint
 :code refactor the authentication module
@@ -1331,12 +1319,13 @@ Validates changes in a sandbox before applying.
 Создаёт или изменяет Go-код на основе описания задачи.
 Использует индекс проекта для выбора релевантного контекста.
 Проверяет изменения в песочнице перед применением.
-### Режимы выполнения
-| Режим | Активация | Описание |
-|-------|-----------|----------|
-| auto | По умолчанию | Gogitor выбирает лучшую стратегию |
-| simple/fast | :fast или --mode fast | Однопроходная генерация |
-| agent | :agent или --mode agent | Полный 4-этапный конвейер |
+### Выполнение
+| Команда | Поведение |
+|---------|-----------|
+| :code <задача> | Agent с автоматическим выбором глубины |
+| :agent <задача> | Agent с автоматическим выбором глубины |
+| :agent deep <задача> | Принудительный deep-профиль |
+| :agent enhanced <задача> | Принудительный deep-профиль |
 ### Патч vs Полный файл
 | Условие | Формат вывода |
 |---------|---------------|
@@ -1350,17 +1339,6 @@ Validates changes in a sandbox before applying.
 | 2 | gofmt |
 | 3 | go build |
 | 4 | go test -v -cover |
-### Флаги CLI
-| Флаг | Описание |
-|------|----------|
-| --mode <auto\|simple\|agent> | Режим выполнения |
-| --agent | Принудительный агентный режим |
-| --deep | Принудительный глубокий профиль |
-| --dry-run | Проверка без применения |
-| --no-commit | Отключить автокоммит |
-| --no-tests | Пропустить тесты |
-| --no-compare | Пропустить сравнение подходов |
-| --json | Вывод JSON |
 ### Примеры
 :code создать REST API с эндпоинтом /health
 :code отрефакторить модуль аутентификации
@@ -1368,76 +1346,6 @@ Validates changes in a sandbox before applying.
 ### Помощь
 :code help — показать эту помощь
 :help code — то же самое`,
-	},
-	{
-		Name:    "fast",
-		Aliases: []string{":fast", "fast"},
-		En: `## :fast — Quick Code Generation
-### Syntax
-:fast <task>
-### Description
-Forces simple single-pass execution mode regardless of task complexity.
-Skips the multi-agent pipeline (planner, reviewer, verifier).
-Best for small, well-defined, low-risk changes.
-### Comparison with other modes
-| Command | Pipeline | Best for |
-|---------|----------|----------|
-| :code | Auto-selects | Default choice |
-| :fast | Single pass only | Quick small fixes |
-| :agent | Full 4-stage | Complex multi-file tasks |
-### What is skipped
-| Skipped | Reason |
-|---------|--------|
-| Planner | No task decomposition |
-| Reviewer | No code review |
-| Verifier | No goal verification |
-| Approach comparison | No alternative analysis |
-### What is preserved
-| Preserved | Detail |
-|-----------|--------|
-| Sandbox validation | go build + go test still run |
-| Patch engine | SEARCH/REPLACE still used |
-| Git commit | Auto-commit if enabled |
-### Examples
-:fast rename the function processInput to handleInput
-:fast add error logging to the middleware
-:fast add a String() method to the Config struct
-### Help
-:fast help — show this help
-:help fast — same as above`,
-		Ru: `## :fast — Быстрая генерация кода
-### Синтаксис
-:fast <задача>
-### Описание
-Принудительно запускает простой однопроходный режим независимо от сложности.
-Пропускает мультиагентный конвейер (планировщик, ревьюер, верификатор).
-Лучше всего подходит для небольших, чётко определённых изменений.
-### Сравнение с другими режимами
-| Команда | Конвейер | Лучше для |
-|---------|----------|-----------|
-| :code | Автовыбор | Выбор по умолчанию |
-| :fast | Однопроходный | Быстрые мелкие правки |
-| :agent | Полный 4-этапный | Сложные многофайловые задачи |
-### Что пропускается
-| Пропускается | Причина |
-|--------------|----------|
-| Планировщик | Нет декомпозиции задачи |
-| Ревьюер | Нет ревью кода |
-| Верификатор | Нет проверки цели |
-| Сравнение подходов | Нет анализа альтернатив |
-### Что сохраняется
-| Сохраняется | Детали |
-|-------------|--------|
-| Валидация в песочнице | go build + go test всё ещё выполняются |
-| Патч-движок | SEARCH/REPLACE всё ещё используется |
-| Git-коммит | Автокоммит, если включён |
-### Примеры
-:fast переименуй функцию processInput в handleInput
-:fast добавь логирование ошибок в middleware
-:fast добавь метод String() к структуре Config
-### Помощь
-:fast help — показать эту помощь
-:help fast — то же самое`,
 	},
 	{
 		Name:    "run",
@@ -1708,8 +1616,6 @@ func sanitizeTUIHelp(text string) string {
 		line = strings.ReplaceAll(line, "Используйте флаг --image (CLI) или укажите путь к изображению (TUI):", "В TUI укажите путь к изображению:")
 		line = strings.ReplaceAll(line, "| Flag | --computer |", "")
 		line = strings.ReplaceAll(line, "| Флаг | --computer |", "")
-		line = strings.ReplaceAll(line, " :fast or --mode fast ", " :fast ")
-		line = strings.ReplaceAll(line, " :agent or --mode agent ", " :agent ")
 		result = append(result, line)
 	}
 

@@ -42,135 +42,95 @@ func TestNormalizeEditMode(t *testing.T) {
 	}
 }
 
-func TestValidateEditRecommendationDefaultsToPatch(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:       2,
-		TargetFiles: 1,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeSimple,
-		EditMode:   EditModeAuto,
-		Confidence: 90,
-		Complexity: "low",
-		Risk:       "low",
-		Reason:     "small change",
-		Source:     "llm",
-	}
-
-	got := validateEditRecommendation(
-		recommendation,
+func TestAgentEditModeDefaultsToPatch(t *testing.T) {
+	got := agentEditModeForTask(
 		"add GET /health endpoint",
-		signals,
+		EditModeAuto,
 	)
 
-	if got.EditMode != EditModePatch {
+	if got != EditModePatch {
 		t.Fatalf(
-			"EditMode = %q, want patch",
-			got.EditMode,
+			"edit mode = %q, want patch",
+			got,
 		)
 	}
 }
 
-func TestValidateEditRecommendationRejectsUnjustifiedFull(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:       2,
-		TargetFiles: 1,
+func TestAgentEditModeHonorsExplicitFullRewrite(t *testing.T) {
+	got := agentEditModeForTask(
+		"Полностью перепиши файл main.go с нуля",
+		EditModeAuto,
+	)
+
+	if got != EditModeFull {
+		t.Fatalf(
+			"edit mode = %q, want full",
+			got,
+		)
+	}
+}
+
+func TestAgentEditModeHonorsExplicitFullMode(t *testing.T) {
+	got := agentEditModeForTask(
+		"modify main.go",
+		EditModeFull,
+	)
+
+	if got != EditModeFull {
+		t.Fatalf(
+			"edit mode = %q, want full",
+			got,
+		)
+	}
+}
+
+func TestDetectModelProfile31B(t *testing.T) {
+	cfg := config.Default()
+	cfg.Model = "qwen3:31b"
+
+	svc := &Service{
+		Cfg: cfg,
 	}
 
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeSimple,
-		EditMode:   EditModeFull,
-		Confidence: 99,
-		Complexity: "high",
-		Risk:       "high",
-		Reason:     "model prefers full file",
-		Source:     "llm",
+	if got := svc.detectModelProfile(); got != modelProfileMedium {
+		t.Fatalf(
+			"profile = %q, want medium",
+			got,
+		)
+	}
+}
+
+func TestAgentDepthForTaskUsesAdaptiveThreshold(t *testing.T) {
+	cfg := config.Default()
+	cfg.Model = "qwen3:31b"
+	cfg.AgentDeepComplexityThreshold = 3
+
+	svc := &Service{
+		Cfg: cfg,
 	}
 
-	got := validateEditRecommendation(
-		recommendation,
+	normal := svc.agentDepthForTask(
 		"add GET /health endpoint",
-		signals,
 	)
 
-	if got.EditMode != EditModePatch {
+	if normal != AgentDepthNormal {
 		t.Fatalf(
-			"EditMode = %q, want patch",
-			got.EditMode,
+			"normal task depth = %q, want normal",
+			normal,
+		)
+	}
+
+	deep := svc.agentDepthForTask(
+		"redesign the application architecture",
+	)
+
+	if deep != AgentDepthDeep {
+		t.Fatalf(
+			"architectural task depth = %q, want deep",
+			deep,
 		)
 	}
 }
-
-func TestValidateEditRecommendationAllowsExplicitFull(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:       5,
-		TargetFiles: 1,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeSimple,
-		EditMode:   EditModePatch,
-		Confidence: 60,
-		Complexity: "medium",
-		Risk:       "medium",
-		Reason:     "localized change",
-		Source:     "llm",
-	}
-
-	got := validateEditRecommendation(
-		recommendation,
-		"Полностью перепиши файл main.go с нуля, сохранив внешний API",
-		signals,
-	)
-
-	if got.EditMode != EditModeFull {
-		t.Fatalf(
-			"EditMode = %q, want full",
-			got.EditMode,
-		)
-	}
-}
-
-func TestValidateEditRecommendationRefactorPrefersPatch(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:         6,
-		TargetFiles:   1,
-		RequiresAgent: true,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeAgent,
-		EditMode:   EditModeFull,
-		Confidence: 95,
-		Complexity: "high",
-		Risk:       "high",
-		Reason:     "architectural task",
-		Source:     "llm",
-	}
-
-	got := validateEditRecommendation(
-		recommendation,
-		"Рефакторинг main.go: вынеси обработчик в отдельную функцию",
-		signals,
-	)
-
-	if got.EditMode != EditModePatch {
-		t.Fatalf(
-			"EditMode = %q, want patch",
-			got.EditMode,
-		)
-	}
-}
-
 func TestDeepAgentUsesStrictPatchPolicy(
 	t *testing.T,
 ) {
@@ -231,46 +191,6 @@ func TestNormalizeAgentDepth(
 	}
 }
 
-func TestNormalizeExecutionMode(
-	t *testing.T,
-) {
-	tests := []struct {
-		in   string
-		want ExecutionMode
-	}{
-		{"simple", ExecutionModeSimple},
-		{"fast", ExecutionModeSimple},
-		{"быстро", ExecutionModeSimple},
-		{"quick", ExecutionModeSimple},
-
-		{"agent", ExecutionModeAgent},
-		{"агент", ExecutionModeAgent},
-		{"multi-agent", ExecutionModeAgent},
-		{"multiagent", ExecutionModeAgent},
-
-		{"auto", ExecutionModeAuto},
-		{"", ExecutionModeAuto},
-		{"default", ExecutionModeAuto},
-		{"unknown", ExecutionModeAuto},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			got :=
-				normalizeExecutionMode(tt.in)
-
-			if got != tt.want {
-				t.Errorf(
-					"normalizeExecutionMode(%q) = %v, want %v",
-					tt.in,
-					got,
-					tt.want,
-				)
-			}
-		})
-	}
-}
-
 func TestUrlHostIsLocal(t *testing.T) {
 	for _, tc := range []struct {
 		url  string
@@ -312,176 +232,6 @@ func TestCloudModelIsRemoteOnLocalOllama(
 	if !svc.isRemoteLLM() {
 		t.Fatal(
 			"cloud model must be considered remote",
-		)
-	}
-}
-
-func TestTaskRequiresAgent(t *testing.T) {
-	tests := []struct {
-		name string
-		task string
-		want bool
-	}{
-		{
-			name: "health endpoint is simple",
-			task: "add GET /health endpoint",
-			want: false,
-		},
-		{
-			name: "api endpoint is simple",
-			task: "add GET /api/cars endpoint returning JSON",
-			want: false,
-		},
-		{
-			name: "server terminology is not enough",
-			task: "add HTTP health check to the server",
-			want: false,
-		},
-		{
-			name: "refactor requires agent",
-			task: "refactor authentication into a separate package",
-			want: true,
-		},
-		{
-			name: "package split requires agent",
-			task: "move business logic into a new service package",
-			want: true,
-		},
-		{
-			name: "architecture requires agent",
-			task: "redesign the application architecture",
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _ := taskRequiresAgent(tt.task)
-
-			if got != tt.want {
-				t.Fatalf(
-					"taskRequiresAgent(%q) = %v, want %v",
-					tt.task,
-					got,
-					tt.want,
-				)
-			}
-		})
-	}
-}
-
-func TestValidateExecutionRecommendationPrefersFastForLocalTask(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:         2,
-		TargetFiles:   1,
-		RequiresAgent: false,
-		BroadTask:     false,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeAgent,
-		AgentDepth: AgentDepthDeep,
-		Confidence: 95,
-		Complexity: "high",
-		Risk:       "high",
-		Reason:     "LLM thinks agent is safer",
-		Source:     "llm",
-	}
-
-	got := validateExecutionRecommendation(
-		recommendation,
-		signals,
-	)
-
-	if got.Mode != ExecutionModeSimple {
-		t.Fatalf(
-			"mode = %q, want simple; reason=%s",
-			got.Mode,
-			got.Reason,
-		)
-	}
-
-	if got.AgentDepth != AgentDepthNormal {
-		t.Fatalf(
-			"depth = %q, want normal",
-			got.AgentDepth,
-		)
-	}
-}
-
-func TestValidateExecutionRecommendationPromotesArchitecturalTask(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:         5,
-		TargetFiles:   2,
-		RequiresAgent: true,
-		BroadTask:     false,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeSimple,
-		AgentDepth: AgentDepthNormal,
-		Confidence: 95,
-		Complexity: "medium",
-		Risk:       "medium",
-		Reason:     "single coding pass",
-		Source:     "llm",
-	}
-
-	got := validateExecutionRecommendation(
-		recommendation,
-		signals,
-	)
-
-	if got.Mode != ExecutionModeAgent {
-		t.Fatalf(
-			"mode = %q, want agent; reason=%s",
-			got.Mode,
-			got.Reason,
-		)
-	}
-}
-
-func TestValidateExecutionRecommendationDowngradesDeep(
-	t *testing.T,
-) {
-	signals := executionSignals{
-		Score:         5,
-		TargetFiles:   2,
-		RequiresAgent: true,
-		BroadTask:     false,
-	}
-
-	recommendation := ExecutionStrategy{
-		Mode:       ExecutionModeAgent,
-		AgentDepth: AgentDepthDeep,
-		Confidence: 95,
-		Complexity: "medium",
-		Risk:       "medium",
-		Reason:     "deep preferred",
-		Source:     "llm",
-	}
-
-	got := validateExecutionRecommendation(
-		recommendation,
-		signals,
-	)
-
-	if got.Mode != ExecutionModeAgent {
-		t.Fatalf(
-			"mode = %q, want agent",
-			got.Mode,
-		)
-	}
-
-	if got.AgentDepth != AgentDepthNormal {
-		t.Fatalf(
-			"depth = %q, want normal; reason=%s",
-			got.AgentDepth,
-			got.Reason,
 		)
 	}
 }

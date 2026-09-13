@@ -68,7 +68,6 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 	compare := fs.Bool("compare", cfg.CompareApproaches, "compare implementation approaches for suitable tasks")
 	autoCommit := fs.Bool("auto-commit", cfg.AutoGitCommit, "create a Git commit after successful agent implementation")
 	gitAutoInit := fs.Bool("git-auto-init", cfg.GitAutoInit, "initialize Git automatically when needed")
-	multiAgent := fs.Bool("multi-agent", cfg.MultiAgent, "enable adaptive multi-agent execution")
 
 	depsMode := fs.String("deps-mode", cfg.DepsMode, "dependency mode: auto, ask, never")
 	confirmApply := fs.Bool("confirm-apply", cfg.ConfirmApply, "ask for confirmation before applying generated patches")
@@ -158,8 +157,6 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 			cfg.AutoGitCommit = *autoCommit
 		case "git-auto-init":
 			cfg.GitAutoInit = *gitAutoInit
-		case "multi-agent":
-			cfg.MultiAgent = *multiAgent
 		case "deps-mode":
 			cfg.DepsMode = strings.TrimSpace(*depsMode)
 		case "confirm-apply":
@@ -240,7 +237,6 @@ Execution:
   --llm-timeout <sec>     LLM request timeout
   --runner-timeout <sec>  build/test timeout
   --max-iterations <n>    correction iterations
-  --multi-agent <bool>    adaptive agent execution
   --agent-profile <name>  agent model profile
   --agent-deep-threshold  complexity threshold for deeper execution
   --auto-commit <bool>    commit successful agent changes
@@ -307,7 +303,6 @@ var booleanLaunchFlags = map[string]struct{}{
 	"compare":          {},
 	"auto-commit":      {},
 	"git-auto-init":    {},
-	"multi-agent":      {},
 	"confirm-apply":    {},
 	"diff-trace":       {},
 	"autonomy":         {},

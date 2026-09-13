@@ -57,7 +57,6 @@ type Config struct {
 	RunnerTimeout                int                             `json:"runner_timeout"`
 	AutoGitCommit                bool                            `json:"auto_git_commit"`
 	GitAutoInit                  bool                            `json:"git_auto_init"`
-	MultiAgent                   bool                            `json:"multi_agent_enabled"`
 	Raw                          bool                            `json:"raw_output"`
 	GitHubURL                    string                          `json:"github_url"`
 	GitHubToken                  string                          `json:"github_token"`
@@ -126,7 +125,6 @@ func Default() *Config {
 		LLMCoderMinRequests:          192,
 		AutoGitCommit:                true,
 		GitAutoInit:                  true,
-		MultiAgent:                   true,
 		Raw:                          false,
 		MaxContextTokens:             0,
 		CompareApproaches:            true,
@@ -415,9 +413,7 @@ func (c *Config) loadEnv() {
 	if v := os.Getenv("GOGITOR_GIT_AUTO_INIT"); v != "" {
 		c.GitAutoInit = parseBool(v)
 	}
-	if v := os.Getenv("GOGITOR_MULTI_AGENT"); v != "" {
-		c.MultiAgent = parseBool(v)
-	}
+
 	if v := os.Getenv("GOGITOR_DEPS_MODE"); v != "" {
 		c.DepsMode = v
 	}
@@ -532,9 +528,6 @@ func (c *Config) loadLocal() {
 	}
 	if v, ok := local["git_auto_init"].(bool); ok {
 		c.GitAutoInit = v
-	}
-	if v, ok := local["multi_agent_enabled"].(bool); ok {
-		c.MultiAgent = v
 	}
 	if v, ok := local["github_url"].(string); ok && v != "" {
 		c.GitHubURL = v

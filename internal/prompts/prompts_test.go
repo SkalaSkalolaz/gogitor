@@ -254,58 +254,6 @@ func TestAgentReflection(t *testing.T) {
 	}
 }
 
-func TestExecutionStrategy(t *testing.T) {
-	p := ExecutionStrategy(
-		"create API",
-		"",
-		"medium",
-		5,
-	)
-
-	for _, kw := range []string{
-		"execution_mode",
-		"simple|agent",
-		"agent_depth",
-		"normal|deep",
-		"edit_mode",
-		"patch|full",
-	} {
-		if !strings.Contains(p, kw) {
-			t.Errorf(
-				"missing %q",
-				kw,
-			)
-		}
-	}
-}
-
-func TestExecutionStrategyPromptSeparatesExecutionAndEditModes(
-	t *testing.T,
-) {
-	p := ExecutionStrategy(
-		"refactor the server into separate packages",
-		"",
-		"medium",
-		6,
-	)
-
-	for _, want := range []string{
-		"execution_mode",
-		"edit_mode",
-		"execution_mode and edit_mode are independent decisions",
-		"PATCH is the DEFAULT",
-		"FULL is NOT the default",
-		"choose PATCH",
-	} {
-		if !strings.Contains(p, want) {
-			t.Errorf(
-				"missing %q",
-				want,
-			)
-		}
-	}
-}
-
 func TestSuggest(t *testing.T) {
 	p := Suggest("package main", "")
 	for _, kw := range []string{"Critical", "Tech Debt"} {

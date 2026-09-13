@@ -1,27 +1,13 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"gogitor/internal/agent"
 	"gogitor/internal/config"
-	"gogitor/internal/domain"
-	"gogitor/internal/llm"
-	"gogitor/internal/prompts"
-)
-
-// ExecutionMode — режим выполнения задачи.
-type ExecutionMode string
-
-const (
-	ExecutionModeAuto   ExecutionMode = "auto"
-	ExecutionModeSimple ExecutionMode = "simple"
-	ExecutionModeAgent  ExecutionMode = "agent"
 )
 
 // AgentDepth — глубина выполнения агента.
@@ -32,18 +18,6 @@ const (
 	AgentDepthDeep   AgentDepth = "deep"
 	AgentDepthAuto   AgentDepth = "auto"
 )
-
-// ExecutionStrategy — результат выбора режима.
-type ExecutionStrategy struct {
-	Mode       ExecutionMode
-	AgentDepth AgentDepth
-	EditMode   EditMode
-	Confidence int
-	Complexity string
-	Risk       string
-	Reason     string
-	Source     string
-}
 
 // EditMode определяет способ изменения существующих файлов.
 type EditMode string
@@ -81,20 +55,6 @@ func modelParameterCountB(name string) float64 {
 	return v
 }
 
-func normalizeExecutionMode(mode string) ExecutionMode {
-	m := strings.ToLower(strings.TrimSpace(mode))
-	switch m {
-	case "simple", "fast", "быстро", "quick":
-		return ExecutionModeSimple
-	case "agent", "агент", "multi-agent", "multiagent":
-		return ExecutionModeAgent
-	case "auto", "", "default":
-		return ExecutionModeAuto
-	default:
-		return ExecutionModeAuto
-	}
-}
-
 func normalizeEditMode(mode string) EditMode {
 	m := strings.ToLower(strings.TrimSpace(mode))
 
@@ -111,6 +71,27 @@ func normalizeEditMode(mode string) EditMode {
 	default:
 		return EditModeAuto
 	}
+}
+
+func agentEditModeForTask(
+	task string,
+	requested EditMode,
+) EditMode {
+	mode := normalizeEditMode(
+		string(requested),
+	)
+
+	if mode == EditModeAuto {
+		mode = EditModePatch
+	}
+
+	// Явная просьба пользователя переписать файл целиком
+	// имеет приоритет над безопасным PATCH по умолчанию.
+	if taskRequestsWholeFileRewrite(task) {
+		return EditModeFull
+	}
+
+	return mode
 }
 
 func taskRequestsWholeFileRewrite(task string) bool {
@@ -142,98 +123,6 @@ func taskRequestsWholeFileRewrite(task string) bool {
 	}
 
 	return containsAny(lower, keywords)
-}
-
-func taskSuggestsWholeFileRedesign(task string) bool {
-	lower := strings.ToLower(
-		strings.TrimSpace(task),
-	)
-
-	keywords := []string{
-		"redesign the entire",
-		"redesign the page",
-		"rebuild the page",
-		"new version of the file",
-		"replace the current implementation",
-
-		"полностью переработай страницу",
-		"переделай страницу",
-		"полностью переделай страницу",
-		"создай новую версию файла",
-		"замени текущую реализацию",
-	}
-
-	return containsAny(lower, keywords)
-}
-
-func validateEditRecommendation(
-	recommendation ExecutionStrategy,
-	task string,
-	signals executionSignals,
-) ExecutionStrategy {
-	mode := normalizeEditMode(
-		string(recommendation.EditMode),
-	)
-
-	if mode == EditModeAuto {
-		mode = EditModePatch
-	}
-
-	explicitFull := taskRequestsWholeFileRewrite(task)
-
-	designFull :=
-		signals.TargetFiles == 1 &&
-			recommendation.Confidence >= 75 &&
-			taskSuggestsWholeFileRedesign(task)
-
-	fullAllowed :=
-		explicitFull ||
-			designFull
-
-	originalMode := mode
-
-	// Явное требование пользователя имеет абсолютный приоритет.
-	if explicitFull {
-		mode = EditModeFull
-	}
-
-	// Если LLM предложила full без достаточного основания,
-	// Gogitor возвращает более безопасный PATCH.
-	if mode == EditModeFull && !fullAllowed {
-		mode = EditModePatch
-	}
-
-	// Полная перезапись нескольких файлов без явного указания
-	// особенно опасна: существующие файлы лучше менять патчами.
-	if mode == EditModeFull &&
-		signals.TargetFiles > 1 &&
-		!explicitFull {
-
-		mode = EditModePatch
-	}
-
-	reason := strings.TrimSpace(
-		recommendation.Reason,
-	)
-
-	if reason == "" {
-		reason = "LLM edit recommendation"
-	}
-
-	if originalMode != mode {
-		switch {
-		case mode == EditModePatch:
-			reason += "; Gogitor guard selected patch"
-
-		case mode == EditModeFull:
-			reason += "; Gogitor guard selected full-file"
-		}
-	}
-
-	recommendation.EditMode = mode
-	recommendation.Reason = reason
-
-	return recommendation
 }
 
 func normalizeAgentDepth(depth string) AgentDepth {
@@ -268,497 +157,6 @@ func (s *Service) agentDepthForTask(task string) AgentDepth {
 	}
 
 	return AgentDepthNormal
-}
-
-type executionSignals struct {
-	Score         int
-	Reasons       []string
-	TargetFiles   int
-	RequiresAgent bool
-	BroadTask     bool
-}
-
-func taskRequiresAgent(task string) (bool, []string) {
-	lower := strings.ToLower(strings.TrimSpace(task))
-
-	architecturalKeywords := []string{
-		"refactor",
-		"refactoring",
-		"architecture",
-		"architectural",
-		"restructure",
-		"reorganize",
-		"redesign",
-		"migration",
-		"migrate",
-		"split",
-		"divide",
-		"extract",
-		"move to a package",
-		"move into a package",
-		"create package",
-		"new package",
-		"move business logic into",
-		"move logic into",
-		"move code into a new",
-		"move code into the new",
-		"extract into a new package",
-		"extract logic into a package",
-		"рефактор",
-		"рефакторинг",
-		"архитектур",
-		"архитект",
-		"реструктур",
-		"перестрой",
-		"перенастрой архитект",
-		"перепроект",
-		"миграц",
-		"раздели",
-		"разделить",
-		"разбей",
-		"разбить",
-		"вынеси",
-		"вынести",
-		"перенеси",
-		"перенести",
-		"создай пакет",
-		"добавь пакет",
-		"новый пакет",
-		"перенеси логику в новый пакет",
-		"перенести логику в новый пакет",
-		"вынеси логику в новый пакет",
-		"вынести логику в новый пакет",
-		"перенеси код в новый пакет",
-		"перенести код в новый пакет",
-	}
-
-	var reasons []string
-
-	for _, keyword := range architecturalKeywords {
-		if strings.Contains(lower, keyword) {
-			reasons = append(
-				reasons,
-				"architectural or structural change",
-			)
-			break
-		}
-	}
-
-	broadKeywords := []string{
-		"entire project",
-		"whole project",
-		"all packages",
-		"throughout the project",
-		"system-wide",
-		"across the project",
-
-		"весь проект",
-		"по всему проекту",
-		"во всём проекте",
-		"во всем проекте",
-		"все пакеты",
-		"во всех пакетах",
-	}
-
-	broad := containsAny(lower, broadKeywords)
-	if broad {
-		reasons = append(reasons, "broad project-wide scope")
-	}
-
-	return len(reasons) > 0, reasons
-}
-
-func (s *Service) executionSignals(task string) executionSignals {
-	score, reasons := s.taskComplexityScore(task)
-
-	targetFiles := extractTargetFiles(task)
-	requiresAgent, agentReasons := taskRequiresAgent(task)
-
-	reasons = append(reasons, agentReasons...)
-
-	if len(targetFiles) > 3 {
-		requiresAgent = true
-		reasons = append(
-			reasons,
-			"many explicitly mentioned files",
-		)
-	}
-
-	lower := strings.ToLower(task)
-
-	broadKeywords := []string{
-		"entire project",
-		"whole project",
-		"all packages",
-		"throughout the project",
-		"system-wide",
-		"across the project",
-
-		"весь проект",
-		"по всему проекту",
-		"во всём проекте",
-		"во всем проекте",
-		"все пакеты",
-		"во всех пакетах",
-	}
-
-	broad := containsAny(lower, broadKeywords)
-
-	return executionSignals{
-		Score:         score,
-		Reasons:       reasons,
-		TargetFiles:   len(targetFiles),
-		RequiresAgent: requiresAgent,
-		BroadTask:     broad,
-	}
-}
-
-func (s *Service) chooseExecutionStrategy(
-	ctx context.Context,
-	task string,
-	opts Options,
-	emit func(domain.Event),
-) ExecutionStrategy {
-	requested := normalizeExecutionMode(opts.Mode)
-	requestedDepth := normalizeAgentDepth(string(opts.AgentDepth))
-
-	// Явный выбор пользователя всегда имеет приоритет.
-	if requested != ExecutionModeAuto {
-		if requested == ExecutionModeSimple {
-			return ExecutionStrategy{
-				Mode:       ExecutionModeSimple,
-				AgentDepth: AgentDepthNormal,
-				EditMode:   normalizeEditMode(string(opts.EditMode)),
-				Reason:     "explicit simple mode",
-				Source:     "user",
-			}
-		}
-
-		depth := requestedDepth
-		if depth == AgentDepthAuto {
-			depth = AgentDepthNormal
-		}
-
-		editMode := normalizeEditMode(string(opts.EditMode))
-		if editMode == EditModeAuto {
-			editMode = EditModePatch
-		}
-
-		return ExecutionStrategy{
-			Mode:       ExecutionModeAgent,
-			AgentDepth: depth,
-			EditMode:   editMode,
-			Reason:     "explicit agent mode",
-			Source:     "user",
-		}
-	}
-
-	signals := s.executionSignals(task)
-	profile := s.modelProfile()
-
-	// В автоматическом режиме сначала спрашиваем LLM-router.
-	recommendation, err := s.llmExecutionStrategy(
-		ctx,
-		task,
-		signals.Score,
-		profile,
-		emit,
-	)
-
-	if err == nil {
-		recommendation =
-			validateExecutionRecommendation(
-				recommendation,
-				signals,
-			)
-
-		recommendation =
-			validateEditRecommendation(
-				recommendation,
-				task,
-				signals,
-			)
-
-		return recommendation
-	}
-
-	sendEvent(
-		emit,
-		domain.EventWarn,
-		fmt.Sprintf(
-			"Execution strategy LLM failed, using deterministic fallback: %v",
-			err,
-		),
-	)
-
-	fallback := fallbackExecutionStrategy(
-		signals,
-	)
-
-	return validateEditRecommendation(
-		fallback,
-		task,
-		signals,
-	)
-
-}
-
-func validateExecutionRecommendation(
-	recommendation ExecutionStrategy,
-	signals executionSignals,
-) ExecutionStrategy {
-	mode := normalizeExecutionMode(
-		string(recommendation.Mode),
-	)
-
-	if mode == ExecutionModeAuto {
-		mode = ExecutionModeSimple
-	}
-
-	confidence := recommendation.Confidence
-	if confidence < 0 {
-		confidence = 0
-	}
-	if confidence > 100 {
-		confidence = 100
-	}
-
-	depth := normalizeAgentDepth(
-		string(recommendation.AgentDepth),
-	)
-
-	if depth == AgentDepthAuto {
-		depth = AgentDepthNormal
-	}
-
-	complexity := strings.ToLower(
-		strings.TrimSpace(
-			recommendation.Complexity,
-		),
-	)
-
-	risk := strings.ToLower(
-		strings.TrimSpace(
-			recommendation.Risk,
-		),
-	)
-
-	reason := strings.TrimSpace(
-		recommendation.Reason,
-	)
-
-	// ------------------------------------------------------------
-	// Agent разрешается только при наличии объективных оснований.
-	// ------------------------------------------------------------
-
-	agentAllowed :=
-		signals.RequiresAgent ||
-			signals.BroadTask ||
-			signals.TargetFiles > 3 || (signals.Score >= 8 && confidence >= 70 && complexity == "high" && risk != "low")
-
-	if mode == ExecutionModeAgent && !agentAllowed {
-		mode = ExecutionModeSimple
-		depth = AgentDepthNormal
-
-		if reason == "" {
-			reason = "LLM recommended agent"
-		}
-
-		reason =
-			"Gogitor guard selected fast: " +
-				reason
-	}
-
-	// ------------------------------------------------------------
-	// Если LLM выбрала fast, но задача объективно архитектурная,
-	// Gogitor повышает уровень до Agent.
-	// ------------------------------------------------------------
-
-	if mode == ExecutionModeSimple &&
-		agentAllowed {
-
-		mode = ExecutionModeAgent
-
-		if signals.BroadTask ||
-			signals.Score >= 8 ||
-			risk == "high" {
-
-			depth = AgentDepthDeep
-		} else {
-			depth = AgentDepthNormal
-		}
-
-		if reason == "" {
-			reason = "LLM recommended fast"
-		}
-
-		reason =
-			"Gogitor guard selected agent: " +
-				reason
-	}
-
-	// ------------------------------------------------------------
-	// Deep разрешается только для действительно тяжёлых задач.
-	// Capability profile модели больше не может сам по себе
-	// заставить Gogitor использовать deep.
-	// ------------------------------------------------------------
-
-	deepAllowed :=
-		signals.BroadTask ||
-			signals.Score >= 8 ||
-			risk == "high"
-
-	if depth == AgentDepthDeep &&
-		!deepAllowed {
-
-		depth = AgentDepthNormal
-
-		if reason == "" {
-			reason = "deep downgraded to normal by execution guard"
-		} else {
-			reason += "; deep downgraded to normal by execution guard"
-		}
-	}
-
-	if mode == ExecutionModeSimple {
-		depth = AgentDepthNormal
-	}
-
-	return ExecutionStrategy{
-		Mode:       mode,
-		AgentDepth: depth,
-		Confidence: confidence,
-		Complexity: complexity,
-		Risk:       risk,
-		Reason:     reason,
-		Source:     recommendation.Source,
-	}
-}
-
-func fallbackExecutionStrategy(
-	signals executionSignals,
-) ExecutionStrategy {
-	if signals.RequiresAgent ||
-		signals.BroadTask ||
-		signals.TargetFiles > 3 ||
-		signals.Score >= 8 {
-
-		depth := AgentDepthNormal
-
-		if signals.BroadTask ||
-			signals.Score >= 8 {
-
-			depth = AgentDepthDeep
-		}
-
-		return ExecutionStrategy{
-			Mode:       ExecutionModeAgent,
-			AgentDepth: depth,
-			Reason: fmt.Sprintf(
-				"deterministic fallback: task requires orchestration (score %d)",
-				signals.Score,
-			),
-			Source: "rules",
-		}
-	}
-
-	return ExecutionStrategy{
-		Mode:       ExecutionModeSimple,
-		AgentDepth: AgentDepthNormal,
-		Reason: fmt.Sprintf(
-			"deterministic fallback: fast is sufficient (score %d)",
-			signals.Score,
-		),
-		Source: "rules",
-	}
-}
-
-// llmExecutionStrategy запрашивает стратегию у LLM.
-func (s *Service) llmExecutionStrategy(
-	ctx context.Context,
-	task string,
-	score int,
-	profile modelProfile,
-	emit func(domain.Event),
-) (ExecutionStrategy, error) {
-	prompt := prompts.ExecutionStrategy(
-		task,
-		s.projectSummary(),
-		string(profile),
-		score,
-	)
-
-	if !s.Cfg.ReasoningRouter {
-		ctx = llm.WithReasoningDisabled(ctx)
-	}
-
-	var out struct {
-		ExecutionMode string `json:"execution_mode"`
-		AgentDepth    string `json:"agent_depth"`
-		EditMode      string `json:"edit_mode"`
-		Confidence    int    `json:"confidence"`
-		Complexity    string `json:"complexity"`
-		Risk          string `json:"risk"`
-		Reason        string `json:"reason"`
-	}
-
-	err := s.sendAgentJSON(
-		ctx,
-		agent.RoleRouter,
-		agent.PriorityHigh,
-		"choose execution strategy",
-		prompt,
-		&out,
-	)
-	if err != nil {
-		return ExecutionStrategy{}, err
-	}
-
-	mode := normalizeExecutionMode(out.ExecutionMode)
-
-	if mode == ExecutionModeAuto {
-		mode = ExecutionModeAgent
-	}
-
-	depth := normalizeAgentDepth(
-		out.AgentDepth,
-	)
-
-	if depth == AgentDepthAuto {
-		depth = AgentDepthNormal
-	}
-
-	editMode := normalizeEditMode(out.EditMode)
-	if editMode == EditModeAuto {
-		editMode = EditModePatch
-	}
-
-	// Защитные ограничения.
-	if score >= 8 && mode == ExecutionModeSimple {
-		mode = ExecutionModeAgent
-		depth = AgentDepthDeep
-	}
-	if score <= 2 && mode == ExecutionModeAgent {
-		mode = ExecutionModeSimple
-		depth = AgentDepthNormal
-	}
-
-	return ExecutionStrategy{
-		Mode:       mode,
-		AgentDepth: depth,
-		EditMode:   editMode,
-		Confidence: out.Confidence,
-		Complexity: strings.ToLower(
-			strings.TrimSpace(out.Complexity),
-		),
-		Risk: strings.ToLower(
-			strings.TrimSpace(out.Risk),
-		),
-		Reason: strings.TrimSpace(
-			out.Reason,
-		),
-		Source: "llm",
-	}, nil
 }
 
 // taskComplexityScore оценивает сложность задачи детерминированно.
@@ -1063,21 +461,4 @@ func urlHostIsLocal(rawURL string) bool {
 		return true
 	}
 	return false
-}
-
-func isRemovedWorkflowMode(
-	mode string,
-) bool {
-	switch strings.ToLower(
-		strings.TrimSpace(mode),
-	) {
-	case "workflow",
-		"harness",
-		"workflow-lite",
-		"воркфлоу":
-		return true
-
-	default:
-		return false
-	}
 }

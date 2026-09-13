@@ -1468,7 +1468,7 @@ func (s *Service) executeAgentFull(
 						"\n=== END PREVIOUS SUBTASK REPAIR CONTEXT ==="
 			}
 
-			res = s.executeSimple(
+			res = s.executeCoderPass(
 				subCtx,
 				attemptTask,
 				subOpts,
@@ -1611,7 +1611,7 @@ func (s *Service) executeAgentFull(
 					)
 
 				fixRes :=
-					s.executeSimple(
+					s.executeCoderPass(
 						agent.WithRole(
 							ctx,
 							agent.RoleCoder,
@@ -2080,7 +2080,7 @@ func (s *Service) executeAgentFull(
 		fixOpts := opts
 		fixOpts.NoCommit = true
 
-		fixRes := s.executeSimple(
+		fixRes := s.executeCoderPass(
 			agent.WithRole(
 				ctx,
 				agent.RoleCoder,

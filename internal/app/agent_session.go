@@ -805,7 +805,6 @@ func (s *Service) ExecuteAgentInterview(
 			ctx,
 			task,
 			Options{
-				Mode:       "agent",
 				AgentDepth: AgentDepthAuto,
 			},
 			emit,
@@ -936,7 +935,6 @@ func (s *Service) ContinueAgentInterview(
 		ctx,
 		refinedTask,
 		Options{
-			Mode:             "agent",
 			AgentDepth:       depth,
 			InterviewAnswers: answers,
 		},
@@ -1548,7 +1546,6 @@ func (s *Service) ExecuteAgentResume(
 		state.Task,
 		"",
 		Options{
-			Mode:              "agent",
 			AgentDepth:        state.Depth,
 			AgentResumePlan:   plan,
 			AgentResumeFrom:   state.CompletedSubtasks,
@@ -1556,7 +1553,6 @@ func (s *Service) ExecuteAgentResume(
 		},
 		emit,
 	)
-
 	result.Mode = "agent"
 	return result
 }

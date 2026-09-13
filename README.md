@@ -1,10 +1,10 @@
-# Gogitor 2.0
+# Gogitor 2.1
 
 Terminal AI coding assistant for Go projects. Gogitor is now a **TUI-only application**: there is no separate CLI mode or CLI package.
 
 [Русская версия](README_RU.md)
 
-## What changed in 2.0
+## What changed in 2.1
 
 - one TUI entry point, without the old CLI branch;
 - one catalog of TUI commands reused by completion;
@@ -79,10 +79,10 @@ A future language should be introduced by registering its definition and toolcha
 ### Code and analysis
 
 ```text
-:code <task>             automatic strategy selection
-:fast <task>             single-pass generation
-:agent <task>            adaptive multi-agent execution
-:agent enhanced <task>  stronger agent profile
+:code <task>          Agent with automatic depth selection
+:agent <task>         Agent with automatic depth selection
+:agent deep <task>    forced deep profile
+:agent enhanced <task> enhanced Agent profile
 :agent interview <task> clarification helper
 :agent reflect           reflection helper
 :agent report            latest session report
