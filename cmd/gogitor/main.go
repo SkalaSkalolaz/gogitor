@@ -14,7 +14,7 @@ import (
 	"gogitor/internal/ui/tui"
 )
 
-const Version = "2.1.0"
+const Version = "2.1.1"
 
 func main() {
 	cfg, err := config.Load()
