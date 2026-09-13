@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+    "path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -100,12 +101,22 @@ func addPatchFootprintToScope(
 	allowed map[string]bool,
 ) error {
 
+	// Footprint строится через go/parser и имеет смысл
+	// только для Go-файлов. Для HTML/CSS/JS/JSON/YAML/MD
+	// и любых других не-Go файлов функция превращается в no-op.
+	if !isGoFilePath(before) && !isGoFilePath(after) {
+		// Дополнительная эвристика: если содержимое не похоже
+		// на Go-исходник (нет package), не пытаемся его парсить.
+		if !looksLikeGoSource(before) && !looksLikeGoSource(after) {
+			return nil
+		}
+	}
+
 	oldSpan, newSpan, changed :=
 		changedSourceSpans(
 			before,
 			after,
 		)
-
 	if !changed {
 		return nil
 	}
@@ -1266,4 +1277,16 @@ func patchSearchTooLarge(search string, policy PatchPolicy) bool {
 
 	lines := strings.Count(strings.TrimSpace(search), "\n") + 1
 	return lines > 10
+}
+
+func looksLikeGoSource(content string) bool {
+	content = strings.TrimPrefix(content, "\ufeff")
+
+	re := regexp.MustCompile(`(?m)^\s*package\s+[A-Za-z_][A-Za-z0-9_]*`)
+	return re.MatchString(content)
+}
+
+// isGoFilePath — расширение .go.
+func isGoFilePath(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".go")
 }

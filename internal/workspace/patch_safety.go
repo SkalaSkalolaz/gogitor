@@ -388,22 +388,20 @@ func (w *Workspace) PreflightChanges(
 					updated,
 				)
 
-			// НОВОЕ:
-			// фиксируем именно тот AST-footprint,
-			// который изменил этот patch.
-
-			if err := addPatchFootprintToScope(
-				patchBefore,
-				updated,
-				resolved,
-				allowedScope,
-			); err != nil {
-				return nil, nil, fmt.Errorf(
-					"preflight %s patch %d: %w",
-					ch.Path,
-					pi+1,
-					err,
-				)
+			if isGoPath(ch.Path) {
+				if err := addPatchFootprintToScope(
+					patchBefore,
+					updated,
+					resolved,
+					allowedScope,
+				); err != nil {
+					return nil, nil, fmt.Errorf(
+						"preflight %s patch %d: %w",
+						ch.Path,
+						pi+1,
+						err,
+					)
+				}
 			}
 
 			current = updated
