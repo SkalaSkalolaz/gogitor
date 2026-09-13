@@ -1612,6 +1612,8 @@ func (s *Service) findLatestUndoableAgentSession() (
 		)
 }
 
+
+
 func formatAgentTaskReport(
 	result domain.Result,
 	depth AgentDepth,
@@ -1796,6 +1798,18 @@ func formatAgentTaskReport(
 			)
 		}
 	}
+
+    if len(result.ReviewerSuggestions) > 0 {
+    		b.WriteString("\nREVIEWER SUGGESTIONS (optional, not applied)\n")
+    
+    		for _, sug := range result.ReviewerSuggestions {
+    			fmt.Fprintf(
+    				&b,
+    				"- %s\n",
+    				sug,
+    			)
+    		}
+    	}
 
 	return strings.TrimSpace(
 		b.String(),

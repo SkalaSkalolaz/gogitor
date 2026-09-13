@@ -1069,6 +1069,8 @@ func (s *Service) executeAgentFull(
 			return
 		}
 
+    	final.ReviewerSuggestions = nil
+
 		final.AddWarning("changes were rolled back to pre-agent state")
 	}
 
@@ -1220,6 +1222,13 @@ func (s *Service) executeAgentFull(
 		)
 
 		markPlan(i+1, domain.PlanRunning, "")
+
+		// Снимок длины suggestions на момент старта подзадачи.
+		// При откате этой подзадачи всё, что было записано после
+		// этого момента, становится невалидным.
+		suggestionsBeforeSubtask :=
+			len(final.ReviewerSuggestions)
+
 		rollbackSubtask := func(reason string) {
 			if opts.DryRun || checkpoint == nil {
 				return
@@ -1244,13 +1253,24 @@ func (s *Service) executeAgentFull(
 						err,
 					),
 				)
-			} else {
-				final.AddWarning(
-					"current subtask changes were rolled back; " +
-						"previous subtasks preserved",
-				)
+				return
 			}
+
+			// Отбрасываем suggestions текущей подзадачи —
+			// её код больше не существует.
+			if len(final.ReviewerSuggestions) >
+				suggestionsBeforeSubtask {
+
+				final.ReviewerSuggestions =
+					final.ReviewerSuggestions[:suggestionsBeforeSubtask]
+			}
+
+			final.AddWarning(
+				"current subtask changes were rolled back; " +
+					"previous subtasks preserved",
+			)
 		}
+
 		subOpts := opts
 		subOpts.NoCommit = true
 		subOpts.ProgressItem = i + 1
@@ -1726,10 +1746,31 @@ func (s *Service) executeAgentFull(
 				itemNote =
 					"critical reviewer issues fixed and re-reviewed"
 
+    			if len(reviewAfterFix.Suggestions) > 0 {
+    					appendReviewerSuggestions(
+    						&final.ReviewerSuggestions,
+    						reviewAfterFix,
+    						i+1,
+    						len(plan.Subtasks),
+    					)
+    					itemNote = fmt.Sprintf(
+    						"critical reviewer issues fixed; %d suggestion(s) recorded",
+    						len(reviewAfterFix.Suggestions),
+    					)
+    				}
+
 			} else if len(review.Suggestions) > 0 {
 				itemStatus = domain.PlanWarn
 				itemNote = fmt.Sprintf("reviewer suggestions: %d", len(review.Suggestions))
+
+				appendReviewerSuggestions(
+					&final.ReviewerSuggestions,
+					review,
+					i+1,
+					len(plan.Subtasks),
+				)
 			}
+
 		}
 		if deep && !isAnalysis {
 			sendEvent(
@@ -3315,6 +3356,24 @@ func isRuntimeOnlyVerificationItem(s string) bool {
 		"отправлен", "отправить", "запрос", "исполняемым", "права",
 	}
 	return containsAny(lower, runtimeOnly)
+}
+
+// appendReviewerSuggestions добавляет suggestions от ревьюера в общий
+// список Result.ReviewerSuggestions, снабжая каждую пометкой подзадачи.
+func appendReviewerSuggestions(
+	dst *[]string,
+	review agentReview,
+	subtaskIndex, subtaskTotal int,
+) {
+	for _, sug := range review.Suggestions {
+		sug = strings.TrimSpace(sug)
+		if sug == "" {
+			continue
+		}
+		*dst = append(*dst,
+			fmt.Sprintf("[%d/%d] %s", subtaskIndex, subtaskTotal, sug),
+		)
+	}
 }
 
 func buildReviewFixTask(subtask string, review agentReview) string {

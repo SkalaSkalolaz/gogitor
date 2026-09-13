@@ -265,6 +265,7 @@ type Result struct {
 	FilesModified      []string          `json:"files_modified,omitempty"`
 	Errors             []string          `json:"errors,omitempty"`
 	Warnings           []string          `json:"warnings,omitempty"`
+    ReviewerSuggestions []string          `json:"reviewer_suggestions,omitempty"`
 	Iterations         int               `json:"iterations,omitempty"`
 	Tests              TestsStatus       `json:"tests"`
 	GitCommit          string            `json:"git_commit,omitempty"`
