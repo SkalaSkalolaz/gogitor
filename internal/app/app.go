@@ -46,6 +46,7 @@ type Options struct {
 	AgentResumeFrom     int
 	AgentResumeSource   string
 	AgentProjectContext string
+	AgentResumeVerificationOnly bool
 }
 
 type PendingComparison struct {

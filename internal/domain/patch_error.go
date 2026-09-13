@@ -78,6 +78,12 @@ const (
 	PatchErrorImportGuard       PatchErrorCode = "import_guard"
 	PatchErrorGoModGuard        PatchErrorCode = "gomod_guard"
 	PatchErrorPatchTooLarge     PatchErrorCode = "patch_too_large"
+
+	// PatchErrorGoPackageMismatch означает, что новый или изменённый
+	// Go-файл объявляет package, отличный от package других файлов
+	// в той же директории. Go гарантированно откажется собирать
+	// такой пакет.
+	PatchErrorGoPackageMismatch PatchErrorCode = "go_package_mismatch"
 )
 
 // PatchError — структурированная ошибка patch pipeline.
@@ -169,6 +175,8 @@ func PatchErrorCodeFromText(
 		value = strings.TrimSpace(value)
 
 		switch PatchErrorCode(value) {
+		case PatchErrorGoPackageMismatch:
+			return PatchErrorGoPackageMismatch
 		case PatchErrorSearchOutsideSymbol:
 			return PatchErrorSearchOutsideSymbol
 

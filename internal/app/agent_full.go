@@ -879,13 +879,14 @@ func (s *Service) executeAgentFull(
 
 	var acceptanceBaseline agentAcceptanceBaseline
 
-	if !opts.DryRun &&
-		checkpoint != nil {
-
-		baseline, baselineErr :=
-			captureAgentAcceptanceBaseline(
-				checkpoint.Dir,
-			)
+    if !opts.DryRun &&
+    		checkpoint != nil &&
+    		!opts.AgentResumeVerificationOnly {
+    
+    		baseline, baselineErr :=
+    			captureAgentAcceptanceBaseline(
+    				checkpoint.Dir,
+    			)
 
 		if baselineErr != nil {
 			final.AddWarning(
@@ -941,9 +942,13 @@ func (s *Service) executeAgentFull(
 		}
 
 		defer func() {
-			if final.Success {
+			switch {
+			case final.Success:
 				state.Status = "completed"
-			} else {
+			case state.Status == "verification_failed":
+				// оставляем как есть: сессия должна оставаться
+				// возобновляемой через :agent resume
+			default:
 				state.Status = "failed"
 			}
 
@@ -961,6 +966,7 @@ func (s *Service) executeAgentFull(
 				)
 			}
 		}()
+
 	}
 
 	if err != nil {
@@ -1074,6 +1080,26 @@ func (s *Service) executeAgentFull(
 		final.AddWarning("changes were rolled back to pre-agent state")
 	}
 
+	markVerificationFailed := func(reason string) {
+		state.Status = "verification_failed"
+
+		if session != nil {
+			if err := saveAgentState(session, state); err != nil {
+				final.AddWarning(
+					fmt.Sprintf(
+						"cannot save verification_failed state: %v",
+						err,
+					),
+				)
+			}
+		}
+
+		final.AddWarning(
+			"verification failed (" + reason + "); " +
+				"working tree preserved; run ':agent resume' to retry verification",
+		)
+	}
+
 	// ─── Planning ────────────────────────────────────────────────
 	var plan *fullPlan
 
@@ -1084,6 +1110,26 @@ func (s *Service) executeAgentFull(
 			plan,
 			query,
 		)
+
+    	plan =
+    		s.enforceAtomicAgentPlan(
+    			plan,
+    			query,
+    			emit,
+    		)
+    
+    	plan =
+    		validateAgentPlan(
+    			plan,
+    			query,
+    		)
+    
+    	warnOnFileBoundAcceptance(query, plan, emit)   // NEW
+    
+    	plan =
+    		s.limitAgentPlan(
+    			plan,
+    		)
 
 		sendEvent(
 			emit,
@@ -1194,13 +1240,12 @@ func (s *Service) executeAgentFull(
 
 	// ─── Subtask execution ───────────────────────────────────────
 	for i, sub := range plan.Subtasks {
-		if i < resumeFrom {
-			planStatuses[i] =
-				domain.PlanDone
+		if opts.AgentResumeVerificationOnly ||
+			i < resumeFrom {
 
+			planStatuses[i] = domain.PlanDone
 			continue
 		}
-
 		state.CurrentSubtask = i + 1
 
 		if session != nil {
@@ -2105,11 +2150,12 @@ func (s *Service) executeAgentFull(
 				)
 			}
 
-			rollback(
+			markVerificationFailed(
 				"verifier reported incomplete task",
 			)
 
 			return final
+
 		}
 
 		sendEvent(
@@ -2141,12 +2187,13 @@ func (s *Service) executeAgentFull(
 				fixRes.Errors...,
 			)
 
-			rollback(
+			markVerificationFailed(
 				"verifier fix failed",
 			)
 
 			return final
 		}
+
 
 		if !deep {
 			check := s.runAgentDeterministicChecks(
@@ -2310,7 +2357,7 @@ func (s *Service) executeAgentFull(
 				)
 			}
 
-			rollback(
+			markVerificationFailed(
 				"task remains incomplete after verifier fix",
 			)
 

@@ -244,6 +244,14 @@ func (w *Workspace) PreflightChanges(
 	prepared := cloneFileChanges(changes)
 	report := &PatchPreflightReport{Files: len(prepared)}
 
+	if err := validateGoPackageConsistency(dir, prepared); err != nil {
+		w.diffTracef(
+			"phase=PREFLIGHT stage=PACKAGE_CHECK decision=REJECT error_code=%s reason=%s",
+			domain.PatchErrorCodeFromError(err),
+			strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\n", " "), "\r", " "),
+		)
+		return nil, nil, err
+	}
 	moduleImportContext, err :=
 		loadGoModImportContext(
 			dir,

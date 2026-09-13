@@ -50,6 +50,18 @@ RULES:
     more than 2 functions, split it into smaller subtasks.
 
 4. Include practical acceptance criteria.
+4a. ACCEPTANCE CRITERIA — BEHAVIOR OVER FILES:
+    - Acceptance criteria MUST describe observable behavior: HTTP contracts,
+      CLI flags, response shapes, side effects, error handling.
+    - Do NOT list specific file names or file paths
+      (e.g. fetcher.go, handler.go, types.go) in acceptance criteria
+      UNLESS the ORIGINAL TASK explicitly names those files.
+    - If the task asks for a project "structure", "modules", or
+      "scaffold for expansion" WITHOUT naming files, express criteria
+      in terms of responsibilities and packages, not file paths.
+    - GOOD: "HTTP server responds at / with an HTML page showing current
+      temperature for St. Petersburg".
+    - BAD:  "Project contains fetcher.go, handler.go, types.go"
 5. Do not invent unrelated features.
 6. Do not create separate analysis-only subtasks. If analysis is needed, include it in the first coding subtask as context.
 7. Prefer subtasks that create or modify files.
@@ -425,6 +437,13 @@ RULES:
 13. Do not invent files, symbols, functions, methods or constants.
 14. When uncertain, keep the existing subtask unchanged.
 15. The result must describe only work that is still necessary.
+16. ACCEPTANCE CRITERIA — BEHAVIOR OVER FILES:
+    - Do NOT introduce file names or file paths into acceptance criteria.
+    - If the incoming plan already lists file names in acceptance criteria,
+      and the ORIGINAL TASK does not name those files, rewrite the criteria
+      in behavioral terms before returning the validated plan.
+    - Preserve the original user's explicit file requirements if the task
+      itself mentions specific files.
 
 ORIGINAL TASK:
 `)

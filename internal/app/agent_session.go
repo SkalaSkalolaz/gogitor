@@ -18,6 +18,7 @@ import (
 	"gogitor/internal/llm"
 	"gogitor/internal/prompts"
 	"gogitor/internal/runner"
+	"gogitor/internal/security"
 	"gogitor/internal/textutil"
 )
 
@@ -549,7 +550,7 @@ func (s *Service) findLatestResumableAgentSession() (
 		}
 
 		switch state.Status {
-		case "failed", "running":
+		case "failed", "running", "verification_failed":
 			return dir, state, nil
 		}
 	}
@@ -585,6 +586,41 @@ func loadAgentPlan(
 	}
 
 	return &plan, nil
+}
+
+// warnOnFileBoundAcceptance emits a warning when the plan's acceptance
+// criteria mention .go file names that the original task did not name.
+// This is a diagnostic only: the plan is NOT modified.
+func warnOnFileBoundAcceptance(
+	originalTask string,
+	plan *fullPlan,
+	emit func(domain.Event),
+) {
+	if plan == nil || emit == nil {
+		return
+	}
+
+	fileRE := regexp.MustCompile(`\b[A-Za-z0-9_\-]+\.go\b`)
+
+	taskFiles := map[string]bool{}
+	for _, m := range fileRE.FindAllString(originalTask, -1) {
+		taskFiles[m] = true
+	}
+
+	for i, st := range plan.Subtasks {
+		for _, crit := range st.Acceptance {
+			for _, m := range fileRE.FindAllString(crit, -1) {
+				if taskFiles[m] {
+					continue
+				}
+				sendEvent(emit, domain.EventWarn,
+					fmt.Sprintf(
+						"acceptance criterion for subtask %d mentions %q, which the original task did not name; this may cause verifier to over-constrain the implementation",
+						i+1, m,
+					))
+			}
+		}
+	}
 }
 
 // Перенесенные функции валидации плана из workflow.go
@@ -1522,13 +1558,35 @@ func (s *Service) ExecuteAgentResume(
 		}
 	}
 
-	if state.CompletedSubtasks >= len(plan.Subtasks) {
+	verificationOnly := state.Status == "verification_failed"
+
+	if state.CompletedSubtasks >= len(plan.Subtasks) &&
+		!verificationOnly {
+
 		return domain.Result{
 			Success: false,
 			Mode:    "agent-resume",
 			Errors: []string{
 				"agent session has no unfinished subtasks",
 			},
+		}
+	}
+
+	// При verification-only resume убеждаемся, что код предыдущей
+	// сессии всё ещё присутствует в рабочем дереве: rollback его
+	// не уничтожил.
+	if verificationOnly {
+		missing := s.missingFilesFromState(state)
+		if len(missing) > 0 {
+			return domain.Result{
+				Success: false,
+				Mode:    "agent-resume",
+				Errors: []string{
+					"cannot resume verification: files from the last subtask are missing: " +
+						strings.Join(missing, ", "),
+					"the previous run's changes are no longer in the working tree",
+				},
+			}
 		}
 	}
 
@@ -1541,20 +1599,51 @@ func (s *Service) ExecuteAgentResume(
 		),
 	)
 
+	if verificationOnly {
+		sendEvent(
+			emit,
+			domain.EventAgent,
+			"resume mode: verification-only (subtasks preserved)",
+		)
+	}
+
 	result := s.executeAgentFull(
 		ctx,
 		state.Task,
 		"",
 		Options{
-			AgentDepth:        state.Depth,
-			AgentResumePlan:   plan,
-			AgentResumeFrom:   state.CompletedSubtasks,
-			AgentResumeSource: dir,
+			AgentDepth:                  state.Depth,
+			AgentResumePlan:             plan,
+			AgentResumeFrom:             state.CompletedSubtasks,
+			AgentResumeSource:           dir,
+			AgentResumeVerificationOnly: verificationOnly,
 		},
 		emit,
 	)
 	result.Mode = "agent"
 	return result
+}
+
+func (s *Service) missingFilesFromState(state *agentSessionState) []string {
+	if state == nil {
+		return nil
+	}
+	var missing []string
+	for _, f := range state.LastSubtaskFiles {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		full, err := security.SafeJoin(s.Cfg.WorkDir, f)
+		if err != nil {
+			missing = append(missing, f)
+			continue
+		}
+		if _, err := os.Stat(full); err != nil {
+			missing = append(missing, f)
+		}
+	}
+	return missing
 }
 
 func (s *Service) findLatestUndoableAgentSession() (
@@ -1611,8 +1700,6 @@ func (s *Service) findLatestUndoableAgentSession() (
 			"no completed Agent session with Git commit found",
 		)
 }
-
-
 
 func formatAgentTaskReport(
 	result domain.Result,
@@ -1799,17 +1886,17 @@ func formatAgentTaskReport(
 		}
 	}
 
-    if len(result.ReviewerSuggestions) > 0 {
-    		b.WriteString("\nREVIEWER SUGGESTIONS (optional, not applied)\n")
-    
-    		for _, sug := range result.ReviewerSuggestions {
-    			fmt.Fprintf(
-    				&b,
-    				"- %s\n",
-    				sug,
-    			)
-    		}
-    	}
+	if len(result.ReviewerSuggestions) > 0 {
+		b.WriteString("\nREVIEWER SUGGESTIONS (optional, not applied)\n")
+
+		for _, sug := range result.ReviewerSuggestions {
+			fmt.Fprintf(
+				&b,
+				"- %s\n",
+				sug,
+			)
+		}
+	}
 
 	return strings.TrimSpace(
 		b.String(),

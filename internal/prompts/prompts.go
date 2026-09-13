@@ -1897,6 +1897,28 @@ FINAL CHECK:
 - No cosmetic-only change is used as a substitute for the requested change.
 - No unrelated declarations are modified.`
 
+	case domain.PatchErrorGoPackageMismatch:
+		return `ERROR CODE: go_package_mismatch
+
+The new or modified Go file declares a package name that conflicts with
+other Go files in the SAME directory.
+
+Go does NOT allow two different package names in one directory
+(only _test.go files may use package X_test).
+
+MANDATORY CORRECTION:
+1. Re-read the file path in the rejected patch.
+2. Choose ONE of the following:
+   a. Move the new file into a dedicated subdirectory and give that
+      subdirectory its own package. Update the path in the patch header.
+   b. Change the new file's package clause to match the existing package
+      in that directory.
+3. Do NOT introduce a new package merely by placing a file next to
+   existing files in the same directory.
+4. Do NOT rewrite unrelated files to silence the error.
+5. Keep the SEARCH/REPLACE protocol and Symbol anchors you already use.
+6. Return only corrected patch blocks.`
+
 	default:
 		return ""
 	}
