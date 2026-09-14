@@ -171,6 +171,14 @@ func localizeLine(l Lang, line string) string {
 var messages = map[Lang]map[string]string{
 	EN: map[string]string{},
 	RU: map[string]string{
+        "AGENT COMPLETED": "АГЕНТ ЗАВЕРШЕН",
+        "FILES":           "ФАЙЛЫ",
+        "TESTS":           "ТЕСТЫ",
+        "VERIFICATION":    "ПРОВЕРКА",
+        "PASS":            "УСПЕХ",
+        "FAIL":            "ОШИБКА",
+        "Using patch mode: existing project modification task": "Используется режим патчей: задача изменения существующего проекта",
+        "Running affected package tests":                      "Запуск тестов для затронутых пакетов",
 		"Changes to apply:": 				"Изменения, которые будут внесены:",
 		"Auto-search: generating focused research query...":                       "Автопоиск: формирование точечного исследовательского запроса...",
 		"Auto-research context added to coding task.":                             "Контекст автопоиска добавлен к задаче программирования.",
@@ -735,6 +743,25 @@ var messages = map[Lang]map[string]string{
 }
 
 var ruPatterns = []pattern{
+    {regexp.MustCompile(`(\d+) patch block\(s\)`), "$1 патч-блока(ов)"},
+    {regexp.MustCompile(`coverage:\s+([\d.]+)%\s+of\s+statements`), "покрытие: $1% операторов"},
+    // Логи режима выполнения
+    {regexp.MustCompile(`^Execution mode:\s*(.*)$`), "Режим выполнения: $1"},
+    {regexp.MustCompile(`^Agent depth:\s*(.*)$`), "Глубина агента: $1"},
+    {regexp.MustCompile(`^Edit strategy:\s*(.*)$`), "Стратегия редактирования: $1"},
+    
+    // Итоговый отчёт агента (Agent Report)
+    {regexp.MustCompile(`^Profile:\s*(\S+)$`), "Профиль: $1"},
+    {regexp.MustCompile(`^Subtasks:\s*(\d+)/(\d+)$`), "Подзадачи: $1/$2"},
+    {regexp.MustCompile(`^Iterations:\s*(\d+)$`), "Итерации: $1"},
+    {regexp.MustCompile(`^Modified:\s*(\d+)$`), "Изменено: $1"},
+    {regexp.MustCompile(`^Patched \(DIFF\):\s*(\d+)$`), "Пропатчено (DIFF): $1"},
+    {regexp.MustCompile(`^Passed:\s*(\d+)$`), "Пройдено: $1"},
+    {regexp.MustCompile(`^Failed:\s*(\d+)$`), "Упало: $1"},
+    {regexp.MustCompile(`^Final status:\s*(\S+)$`), "Итоговый статус: $1"},
+    
+    // Логи preflight и тестов
+    {regexp.MustCompile(`^Patch preflight: files=(\d+) patch_files=(\d+) blocks=(\d+) changed_lines=(\d+) changed_bytes=(\d+)$`), "Предварительная проверка патча: файлов=$1, с патчами=$2, блоков=$3, строк=$4, байт=$5"},
     // ─── Agent: стадии и статусы ──────────────────────────────────
     {regexp.MustCompile(`^Agent profile: (.*)$`),
     	"Профиль агента: $1"},
