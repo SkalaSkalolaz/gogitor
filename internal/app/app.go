@@ -3409,11 +3409,11 @@ func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.
 		return result
 	}
 
-	emitEvent(emit, domain.Event{
-		Type:      domain.EventLog,
-		Message:   "Running tests",
-		TaskStage: domain.TaskStageTesting,
-	})
+    emitEvent(emit, domain.Event{
+    	Type:      domain.EventLog,
+    	Message:   i18n.Localize("Running tests"),
+    	TaskStage: domain.TaskStageTesting,
+    })
 
 	tests, err := s.Runner.Test(ctx, sandbox)
 	result.Tests = tests
@@ -4466,7 +4466,9 @@ func emitEvent(emit func(domain.Event), event domain.Event) {
 	if emit == nil {
 		return
 	}
-
+	if event.Message != "" {
+		event.Message = i18n.Localize(event.Message)
+	}
 	emit(event)
 }
 

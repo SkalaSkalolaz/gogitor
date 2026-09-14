@@ -593,9 +593,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if e.Result != nil {
 				m.appendResult(e.Result)
 				m.appendQualityGates(e.Result)
-			} else {
-				m.appendLog("Done.")
-			}
+            } else {
+            	m.appendLog(i18n.T("Done."))
+            }
 
 			if e.Result != nil {
 				m.saveTaskHistory(e.Result)

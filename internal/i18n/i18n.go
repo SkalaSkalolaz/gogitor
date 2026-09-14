@@ -128,6 +128,7 @@ func Localize(msg string) string {
 	return strings.Join(lines, "\n")
 }
 
+
 type pattern struct {
 	re   *regexp.Regexp
 	repl string
@@ -668,10 +669,210 @@ var messages = map[Lang]map[string]string{
 		"Generating test file":                            "Генерация файла теста",
 		"No applicable mutations found.":                  "Применимые мутации не найдены.",
 		"No untested exported functions found.":           "Экспортированные функции без тестов не найдены.",
+
+        // ─── Diff trace ──────────────────────────────────────────────
+        "DIFF trace: %s":        "DIFF-трассировка: %s",
+        "DIFF trace enabled.":   "DIFF-трассировка включена.",
+        "DIFF trace disabled.":  "DIFF-трассировка выключена.",
+        "usage: :diff-trace [on|off|status|help]": "использование: :diff-trace [on|off|status|help]",
+        
+        // ─── Agent: профили и стадии ─────────────────────────────────
+        "Agent profile: deep":                       "Профиль агента: усиленный",
+        "Agent profile: normal":                     "Профиль агента: стандартный",
+        "current stage: quality gates":              "текущий этап: контроль качества",
+        "current stage: final quality gates":        "текущий этап: финальный контроль качества",
+        "current stage: coder (verifier fix)":       "текущий этап: кодер (исправление верификатора)",
+        "current stage: image analysis":             "текущий этап: анализ изображения",
+        "current stage: agent reflect":              "текущий этап: ретроспектива агента",
+        "current stage: agent interview":            "текущий этап: интервью агента",
+        
+        // ─── Agent: общие сообщения ──────────────────────────────────
+        "resuming saved agent plan":                 "возобновление сохранённого плана агента",
+        "Running tests":                             "Выполнение тестов",
+        "Running deterministic final build check":   "Выполнение детерминированной финальной проверки сборки",
+        "Running deterministic final test check":    "Выполнение детерминированной финальной проверки тестов",
+        
+        // ─── Agent: верификация и откат ──────────────────────────────
+        "verifier: task is incomplete":              "Верификатор: задача не завершена",
+        "verifier: task remains incomplete":         "Верификатор: задача остаётся незавершённой",
+        "agent plan validator returned empty plan; keeping original plan": "валидатор плана агента вернул пустой план; сохраняется исходный план",
+        "current subtask changes were rolled back; previous subtasks preserved": "изменения текущей подзадачи откатаны; предыдущие подзадачи сохранены",
+        "computer mode is disabled":                 "режим управления компьютером отключён",
+        "plan contains no steps":                    "план не содержит шагов",
+        
+        // ─── Автопоиск ───────────────────────────────────────────────
+        "Auto-search: summarized research ready for subtask": "Автопоиск: суммаризированное исследование готово для подзадачи",
+        "Auto-search: summarizing research for subtask...":   "Автопоиск: суммаризация исследования для подзадачи...",
+        "Auto-search: no relevant facts extracted from research": "Автопоиск: из исследования не извлечено релевантных фактов",
+        
+        // ─── Предупреждения агента ───────────────────────────────────
+        "Fresh subtask source context is empty; executeSimple will use fallback context": "Свежий контекст исходного кода подзадачи пуст; будет использован резервный контекст",
+        "Quality gates report issues in EXISTING code that were not introduced by this subtask. Consider running ':fix' or ':agent' to address them separately.": "Контроль качества обнаружил проблемы в СУЩЕСТВУЮЩЕМ коде, не внесённые этой подзадачей. Рассмотрите ':fix' или ':agent' для их устранения отдельно.",
+        "WARNING: auto-search is enabled with a REMOTE LLM provider. Project code and search queries will be sent to external servers. Use a local Ollama instance for sensitive projects.": "ВНИМАНИЕ: автопоиск включён с УДАЛЁННЫМ LLM-провайдером. Код проекта и поисковые запросы будут отправлены на внешние серверы. Используйте локальный Ollama для конфиденциальных проектов.",
+        
+        // ─── Ошибки и использование команд ──────────────────────────
+        "usage: :agent <task> | :agent enhanced <task>": "использование: :agent <задача> | :agent enhanced <задача>",
+        "usage: :agent interview <task>":                "использование: :agent interview <задача>",
+        "agent interview expired; please start it again": "интервью агента истекло; пожалуйста, начните его снова",
+        "agent session has no unfinished subtasks":      "в сессии агента нет незавершённых подзадач",
+        "no resumable agent session found":              "не найдена возобновляемая сессия агента",
+        "no agent sessions found":                       "сессии агента не найдены",
+        "no completed Agent session with Git commit found": "не найдена завершённая сессия агента с Git-коммитом",
+        "current project is not a Git repository":       "текущий проект не является Git-репозиторием",
+        "the last Agent commit is no longer HEAD; refusing automatic undo": "последний коммит агента больше не является HEAD; автоматический откат отклонён",
+        "Use ':git revert <hash>' manually if you really want to undo it.": "Используйте ':git revert <хеш>' вручную, если действительно хотите откатить.",
+        "the previous run's changes are no longer in the working tree": "изменения предыдущего запуска больше не находятся в рабочем дереве",
+        "resume mode: verification-only (subtasks preserved)": "режим возобновления: только верификация (подзадачи сохранены)",
+        
+        // ─── Компьютер: вывод команд ─────────────────────────────────
+        "Output [%s]:\n%s":              "Вывод [%s]:\n%s",
+        "Output [%s] (recovery):\n%s":   "Вывод [%s] (восстановление):\n%s",
+        
+        // ─── Компьютер: ошибки ───────────────────────────────────────
+        "computer mode is disabled; set GOGITOR_COMPUTER_ENABLED=true, or \"computer_enabled\": true in .gogitor.json": "режим управления компьютером отключён; установите GOGITOR_COMPUTER_ENABLED=true или \"computer_enabled\": true в .gogitor.json",
 	},
 }
 
 var ruPatterns = []pattern{
+    // ─── Agent: стадии и статусы ──────────────────────────────────
+    {regexp.MustCompile(`^Agent profile: (.*)$`),
+    	"Профиль агента: $1"},
+    {regexp.MustCompile(`^Resuming Agent session: (.*)$`),
+    	"Возобновление сессии агента: $1"},
+    {regexp.MustCompile(`^Loaded Agent task report: (.*)$`),
+    	"Загружен отчёт задачи агента: $1"},
+    {regexp.MustCompile(`^Skipping already satisfied subtask (\d+)/(\d+): (.*)$`),
+    	"Пропуск уже выполненной подзадачи $1/$2: $3"},
+    {regexp.MustCompile(`^Retrying Agent subtask (\d+)/(\d+) with refreshed source context \(attempt (\d+)/(\d+)\)$`),
+    	"Повтор агентной подзадачи $1/$2 с обновлённым контекстом (попытка $3/$4)"},
+    
+    // ─── Agent: ревьюер ──────────────────────────────────────────
+    {regexp.MustCompile(`^Reviewer found critical issues: (.*)$`),
+    	"Ревьюер нашёл критические проблемы: $1"},
+    {regexp.MustCompile(`^Reviewer:$`),
+    	"Ревьюер:"},
+    {regexp.MustCompile(`^Reviewer suggestions: (.*)$`),
+    	"Предложения ревьюера: $1"},
+    
+    // ─── Agent: верификатор ──────────────────────────────────────
+    {regexp.MustCompile(`^verifier failed: (.*)$`),
+    	"Верификатор не сработал: $1"},
+    {regexp.MustCompile(`^verifier after fix failed: (.*)$`),
+    	"Верификатор после исправления не сработал: $1"},
+    {regexp.MustCompile(`^verifier: task is incomplete: (.*)$`),
+    	"Верификатор: задача не завершена: $1"},
+    {regexp.MustCompile(`^verifier: task remains incomplete: (.*)$`),
+    	"Верификатор: задача остаётся незавершённой: $1"},
+    {regexp.MustCompile(`^verifier risk: (.*)$`),
+    	"Риск верификатора: $1"},
+    {regexp.MustCompile(`^verification failed \((.*)\); working tree preserved; run ':agent resume' to retry verification$`),
+    	"Верификация не пройдена ($1); рабочее дерево сохранено; выполните ':agent resume' для повторной верификации"},
+    
+    // ─── Agent: откат и чекпоинты ────────────────────────────────
+    {regexp.MustCompile(`^Subtask rollback: (.*)$`),
+    	"Откат подзадачи: $1"},
+    {regexp.MustCompile(`^rollback failed: (.*)$`),
+    	"Откат не удался: $1"},
+    {regexp.MustCompile(`^subtask rollback failed: (.*)$`),
+    	"Откат подзадачи не удался: $1"},
+    {regexp.MustCompile(`^checkpoint update failed after subtask (\d+): (.*)$`),
+    	"Обновление контрольной точки не удалось после подзадачи $1: $2"},
+    {regexp.MustCompile(`^Undoing last Agent commit (.*)\.\.\.$`),
+    	"Отмена последнего коммита агента $1..."},
+    {regexp.MustCompile(`^Agent undo failed: (.*)$`),
+    	"Откат агента не удался: $1"},
+    
+    // ─── Agent: ошибки сохранения ────────────────────────────────
+    {regexp.MustCompile(`^Agent session could not be created: (.*)$`),
+    	"Не удалось создать сессию агента: $1"},
+    {regexp.MustCompile(`^agent state could not be saved: (.*)$`),
+    	"Не удалось сохранить состояние агента: $1"},
+    {regexp.MustCompile(`^agent final state could not be saved: (.*)$`),
+    	"Не удалось сохранить финальное состояние агента: $1"},
+    {regexp.MustCompile(`^agent result could not be saved: (.*)$`),
+    	"Не удалось сохранить результат агента: $1"},
+    {regexp.MustCompile(`^agent plan could not be saved: (.*)$`),
+    	"Не удалось сохранить план агента: $1"},
+    {regexp.MustCompile(`^cannot save agent progress: (.*)$`),
+    	"Не удалось сохранить прогресс агента: $1"},
+    {regexp.MustCompile(`^cannot save gate report: (.*)$`),
+    	"Не удалось сохранить отчёт контроля качества: $1"},
+    {regexp.MustCompile(`^cannot save final gate report: (.*)$`),
+    	"Не удалось сохранить финальный отчёт контроля качества: $1"},
+    {regexp.MustCompile(`^cannot save rollback state: (.*)$`),
+    	"Не удалось сохранить состояние отката: $1"},
+    {regexp.MustCompile(`^cannot save verification_failed state: (.*)$`),
+    	"Не удалось сохранить состояние ошибки верификации: $1"},
+    {regexp.MustCompile(`^cannot determine current HEAD: (.*)$`),
+    	"не удалось определить текущий HEAD: $1"},
+    {regexp.MustCompile(`^cannot load saved agent plan: (.*)$`),
+    	"не удалось загрузить сохранённый план агента: $1"},
+    {regexp.MustCompile(`^cannot read Agent result: (.*)$`),
+    	"не удалось прочитать результат агента: $1"},
+    {regexp.MustCompile(`^cannot parse Agent result: (.*)$`),
+    	"не удалось разобрать результат агента: $1"},
+    {regexp.MustCompile(`^no agent session found: (.*)$`),
+    	"Сессия агента не найдена: $1"},
+    
+    // ─── Agent: план и валидация ─────────────────────────────────
+    {regexp.MustCompile(`^agent plan validation failed; keeping original plan: (.*)$`),
+    	"Валидация плана агента не удалась; сохраняется исходный план: $1"},
+    {regexp.MustCompile(`^agent plan validated against current source: (\d+) subtasks$`),
+    	"План агента проверен по текущему исходному коду: $1 подзадач"},
+    {regexp.MustCompile(`^Split compound Agent subtask into (\d+) atomic subtasks: (.*)$`),
+    	"Составная подзадача агента разделена на $1 атомарных подзадач: $2"},
+    {regexp.MustCompile(`^Compound Agent subtask kept because splitting would exceed max subtasks: (.*)$`),
+    	"Составная подзадача агента сохранена, так как разделение превысило бы максимум подзадач: $1"},
+    {regexp.MustCompile(`^Fresh subtask source context: (\d+) bytes$`),
+    	"Свежий контекст исходного кода подзадачи: $1 байт"},
+    
+    // ─── Agent: исследование ─────────────────────────────────────
+    {regexp.MustCompile(`^Subtask (\d+) has save_research_to but needs_search=false; research file will not be created$`),
+    	"Подзадача $1 имеет save_research_to, но needs_search=false; файл исследования не будет создан"},
+    {regexp.MustCompile(`^Injected research from (\d+) file\(s\)$`),
+    	"Внедрено исследование из $1 файл(ов)"},
+    {regexp.MustCompile(`^Subtask (\d+) references research files that do not exist: (.*)$`),
+    	"Подзадача $1 ссылается на несуществующие файлы исследования: $2"},
+    {regexp.MustCompile(`^Subtask research failed \(non-fatal\): (.*)$`),
+    	"Исследование подзадачи не удалось (некритично): $1"},
+    {regexp.MustCompile(`^Research saved to: (.*)$`),
+    	"Исследование сохранено в: $1"},
+    {regexp.MustCompile(`^Cannot persist research to (.+): (.*)$`),
+    	"Не удалось сохранить исследование в $1: $2"},
+    
+    // ─── Агент: приёмка ──────────────────────────────────────────
+    {regexp.MustCompile(`^acceptance: (.*)$`),
+    	"Приёмка: $1"},
+    {regexp.MustCompile(`^acceptance after verifier fix: (.*)$`),
+    	"Приёмка после исправления верификатора: $1"},
+    {regexp.MustCompile(`^deterministic acceptance baseline unavailable: (.*)$`),
+    	"Детерминированная базовая линия приёмки недоступна: $1"},
+    
+    // ─── Ревьюер: ошибки режимов ─────────────────────────────────
+    {regexp.MustCompile(`^reviewer failed in deep mode: (.*)$`),
+    	"Ревьюер не сработал в глубоком режиме: $1"},
+    {regexp.MustCompile(`^reviewer failed after critical fix: (.*)$`),
+    	"Ревьюер не сработал после критического исправления: $1"},
+    {regexp.MustCompile(`^critical reviewer issues remain after fix: (.*)$`),
+    	"Критические проблемы ревьюера остаются после исправления: $1"},
+    
+    // ─── Интервью ────────────────────────────────────────────────
+    {regexp.MustCompile(`^interview question generation failed: (.*)$`),
+    	"Не удалось сформировать вопросы интервью: $1"},
+    
+    // ─── Итерации (через emitEvent) ──────────────────────────────
+    {regexp.MustCompile(`^Iteration (\d+)/(\d+)$`),
+    	"Итерация $1/$2"},
+    
+    // ─── Шаг (через sendEvent с fmt.Sprintf) ─────────────────────
+    {regexp.MustCompile(`^Step (\d+)/(\d+): (.*)$`),
+    	"Шаг $1/$2: $3"},
+    
+    // ─── Компьютер: вывод ────────────────────────────────────────
+    {regexp.MustCompile(`^Output \[(.+)\]:$`),
+    	"Вывод [$1]:"},
+    {regexp.MustCompile(`^Output \[(.+)\] \(recovery\):$`),
+    	"Вывод [$1] (восстановление):"},
 	{regexp.MustCompile(`^Auto-search: research type: (.*)$`),
 		"Автопоиск: тип исследования: $1"},
 	{regexp.MustCompile(`^Auto-search: query: (.*)$`),
