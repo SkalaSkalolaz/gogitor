@@ -3,7 +3,10 @@ package app
 import (
 	"strings"
 	"testing"
+	"os"
+	"path/filepath"
 
+	"gogitor/internal/config"
 	"gogitor/internal/domain"
 )
 
@@ -61,5 +64,60 @@ func TestFormatAgentTaskReportOmitsEmptySuggestions(t *testing.T) {
 
 	if strings.Contains(out, "REVIEWER SUGGESTIONS") {
 		t.Fatalf("unexpected section in:\n%s", out)
+	}
+}
+
+func TestPersistResearchFallback_SavesLongMarkdown(t *testing.T) {
+	root := t.TempDir()
+
+	svc := &Service{
+		Cfg: &config.Config{WorkDir: root},
+	}
+
+	body := strings.Repeat("## Section\n- point\n", 40) // > 200 chars
+
+	path, didSave, err := svc.persistResearchFallback(
+		".gogitor/research/api.md",
+		1,
+		"find API docs",
+		domain.Result{Success: true, Response: body},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !didSave {
+		t.Fatal("expected fallback to save")
+	}
+	if path != ".gogitor/research/api.md" {
+		t.Fatalf("path = %q", path)
+	}
+	if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+
+	// Второй вызов не должен перезаписывать.
+	_, didSave2, _ := svc.persistResearchFallback(
+		".gogitor/research/api.md", 1, "find API docs",
+		domain.Result{Success: true, Response: body},
+	)
+	if didSave2 {
+		t.Fatal("fallback must not overwrite existing file")
+	}
+}
+
+func TestPersistResearchFallback_RejectsBoilerplate(t *testing.T) {
+	svc := &Service{Cfg: &config.Config{WorkDir: t.TempDir()}}
+
+	_, didSave, err := svc.persistResearchFallback(
+		".gogitor/research/api.md",
+		1,
+		"modify code",
+		domain.Result{Success: true, Response: "Applied changes: 1 patched (DIFF)."},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if didSave {
+		t.Fatal("boilerplate must not be saved as research")
 	}
 }

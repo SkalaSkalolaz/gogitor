@@ -1682,6 +1682,39 @@ func (s *Service) executeAgentFull(
 			)
 		}
 
+		if res.Success && strings.TrimSpace(sub.SaveResearchTo) != "" {
+			savedPath, didSave, saveErr :=
+				s.persistResearchFallback(
+					sub.SaveResearchTo,
+					i+1,
+					sub.Task,
+					res,
+				)
+
+			if saveErr != nil {
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					fmt.Sprintf(
+						"Cannot persist research fallback to %s: %v",
+						sub.SaveResearchTo,
+						saveErr,
+					),
+				)
+			} else if didSave {
+				res.FilesCreated = appendUniqueString(
+					res.FilesCreated,
+					savedPath,
+				)
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					"Research fallback saved to: "+savedPath,
+				)
+			}
+		}
+		// ─── End research fallback ─────────────────────────────
 		addFiles(res)
 
 		if !res.Success {
@@ -4235,4 +4268,96 @@ func sanitizeUsesResearch(paths []string) []string {
 	}
 
 	return out
+}
+
+// persistResearchFallback сохраняет осмысленный текстовый ответ подзадачи
+// в файл, указанный в save_research_to, если research-путь этот файл
+// не создал.
+func (s *Service) persistResearchFallback(
+	relPath string,
+	subtaskIndex int,
+	task string,
+	res domain.Result,
+) (string, bool, error) {
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return "", false, nil
+	}
+
+	full, err := security.SafeJoin(s.Cfg.WorkDir, relPath)
+	if err != nil {
+		return "", false, fmt.Errorf(
+			"invalid research path %q: %w",
+			relPath,
+			err,
+		)
+	}
+
+	if _, statErr := os.Stat(full); statErr == nil {
+		return relPath, false, nil
+	}
+
+	if !res.Success {
+		return "", false, nil
+	}
+
+	content := strings.TrimSpace(res.Response)
+	if !looksLikeResearchText(content) {
+		return "", false, nil
+	}
+
+	savedPath, saveErr := s.saveSubtaskResearch(
+		relPath,
+		subtaskIndex,
+		task,
+		content,
+	)
+	if saveErr != nil {
+		return "", false, saveErr
+	}
+
+	return savedPath, true, nil
+}
+
+// looksLikeResearchText определяет, является ли текстовый ответ
+// достаточно содержательным, чтобы сохранить его как research-файл.
+func looksLikeResearchText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	if len(text) < 200 {
+		return false
+	}
+
+	lower := strings.ToLower(text)
+
+	if strings.HasPrefix(lower, "agent completed") ||
+		strings.HasPrefix(lower, "agent failed") ||
+		strings.HasPrefix(lower, "applied changes:") ||
+		strings.HasPrefix(lower, "applied ") {
+
+		return false
+	}
+
+	markers := []string{
+		"##", "###",
+		"\n- ", "\n* ", "\n1.", "\n2.",
+		"```",
+		"http://", "https://",
+		"| ",
+	}
+
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+
+	if len(text) >= 800 {
+		return true
+	}
+
+	return false
 }
