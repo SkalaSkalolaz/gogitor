@@ -171,6 +171,7 @@ func localizeLine(l Lang, line string) string {
 var messages = map[Lang]map[string]string{
 	EN: map[string]string{},
 	RU: map[string]string{
+		"Changes to apply:": 				"Изменения, которые будут внесены:",
 		"Auto-search: generating focused research query...":                       "Автопоиск: формирование точечного исследовательского запроса...",
 		"Auto-research context added to coding task.":                             "Контекст автопоиска добавлен к задаче программирования.",
 		"Auto-search: current external information is required for this article.": "Автопоиск: для статьи требуется актуальная внешняя информация.",
