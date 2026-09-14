@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"path/filepath"
 
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
@@ -28,9 +29,11 @@ type fullPlan struct {
 }
 
 type fullPlanSubtask struct {
-	Task        string   `json:"task"`
-	Acceptance  []string `json:"acceptance"`
-	NeedsSearch bool     `json:"needs_search"`
+	Task           string   `json:"task"`
+	Acceptance     []string `json:"acceptance"`
+	NeedsSearch    bool     `json:"needs_search"`
+	SaveResearchTo string   `json:"save_research_to,omitempty"`
+	UsesResearch   []string `json:"uses_research,omitempty"`
 }
 
 type agentSubtaskState string
@@ -50,6 +53,9 @@ const (
 	maxAgentPlanContextBytes     = 96000
 	maxPreviousSubtaskDeltaBytes = 24000
 	maxAgentSubtaskAttempts      = 2
+    maxSubtaskResearchFileBytes  = 24000
+	maxSubtaskResearchTotalBytes = 36000
+	maxSubtaskResearchRawBytes   = 16000
 )
 
 // agentReview — результат работы reviewer agent.
@@ -262,6 +268,7 @@ func splitCompoundAgentSubtask(
 			task[unique[len(unique)-1].End:],
 		)
 
+
 	out :=
 		make(
 			[]fullPlanSubtask,
@@ -269,7 +276,7 @@ func splitCompoundAgentSubtask(
 			len(unique),
 		)
 
-	for _, span := range unique {
+	for idx, span := range unique {
 		parts := make([]string, 0, 3)
 
 		if prefix != "" {
@@ -288,18 +295,26 @@ func splitCompoundAgentSubtask(
 			)
 		}
 
-		out = append(
-			out,
-			fullPlanSubtask{
-				Task: strings.Join(parts, " "),
-				Acceptance: append(
-					[]string(nil),
-					sub.Acceptance...,
-				),
-				NeedsSearch: sub.NeedsSearch,
-			},
-		)
+		child := fullPlanSubtask{
+			Task: strings.Join(parts, " "),
+			Acceptance: append(
+				[]string(nil),
+				sub.Acceptance...,
+			),
+			UsesResearch: append(
+				[]string(nil),
+				sub.UsesResearch...,
+			),
+		}
+
+		if idx == 0 {
+			child.NeedsSearch = sub.NeedsSearch
+			child.SaveResearchTo = sub.SaveResearchTo
+		}
+
+		out = append(out, child)
 	}
+
 
 	return out
 }
@@ -1406,26 +1421,84 @@ func (s *Service) executeAgentFull(
 					"\n=== END PREVIOUS SUBTASK CHANGE SUMMARY ==="
 		}
 
-		searchContext := ""
+
+		// ------------------------------------------------------------
+		// RESEARCH (search + summarize + optional file save)
+		// ------------------------------------------------------------
+
+		if strings.TrimSpace(sub.SaveResearchTo) != "" &&
+			!sub.NeedsSearch {
+
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				fmt.Sprintf(
+					"Subtask %d has save_research_to but needs_search=false; research file will not be created",
+					i+1,
+				),
+			)
+		}
+
+		researchContext := ""
 
 		if sub.NeedsSearch &&
 			s.Cfg.AutoSearch &&
 			s.SafeSearch != nil {
 
-			searchContext, err :=
-				s.searchForSubtask(
+			var researchErr error
+
+			researchContext, researchErr =
+				s.searchAndSummarizeForSubtask(
 					ctx,
 					sub.Task,
 					emit,
 				)
 
-			if err == nil &&
-				searchContext != "" {
+			if researchErr != nil {
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					fmt.Sprintf(
+						"Subtask research failed (non-fatal): %v",
+						researchErr,
+					),
+				)
+				researchContext = ""
+			} else if researchContext != "" {
+
 				sendEvent(
 					emit,
 					domain.EventLog,
-					"Web search context added to subtask",
+					"Auto-search: summarized research ready for subtask",
 				)
+
+				if strings.TrimSpace(sub.SaveResearchTo) != "" {
+					savedPath, saveErr :=
+						s.saveSubtaskResearch(
+							sub.SaveResearchTo,
+							i+1,
+							sub.Task,
+							researchContext,
+						)
+
+					if saveErr != nil {
+						sendEvent(
+							emit,
+							domain.EventWarn,
+							fmt.Sprintf(
+								"Cannot persist research to %s: %v",
+								sub.SaveResearchTo,
+								saveErr,
+							),
+						)
+					} else {
+						sendEvent(
+							emit,
+							domain.EventLog,
+							"Research saved to: "+savedPath,
+						)
+					}
+				}
 			}
 		}
 
@@ -1436,7 +1509,7 @@ func (s *Service) executeAgentFull(
 				sub,
 				i,
 				len(plan.Subtasks),
-				searchContext,
+				researchContext,
 			)
 		} else {
 			if len(sub.Acceptance) > 0 {
@@ -1448,10 +1521,48 @@ func (s *Service) executeAgentFull(
 						)
 			}
 
-			if searchContext != "" {
+			if researchContext != "" {
 				taskForCoder +=
 					"\n\n" +
-						searchContext
+						researchContext
+			}
+		}
+
+		// Подставляем research, найденный на предыдущих
+		// подзадачах, если планировщик его запросил.
+		if len(sub.UsesResearch) > 0 {
+
+			if missing := s.missingResearchFiles(
+				sub.UsesResearch,
+			); len(missing) > 0 {
+
+				sendEvent(
+					emit,
+					domain.EventWarn,
+					fmt.Sprintf(
+						"Subtask %d references research files that do not exist: %s",
+						i+1,
+						strings.Join(missing, ", "),
+					),
+				)
+			}
+
+			if priorResearch := s.loadSubtaskResearch(
+				sub.UsesResearch,
+			); priorResearch != "" {
+
+				taskForCoder +=
+					"\n\n" +
+						priorResearch
+
+				sendEvent(
+					emit,
+					domain.EventLog,
+					fmt.Sprintf(
+						"Injected research from %d file(s)",
+						len(sub.UsesResearch),
+					),
+				)
 			}
 		}
 
@@ -1473,10 +1584,10 @@ func (s *Service) executeAgentFull(
 		subCtx = agent.WithPriority(subCtx, agent.PriorityNormal)
 		subCtx = agent.WithPurpose(subCtx, fmt.Sprintf("subtask %d/%d", i+1, len(plan.Subtasks)))
 
-		if searchContext != "" {
+		if researchContext != "" {
 			taskForCoder +=
 				"\n\n" +
-					"IMPORTANT: Web research has already been performed for this subtask. " +
+					"IMPORTANT: Web research has already been performed and summarized for this subtask. " +
 					"Do not perform additional automatic research unless a new dependency " +
 					"or explicit new external-information need is discovered during validation."
 		}
@@ -3781,4 +3892,347 @@ func appendUniqueString(
 		values,
 		value,
 	)
+}
+
+// searchAndSummarizeForSubtask выполняет веб-поиск и
+// дополнительно обрабатывает сырой результат через LLM,
+// чтобы получить компактную выжимку фактов под конкретную
+// задачу подзадачи.
+func (s *Service) searchAndSummarizeForSubtask(
+	ctx context.Context,
+	task string,
+	emit func(domain.Event),
+) (string, error) {
+	raw, err := s.searchForSubtask(ctx, task, emit)
+	if err != nil {
+		return "", err
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+
+	summarized, err := s.summarizeSubtaskResearch(
+		ctx,
+		task,
+		raw,
+		emit,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return summarized, nil
+}
+
+// summarizeSubtaskResearch превращает сырой веб-текст
+// в компактную выжимку фактов, релевантных задаче.
+func (s *Service) summarizeSubtaskResearch(
+	ctx context.Context,
+	task string,
+	rawResearch string,
+	emit func(domain.Event),
+) (string, error) {
+	rawResearch = strings.TrimSpace(rawResearch)
+	if rawResearch == "" {
+		return "", nil
+	}
+
+	if len(rawResearch) > maxSubtaskResearchRawBytes {
+		rawResearch = textutil.TruncateStringBytes(
+			rawResearch,
+			maxSubtaskResearchRawBytes,
+		) +
+			"\n... raw research truncated before summarization ..."
+	}
+
+	sendEvent(
+		emit,
+		domain.EventLog,
+		"Auto-search: summarizing research for subtask...",
+	)
+
+	sumCtx := agent.WithRole(ctx, agent.RolePlanner)
+	sumCtx = agent.WithPriority(sumCtx, agent.PriorityNormal)
+	sumCtx = agent.WithPurpose(sumCtx, "summarize subtask research")
+
+	prompt := prompts.SubtaskResearchSummary(task, rawResearch)
+
+	summarized, err := s.LLM.Send(sumCtx, prompt)
+	if err != nil {
+		return "", fmt.Errorf(
+			"summarize research: %w",
+			err,
+		)
+	}
+
+	summarized = strings.TrimSpace(summarized)
+
+	if summarized == "" ||
+		strings.HasPrefix(summarized, "NO_RELEVANT_FACTS") {
+
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			"Auto-search: no relevant facts extracted from research",
+		)
+
+		return "", nil
+	}
+
+	if len(summarized) > maxSubtaskResearchFileBytes {
+		summarized = textutil.TruncateStringBytes(
+			summarized,
+			maxSubtaskResearchFileBytes,
+		) +
+			"\n\n... research summary truncated ..."
+	}
+
+	return summarized, nil
+}
+
+// saveSubtaskResearch сохраняет суммаризированный research
+// на диск по пути, который указал планировщик через
+// save_research_to.
+func (s *Service) saveSubtaskResearch(
+	relPath string,
+	subtaskIndex int,
+	task string,
+	research string,
+) (string, error) {
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return "", fmt.Errorf("empty research path")
+	}
+
+	switch strings.ToLower(filepath.Ext(relPath)) {
+	case ".md", ".txt", ".json":
+	default:
+		return "", fmt.Errorf(
+			"research path must have .md, .txt, or .json extension: %s",
+			relPath,
+		)
+	}
+
+	research = strings.TrimSpace(research)
+	if research == "" {
+		return "", fmt.Errorf("empty research content")
+	}
+
+	full, err := security.SafeJoin(s.Cfg.WorkDir, relPath)
+	if err != nil {
+		return "", fmt.Errorf(
+			"invalid research path %q: %w",
+			relPath,
+			err,
+		)
+	}
+
+	if err := os.MkdirAll(
+		filepath.Dir(full),
+		0o755,
+	); err != nil {
+		return "", fmt.Errorf(
+			"create research directory: %w",
+			err,
+		)
+	}
+
+	var b strings.Builder
+
+	fmt.Fprintf(
+		&b,
+		"# Research for subtask %d\n\n",
+		subtaskIndex,
+	)
+	fmt.Fprintf(
+		&b,
+		"_Source task:_ %s\n\n",
+		strings.TrimSpace(task),
+	)
+	fmt.Fprintf(
+		&b,
+		"_Saved:_ %s\n\n",
+		time.Now().Format(time.RFC3339),
+	)
+	b.WriteString("## Extracted facts\n\n")
+	b.WriteString(research)
+	b.WriteString("\n")
+
+	body := b.String()
+
+	if len(body) > maxSubtaskResearchFileBytes {
+		body = textutil.TruncateStringBytes(
+			body,
+			maxSubtaskResearchFileBytes,
+		) +
+			"\n\n... research file truncated ..."
+	}
+
+	if err := os.WriteFile(
+		full,
+		[]byte(body),
+		0o644,
+	); err != nil {
+		return "", fmt.Errorf(
+			"write research file %q: %w",
+			relPath,
+			err,
+		)
+	}
+
+	return filepath.ToSlash(relPath), nil
+}
+
+// loadSubtaskResearch читает research-файлы, указанные
+// в поле uses_research, и формирует один блок для промпта.
+func (s *Service) loadSubtaskResearch(
+	paths []string,
+) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var blocks []string
+	total := 0
+
+	for _, relPath := range paths {
+		relPath = strings.TrimSpace(relPath)
+		if relPath == "" {
+			continue
+		}
+
+		switch strings.ToLower(filepath.Ext(relPath)) {
+		case ".md", ".txt", ".json":
+		default:
+			continue
+		}
+
+		full, err := security.SafeJoin(
+			s.Cfg.WorkDir,
+			relPath,
+		)
+		if err != nil {
+			continue
+		}
+
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		data, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+
+		remaining :=
+			maxSubtaskResearchTotalBytes - total
+
+		if remaining <= 0 {
+			break
+		}
+
+		content := string(data)
+
+		if len(content) > remaining {
+			content = textutil.TruncateStringBytes(
+				content,
+				remaining,
+			)
+		}
+
+		blocks = append(
+			blocks,
+			fmt.Sprintf(
+				"--- Research file: %s ---\n%s",
+				relPath,
+				content,
+			),
+		)
+
+		total += len(content)
+	}
+
+	if len(blocks) == 0 {
+		return ""
+	}
+
+	return "=== RESEARCH FROM PREVIOUS SUBTASKS ===\n" +
+		strings.Join(blocks, "\n\n") +
+		"\n=== END RESEARCH FROM PREVIOUS SUBTASKS ==="
+}
+
+// missingResearchFiles возвращает список путей из uses_research,
+// которые не существуют в проекте. 
+func (s *Service) missingResearchFiles(
+	paths []string,
+) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	var missing []string
+
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		full, err := security.SafeJoin(
+			s.Cfg.WorkDir,
+			p,
+		)
+		if err != nil {
+			missing = append(missing, p)
+			continue
+		}
+
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			missing = append(missing, p)
+		}
+	}
+
+	return missing
+}
+
+// sanitizeUsesResearch приводит список ссылок на research
+// к безопасному виду: дедупликация, отбрасывание пустых
+// и некорректных путей.
+func sanitizeUsesResearch(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".md", ".txt", ".json":
+		default:
+			continue
+		}
+
+		if seen[path] {
+			continue
+		}
+
+		seen[path] = true
+		out = append(out, path)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }

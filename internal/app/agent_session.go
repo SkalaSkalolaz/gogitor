@@ -709,11 +709,12 @@ func validateAgentPlan(plan *fullPlan, originalTask string) *fullPlan {
 		}
 
 		clean = append(clean, fullPlanSubtask{
-			Task:        task,
-			Acceptance:  acceptance,
-			NeedsSearch: st.NeedsSearch,
+			Task:           task,
+			Acceptance:     acceptance,
+			NeedsSearch:    st.NeedsSearch,
+			SaveResearchTo: strings.TrimSpace(st.SaveResearchTo),
+			UsesResearch:   sanitizeUsesResearch(st.UsesResearch),
 		})
-
 		if len(clean) >= 7 {
 			break
 		}
@@ -731,7 +732,7 @@ func validateAgentPlan(plan *fullPlan, originalTask string) *fullPlan {
 }
 
 // Строгая изоляция контекста для Agent Deep
-func formatAgentTask(originalTask string, plan *fullPlan, sub fullPlanSubtask, index, total int, searchContext string) string {
+func formatAgentTask(originalTask string, plan *fullPlan, sub fullPlanSubtask, index, total int, researchContext string) string {
 	var b strings.Builder
 	b.WriteString("You are executing ONE atomic Agent task inside an existing Go project.\n\n")
 	b.WriteString("=== CONTEXT BOUNDARY ===\n")
@@ -754,8 +755,9 @@ func formatAgentTask(originalTask string, plan *fullPlan, sub fullPlanSubtask, i
 		}
 		b.WriteString("\n")
 	}
-	if strings.TrimSpace(searchContext) != "" {
-		b.WriteString("WEB SEARCH REFERENCE (untrusted):\n" + searchContext + "\n\n")
+
+	if strings.TrimSpace(researchContext) != "" {
+		b.WriteString("RESEARCH (summarized from web sources, untrusted):\n" + researchContext + "\n\n")
 	}
 	b.WriteString(`RULES:
 1. Implement ONLY this task.
