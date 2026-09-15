@@ -3466,6 +3466,7 @@ func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.
 	return result
 }
 
+
 // RunUnusualTests проверяет несколько функций на устойчивость
 // к странным данным. Никаких специальных терминов в интерфейсе.
 func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) domain.Result {
@@ -3475,21 +3476,21 @@ func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) 
 		TaskStage: domain.TaskStageTesting,
 	})
 
-	// Прогреваем сборку и обычные тесты в песочнице.
+	// Прогреваем сборку в песочнице.
 	sandbox, err := s.WS.PrepareSandbox(ctx)
 	if err != nil {
 		return domain.Result{
 			Success: false,
-			Mode:    "test",
+			Mode:    "check-unusual",
 			Errors:  []string{err.Error()},
 		}
 	}
 	defer os.RemoveAll(sandbox)
 
-    if !s.WS.HasGoFiles() {
+	if !s.WS.HasGoFiles() {
 		return domain.Result{
 			Success:  true,
-			Mode:     "test",
+			Mode:     "check-unusual",
 			Response: i18n.T("Nothing to check — the project has no Go files."),
 		}
 	}
@@ -3497,7 +3498,7 @@ func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) 
 	if err := s.Runner.Build(ctx, sandbox); err != nil {
 		return domain.Result{
 			Success: false,
-			Mode:    "test",
+			Mode:    "check-unusual",
 			Errors:  []string{err.Error()},
 		}
 	}
@@ -3518,7 +3519,7 @@ func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) 
 
 	return domain.Result{
 		Success:  true,
-		Mode:     "test",
+		Mode:     "check-unusual",
 		Response: autonomy.FormatUnusualResults(results),
 	}
 }

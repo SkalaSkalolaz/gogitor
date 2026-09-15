@@ -171,6 +171,9 @@ func localizeLine(l Lang, line string) string {
 var messages = map[Lang]map[string]string{
 	EN: map[string]string{},
 	RU: map[string]string{
+        "Running the check (this takes a few seconds)...": "Запускаю проверку (займёт несколько секунд)...",
+        "Found an issue in %s":                              "Нашёл проблему в %s",
+        "%s looks stable":                                   "%s выглядит устойчиво",
         "Want to check the program with unusual data? Run :test unusual.": "Хочешь проверить программу на необычных данных? Выполни :test unusual.",
 		// ─── :test unusual — устойчивость к странным данным ─────
 		"Checking the program with unusual data": "Проверяю программу на необычных данных",
