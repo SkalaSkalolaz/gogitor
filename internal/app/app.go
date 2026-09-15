@@ -3932,9 +3932,15 @@ func (s *Service) GitMerge(ctx context.Context, branch string, emit func(domain.
 		result.AddError("usage: :git merge <branch-name>")
 		return result
 	}
-	current, _ := s.Git.CurrentBranch(ctx)
-	sendEvent(emit, domain.EventLog,
-		fmt.Sprintf("Merging '%s' into '%s'...", branch, current))
+    current, currentErr := s.Git.CurrentBranch(ctx)
+    if currentErr != nil && s.Log != nil {
+        s.Log.Debug(
+            "cannot determine current branch",
+            "err", currentErr,
+        )
+    }
+    sendEvent(emit, domain.EventLog,
+        fmt.Sprintf("Merging '%s' into '%s'...", branch, current))
 	out, err := s.Git.Merge(ctx, branch)
 	if err != nil {
 		result.AddError(err.Error())
@@ -5484,11 +5490,21 @@ func (s *Service) GitCreate(ctx context.Context, args []string, emit func(domain
 	}
 	sendEvent(emit, domain.EventLog, fmt.Sprintf("Repository created: %s (%s)", repo.FullName, visibility))
 
-	// Настраиваем remote origin в текущем проекте.
-	if s.Git.IsRepo(ctx) {
-		_ = s.Git.EnsureRemote(ctx, "origin", repo.CloneURL)
-		sendEvent(emit, domain.EventLog, "Remote 'origin' set to "+repo.CloneURL)
-	}
+    // Настраиваем remote origin в текущем проекте.
+    if s.Git.IsRepo(ctx) {
+        if remoteErr := s.Git.EnsureRemote(ctx, "origin", repo.CloneURL); remoteErr != nil {
+            sendEvent(
+                emit,
+                domain.EventWarn,
+                fmt.Sprintf(
+                    "Repository created, but could not configure remote 'origin' in the current project: %v; add it manually with ':git remote add origin %s'",
+                    remoteErr, repo.CloneURL,
+                ),
+            )
+        } else {
+            sendEvent(emit, domain.EventLog, "Remote 'origin' set to "+repo.CloneURL)
+        }
+    }
 
 	result.Success = true
 	result.Response = fmt.Sprintf(
@@ -5877,7 +5893,16 @@ func (s *Service) RunLint(ctx context.Context, emit func(domain.Event)) domain.R
 		TaskStage: domain.TaskStageLint,
 	})
 
-	_ = s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir)
+    if err := s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir); err != nil {
+        sendEvent(
+            emit,
+            domain.EventWarn,
+            fmt.Sprintf(
+                "Could not prepare .golangci.yml: %v; lint will use the default configuration",
+                err,
+            ),
+        )
+    }
 	sendEvent(emit, domain.EventLog, "Preparing sandbox")
 	sandbox, err := s.WS.PrepareSandbox(ctx)
 	if err != nil {
