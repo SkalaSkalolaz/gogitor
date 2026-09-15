@@ -115,6 +115,18 @@ func (m *agentMemory) addDecisionWithAlternatives(
 	})
 }
 
+// addTemporaryDecision записывает временное решение вместе с ограничением,
+// которое вынудило его принять.
+func (m *agentMemory) addTemporaryDecision(
+	decision, constraint, source string,
+) {
+	m.addDecisionEntry(domain.DecisionEntry{
+		Decision:   decision,
+		Constraint: constraint,
+		Temporary:  true,
+		Source:     source,
+	})
+}
 // journal возвращает доменный журнал решений.
 func (m *agentMemory) journal() *domain.DecisionJournal {
 	if m == nil {

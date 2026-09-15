@@ -1153,20 +1153,31 @@ func (s *Service) ExecuteAgentReflect(
 			PreTaskHead string `json:"pre_task_head"`
 		}
 
-		if err := json.Unmarshal(
-			[]byte(resultJSON),
-			&meta,
-		); err == nil &&
-			meta.PreTaskHead != "" &&
-			s.Git.IsRepo(ctx) {
-
-			cumulativeDiff, _ =
-				s.Git.DiffRange(
-					ctx,
-					meta.PreTaskHead,
-					"HEAD",
-				)
-		}
+        if err := json.Unmarshal(
+            []byte(resultJSON),
+            &meta,
+        ); err == nil &&
+            meta.PreTaskHead != "" &&
+            s.Git.IsRepo(ctx) {
+        
+            diff, diffErr := s.Git.DiffRange(
+                ctx,
+                meta.PreTaskHead,
+                "HEAD",
+            )
+            if diffErr != nil {
+                sendEvent(
+                    emit,
+                    domain.EventWarn,
+                    fmt.Sprintf(
+                        "Reflection: cannot compute cumulative diff: %v",
+                        diffErr,
+                    ),
+                )
+            } else {
+                cumulativeDiff = diff
+            }
+        }
 	}
 
 	goal := extractAgentGoal(inbox)
@@ -1924,8 +1935,15 @@ func (s *Service) getLintBaseline(ctx context.Context, sandbox string) []runner.
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
 		return nil
 	}
-	lintOut, _ := s.Runner.Lint(ctx, baselineSandbox)
-	return runner.ParseLintOutput(lintOut)
+
+    lintOut, lintErr := s.Runner.Lint(ctx, baselineSandbox)
+    if lintErr != nil && s.Log != nil {
+        s.Log.Debug(
+            "lint baseline failed (non-fatal)",
+            "err", lintErr,
+        )
+    }
+    return runner.ParseLintOutput(lintOut)
 }
 
 // hasGoFiles проверяет, есть ли в списке изменённых файлов .go файлы.

@@ -1240,12 +1240,19 @@ func (s *Service) executeAgentFull(
 	state.CompletedSubtasks = completedSubtasks
 	state.CurrentSubtask = resumeFrom
 
-	if session != nil {
-		_ = saveAgentState(
-			session,
-			state,
-		)
-	}
+    if session != nil {
+        if err := saveAgentState(
+            session,
+            state,
+        ); err != nil {
+            final.AddWarning(
+                fmt.Sprintf(
+                    "agent state could not be saved: %v",
+                    err,
+                ),
+            )
+        }
+    }
 	markPlan := func(index int, st domain.PlanStatus, note string) {
 		if index >= 1 && index <= len(planStatuses) {
 			planStatuses[index-1] = st
@@ -1263,13 +1270,19 @@ func (s *Service) executeAgentFull(
 		}
 		state.CurrentSubtask = i + 1
 
-		if session != nil {
-			_ = saveAgentState(
-				session,
-				state,
-			)
-		}
-
+        if session != nil {
+            if err := saveAgentState(
+                session,
+                state,
+            ); err != nil {
+                final.AddWarning(
+                    fmt.Sprintf(
+                        "agent state could not be saved: %v",
+                        err,
+                    ),
+                )
+            }
+        }
 		sendEvent(
 			emit,
 			domain.EventAgent,
@@ -1364,13 +1377,19 @@ func (s *Service) executeAgentFull(
 			state.CompletedSubtasks = completedSubtasks
 			state.CurrentSubtask = completedSubtasks
 
-			if session != nil {
-				_ = saveAgentState(
-					session,
-					state,
-				)
-			}
-
+            if session != nil {
+                if err := saveAgentState(
+                    session,
+                    state,
+                ); err != nil {
+                    final.AddWarning(
+                        fmt.Sprintf(
+                            "agent state could not be saved: %v",
+                            err,
+                        ),
+                    )
+                }
+            }
 			continue
 		}
 
@@ -1619,12 +1638,19 @@ func (s *Service) executeAgentFull(
 					state.CurrentContextHash =
 						hashAgentContext(freshSubtaskContext)
 
-					if session != nil {
-						_ = saveAgentState(
-							session,
-							state,
-						)
-					}
+                    if session != nil {
+                        if err := saveAgentState(
+                            session,
+                            state,
+                        ); err != nil {
+                            final.AddWarning(
+                                fmt.Sprintf(
+                                    "agent state could not be saved: %v",
+                                    err,
+                                ),
+                            )
+                        }
+                    }
 				}
 			}
 
@@ -2625,7 +2651,16 @@ func (s *Service) executeAgentFull(
 	if !opts.DryRun {
 		final.CumulativeDiff = s.captureCumulativeDiff(ctx, preTaskHead)
 	}
-	_ = mem.save(s.Cfg.WorkDir)
+
+    if err := mem.save(s.Cfg.WorkDir); err != nil {
+        final.AddWarning(
+            fmt.Sprintf(
+                "agent memory could not be saved: %v",
+                err,
+            ),
+        )
+    }
+
 	return final
 }
 

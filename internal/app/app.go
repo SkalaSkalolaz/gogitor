@@ -323,9 +323,15 @@ func (s *Service) Close() {
 	if s.Agents != nil {
 		s.Agents.Close()
 	}
-	if s.WS != nil {
-		_ = s.WS.Close()
-	}
+
+    if s.WS != nil {
+        if err := s.WS.Close(); err != nil && s.Log != nil {
+            s.Log.Warn(
+                "workspace close failed",
+                "err", err,
+            )
+        }
+    }
 }
 
 // LLMSnapshot — сводка использования LLM для отображения в TUI.
@@ -895,22 +901,30 @@ func (s *Service) ExecuteAgentReport(
 		}
 	}
 
-	state, _ :=
-		loadAgentState(dir)
-
-	depth := AgentDepthNormal
-
-	completedSubtasks := 0
-	totalSubtasks := 0
-
-	if state != nil {
-		completedSubtasks =
-			state.CompletedSubtasks
-
-		totalSubtasks =
-			state.TotalSubtasks
-	}
-
+    state, stateErr :=
+        loadAgentState(dir)
+    
+    depth := AgentDepthNormal
+    
+    completedSubtasks := 0
+    totalSubtasks := 0
+    
+    if stateErr != nil {
+        sendEvent(
+            emit,
+            domain.EventWarn,
+            fmt.Sprintf(
+                "agent state could not be loaded: %v",
+                stateErr,
+            ),
+        )
+    } else if state != nil {
+        completedSubtasks =
+            state.CompletedSubtasks
+    
+        totalSubtasks =
+            state.TotalSubtasks
+    }
 	report := formatAgentTaskReport(
 		result,
 		depth,
@@ -1009,12 +1023,19 @@ func (s *Service) ExecuteAgentUndo(
 		return result
 	}
 
-	undoHead, _ :=
-		s.Git.HeadHash(ctx)
-
-	state.Status = "undone"
-	state.UndoCommit = undoHead
-
+    undoHead, headErr := s.Git.HeadHash(ctx)
+    if headErr != nil {
+        result.AddWarning(
+            fmt.Sprintf(
+                "cannot determine post-revert HEAD: %v",
+                headErr,
+            ),
+        )
+        undoHead = ""
+    }
+    
+    state.Status = "undone"
+    state.UndoCommit = undoHead
 	statePath := filepath.Join(
 		dir,
 		"state.json",
@@ -3738,11 +3759,18 @@ func (s *Service) GitBranch(ctx context.Context, args []string, emit func(domain
 			result.AddError(err.Error())
 			return result
 		}
-		current, _ := s.Git.CurrentBranch(ctx)
-		header := ""
-		if current != "" {
-			header = "Current branch: " + current + "\n\n"
-		}
+
+        current, currentErr := s.Git.CurrentBranch(ctx)
+        if currentErr != nil && s.Log != nil {
+            s.Log.Debug(
+                "cannot determine current branch",
+                "err", currentErr,
+            )
+        }
+        header := ""
+        if current != "" {
+            header = "Current branch: " + current + "\n\n"
+        }
 		if strings.TrimSpace(out) == "" {
 			out = "No branches found."
 		}
