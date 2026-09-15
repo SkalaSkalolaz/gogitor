@@ -730,7 +730,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		if argString == "" {
 			return domain.Result{
 				Success: false, Mode: "agent",
-				Errors: []string{"usage: :agent <task> | :agent enhanced <task>"},
+				Errors: []string{"usage: :agent <task> | :agent deep <task>"},
 			}
 		}
 		lowerArgs := strings.ToLower(strings.TrimSpace(argString))
@@ -773,7 +773,7 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		if task == "" {
 			return domain.Result{
 				Success: false, Mode: "agent",
-				Errors: []string{"usage: :agent <task> | :agent enhanced <task>"},
+				Errors: []string{"usage: :agent <task> | :agent deep <task>"},
 			}
 		}
 		return s.ExecuteCode(
@@ -4609,7 +4609,7 @@ func helpTextEn() string {
 
 ## Agent
 - **:agent <task>** — Run the full Agent Harness.
-- **:agent enhanced <task>** — Run the strengthened Agent profile with:
+- **:agent deep <task>** — Run the strengthened Agent profile with:
     - task isolation
     - deterministic quality gates
     - session artifacts

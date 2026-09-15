@@ -9,7 +9,7 @@ Terminal AI coding assistant for Go projects. Gogitor is now a **TUI-only applic
 - one TUI entry point, without the old CLI branch;
 - one catalog of TUI commands reused by completion;
 - fixed `:task-diff` command dispatch;
-- `:agent enhanced <task>` is the preferred name for the stronger agent profile; `deep` remains accepted for compatibility;
+- `:agent deep <task>` is the preferred name for the stronger agent profile; `enhanced` remains accepted for compatibility;
 - `:quit`, `:exit`, and `:q` behave identically;
 - `:cls` is an alias for `:clear`;
 - startup TODO/FIXME/HACK/BUG diagnostics are delivered through the Bubble Tea message loop instead of writing to the model from a background goroutine;
@@ -82,7 +82,6 @@ A future language should be introduced by registering its definition and toolcha
 :code <task>          Agent with automatic depth selection
 :agent <task>         Agent with automatic depth selection
 :agent deep <task>    forced deep profile
-:agent enhanced <task> enhanced Agent profile
 :agent interview <task> clarification helper
 :agent reflect           reflection helper
 :agent report            latest session report

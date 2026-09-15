@@ -728,8 +728,8 @@ var messages = map[Lang]map[string]string{
         "usage: :diff-trace [on|off|status|help]": "использование: :diff-trace [on|off|status|help]",
         
         // ─── Agent: профили и стадии ─────────────────────────────────
-        "Agent profile: deep":                       "Профиль агента: усиленный",
-        "Agent profile: normal":                     "Профиль агента: стандартный",
+        // "Agent profile: deep":                       "Профиль агента: усиленный",
+        // "Agent profile: normal":                     "Профиль агента: стандартный",
         "current stage: quality gates":              "текущий этап: контроль качества",
         "current stage: final quality gates":        "текущий этап: финальный контроль качества",
         "current stage: coder (verifier fix)":       "текущий этап: кодер (исправление верификатора)",
@@ -762,7 +762,7 @@ var messages = map[Lang]map[string]string{
         "WARNING: auto-search is enabled with a REMOTE LLM provider. Project code and search queries will be sent to external servers. Use a local Ollama instance for sensitive projects.": "ВНИМАНИЕ: автопоиск включён с УДАЛЁННЫМ LLM-провайдером. Код проекта и поисковые запросы будут отправлены на внешние серверы. Используйте локальный Ollama для конфиденциальных проектов.",
         
         // ─── Ошибки и использование команд ──────────────────────────
-        "usage: :agent <task> | :agent enhanced <task>": "использование: :agent <задача> | :agent enhanced <задача>",
+        "usage: :agent <task> | :agent deep <task>": "использование: :agent <задача> | :agent deep <задача>",
         "usage: :agent interview <task>":                "использование: :agent interview <задача>",
         "agent interview expired; please start it again": "интервью агента истекло; пожалуйста, начните его снова",
         "agent session has no unfinished subtasks":      "в сессии агента нет незавершённых подзадач",
