@@ -265,6 +265,12 @@ func extractCrashLine(output string) string {
 		if strings.Contains(trimmed, "runtime error:") {
 			return trimmed
 		}
+		if strings.Contains(trimmed, "test timed out") {
+			return "test timed out (function likely deadlocked)"
+		}
+		if strings.Contains(trimmed, "DATA RACE") {
+			return "data race detected"
+		}
 	}
 	return ""
 }
