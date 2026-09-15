@@ -82,6 +82,30 @@ func (r *Runner) Build(ctx context.Context, dir string) error {
 
 }
 
+// RunFuzzTarget запускает один fuzz-таргет на заданное время.
+func (r *Runner) RunFuzzTarget(
+	ctx context.Context,
+	dir string,
+	fuzzName string,
+	duration time.Duration,
+) (string, error) {
+	target := "./" + filepath.ToSlash(filepath.Clean(dir))
+	if target == "./" {
+		target = "."
+	}
+
+	return r.run(
+		ctx,
+		dir,
+		"go",
+		"test",
+		"-run=^$",
+		"-fuzz=^"+regexp.QuoteMeta(fuzzName)+"$",
+		"-fuzztime="+duration.String(),
+		target,
+	)
+}
+
 func (r *Runner) Test(ctx context.Context, dir string) (domain.TestsStatus, error) {
 	status := domain.TestsStatus{}
 

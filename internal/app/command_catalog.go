@@ -11,6 +11,7 @@ type CommandSpec struct {
 var commandCatalog = []CommandSpec{
 	{Name: ":help", Aliases: []string{":h"}, Description: "show help"},
 	{Name: ":clear", Aliases: []string{":cls"}, Description: "clear conversation context"},
+	{Name: ":check", Description: "soft code quality hints"},
 	{Name: ":save", Description: "save the last result"},
 	{Name: ":load", Description: "load a task from a text/markdown file"},
 	{Name: ":code", Description: "Agent-based code generation and modification"},

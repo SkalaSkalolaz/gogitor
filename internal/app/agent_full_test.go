@@ -10,6 +10,23 @@ import (
 	"gogitor/internal/domain"
 )
 
+func TestRunUnusualTestsEmptyProject(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.WorkDir = root
+
+	svc := &Service{
+		Cfg: cfg,
+		WS:  workspace.New(root),
+	}
+
+	res := svc.RunUnusualTests(context.Background(), nil)
+
+	if !res.Success {
+		t.Fatalf("expected success, got %v", res.Errors)
+	}
+}
+
 func TestAppendReviewerSuggestions(t *testing.T) {
 	var dst []string
 

@@ -171,6 +171,45 @@ func localizeLine(l Lang, line string) string {
 var messages = map[Lang]map[string]string{
 	EN: map[string]string{},
 	RU: map[string]string{
+        "Want to check the program with unusual data? Run :test unusual.": "Хочешь проверить программу на необычных данных? Выполни :test unusual.",
+		// ─── :test unusual — устойчивость к странным данным ─────
+		"Checking the program with unusual data": "Проверяю программу на необычных данных",
+		"Nothing to check — the project has no Go files.": "Нечего проверять — в проекте нет Go-файлов.",
+
+		"Checking %s with unusual input...": "Проверяю %s на необычных данных...",
+		"could not prepare a check":          "не удалось подготовить проверку",
+		"check could not be generated":       "не удалось сгенерировать проверку",
+		"could not write temporary file":     "не удалось записать временный файл",
+		"the program broke on unusual input": "программа сломалась на необычных данных",
+
+		"Checked a few functions with unusual input. Everything held up.":                        "Проверил несколько функций необычными данными. Всё выдержало.",
+		"Checked a few functions with unusual input. Everything held up, but a couple were skipped.": "Проверил несколько функций необычными данными. Всё выдержало, но пару пропустил.",
+		"The program did not survive unusual input in a few places.":                              "Программа не выдержала необычных данных в паре мест.",
+		"Nothing to check with unusual data — no simple functions found.":                         "Нечего проверять необычными данными — простых функций не нашлось.",
+
+		"Run `:fix` with the message above, and I will try to make the function handle strange input gracefully.": "Выполни `:fix` с сообщением выше — попробую сделать так, чтобы функция спокойно переживала странные данные.",
+		// ─── :check — мягкие подсказки ──────────────────────────
+		"Looking at your code for possible improvements": "Смотрю код на предмет возможных улучшений",
+		"Your code looks clean — no obvious issues found.": "Код выглядит чисто — очевидных замечаний нет.",
+		"I looked at your code and found a few things worth a look:": "Посмотрел код — есть несколько моментов, на которые стоит взглянуть:",
+		"Nothing here is a bug — just ideas to make the code easier to read. Ask me to explain any of them if you want.": "Это не ошибки — просто идеи, как сделать код понятнее. Спроси, если хочешь, чтобы я объяснил подробнее.",
+
+		"Errors that are not checked": "Ошибки, которые не проверяются",
+		"Long functions":              "Длинные функции",
+		"Deeply nested code":          "Слишком вложенный код",
+		"Code that is never used":     "Код, который нигде не используется",
+
+		"Function %s is %d lines long": "Функция %s длинная — %d строк",
+		"Short functions are easier to read and to fix. Try to split a long function into a few smaller ones, each doing one thing.": "Короткие функции легче читать и править. Попробуй разделить длинную функцию на несколько маленьких, каждая из которых делает одно дело.",
+
+		"Function %s has %d nested levels": "В функции %s %d уровней вложенности",
+		"When conditions are nested 5 levels deep, it is hard to follow the logic. Try early returns or split the function.": "Когда условия вложены на 5 уровней, тяжело следить за логикой. Попробуй ранние возвраты (early return) или раздели функцию.",
+
+		"Function %s is never called": "Функция %s нигде не вызывается",
+		"It looks like leftover code. If you are sure it is not needed, you can delete it to keep the project clean.": "Похоже, это остаток от старого кода. Если точно не нужна — можно удалить, чтобы проект был чище.",
+
+		"An error in %s is not checked": "В функции %s не проверяется ошибка",
+		"When a function returns an error, it is usually checked with `if err != nil { ... }`. Otherwise the program may crash unexpectedly.": "Когда функция возвращает ошибку, её обычно проверяют через `if err != nil { ... }`. Иначе программа может упасть в самый неожиданный момент.",
         "AGENT COMPLETED": "АГЕНТ ЗАВЕРШЕН",
         "FILES":           "ФАЙЛЫ",
         "TESTS":           "ТЕСТЫ",

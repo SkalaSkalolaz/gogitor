@@ -664,6 +664,8 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		return s.RunVet(ctx, emit)
 	case ":todo":
 		return s.ScanTODO(ctx, emit)
+	case ":check":
+		return s.RunHints(ctx, emit)
 	case ":autonomy":
 		return s.handleAutonomyCommand(ctx, args, emit)
 	case ":mutate":
@@ -812,11 +814,15 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 		return s.RunFile(ctx, file, emit)
 
 	case ":test":
-		if len(args) > 0 && strings.ToLower(args[0]) == "lint" {
-			return s.RunLint(ctx, emit)
+		if len(args) > 0 {
+			switch strings.ToLower(args[0]) {
+			case "lint":
+				return s.RunLint(ctx, emit)
+			case "unusual":
+				return s.RunUnusualTests(ctx, emit)
+			}
 		}
 		return s.RunTests(ctx, emit)
-
 	case ":decisions", ":journal":
 		return s.DecisionJournal(ctx, emit)
 
@@ -3453,7 +3459,68 @@ func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.
 		coverageSuffix(tests),
 	)
 
+    if result.Success && !strings.Contains(result.Response, "unusual") {
+    		result.Response += "\n\n" + i18n.T("Want to check the program with unusual data? Run :test unusual.")
+    }
+    
 	return result
+}
+
+// RunUnusualTests проверяет несколько функций на устойчивость
+// к странным данным. Никаких специальных терминов в интерфейсе.
+func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) domain.Result {
+	emitEvent(emit, domain.Event{
+		Type:      domain.EventLog,
+		Message:   i18n.Localize("Checking the program with unusual data"),
+		TaskStage: domain.TaskStageTesting,
+	})
+
+	// Прогреваем сборку и обычные тесты в песочнице.
+	sandbox, err := s.WS.PrepareSandbox(ctx)
+	if err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "test",
+			Errors:  []string{err.Error()},
+		}
+	}
+	defer os.RemoveAll(sandbox)
+
+    if !s.WS.HasGoFiles() {
+		return domain.Result{
+			Success:  true,
+			Mode:     "test",
+			Response: i18n.T("Nothing to check — the project has no Go files."),
+		}
+	}
+
+	if err := s.Runner.Build(ctx, sandbox); err != nil {
+		return domain.Result{
+			Success: false,
+			Mode:    "test",
+			Errors:  []string{err.Error()},
+		}
+	}
+
+	// Переносим проверку в песочницу: копируем workspace-обёртку.
+	sandboxWS := workspace.New(sandbox)
+	defer sandboxWS.Close()
+
+	gen := autonomy.NewTestGenerator(sandboxWS, s.LLM)
+
+	results := gen.RunUnusualTests(
+		ctx,
+		s.Runner,
+		3,
+		5*time.Second,
+		emit,
+	)
+
+	return domain.Result{
+		Success:  true,
+		Mode:     "test",
+		Response: autonomy.FormatUnusualResults(results),
+	}
 }
 
 func (s *Service) RunFile(ctx context.Context, file string, emit func(domain.Event)) domain.Result {
@@ -6485,6 +6552,24 @@ func (s *Service) ScanTODO(ctx context.Context, emit func(domain.Event)) domain.
 		Success:  true,
 		Mode:     "todo",
 		Response: workspace.FormatTODOs(items),
+	}
+}
+
+// RunHints показывает мягкие подсказки по качеству кода.
+// Не использует LLM. Работает быстро и не изменяет файлы.
+func (s *Service) RunHints(ctx context.Context, emit func(domain.Event)) domain.Result {
+	emitEvent(emit, domain.Event{
+		Type:      domain.EventLog,
+		Message:   i18n.Localize("Looking at your code for possible improvements"),
+		TaskStage: domain.TaskStageAnalyze,
+	})
+
+	hints := s.WS.ScanHints(30)
+
+	return domain.Result{
+		Success:  true,
+		Mode:     "check",
+		Response: workspace.FormatHints(hints),
 	}
 }
 

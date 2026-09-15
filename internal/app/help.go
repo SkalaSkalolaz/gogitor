@@ -18,6 +18,48 @@ type helpTopic struct {
 // helpTopics — все разделы точечной помощи.
 var helpTopics = []helpTopic{
 	{
+		Name:    "check",
+		Aliases: []string{":check", "check"},
+		En: `## :check — Code Quality Hints
+### Syntax
+:check
+### Description
+Looks at your Go code and gives simple, friendly suggestions —
+no jargon, no metrics, no LLM calls.
+
+It finds:
+- errors that are not checked;
+- functions that are too long;
+- code nested too deeply;
+- functions that are never called.
+
+Nothing is changed. This is just a look at your code.
+### Examples
+:check
+### Help
+:check help — show this help
+:help check — same as above`,
+		Ru: `## :check — Подсказки по качеству кода
+### Синтаксис
+:check
+### Описание
+Смотрит на твой Go-код и даёт простые, дружелюбные подсказки —
+без сложных терминов, без метрик, без вызовов LLM.
+
+Находит:
+- непроверенные ошибки;
+- слишком длинные функции;
+- слишком вложенный код;
+- функции, которые нигде не вызываются.
+
+Ничего не меняет. Это просто взгляд на код.
+### Примеры
+:check
+### Помощь
+:check help — показать эту помощь
+:help check — то же самое`,
+	},
+	{
 		Name:    "diff-trace",
 		Aliases: []string{":diff-trace", "diff-trace"},
 		En: `## :diff-trace — DIFF Diagnostics
@@ -1208,34 +1250,39 @@ _test.go file, then generates table-driven tests via LLM.
 ### Syntax
 :test
 :test lint
+:test unusual
 ### Subcommands
 | Command | Description |
 |---------|-------------|
 | :test | Run go test -v -cover ./... in sandbox |
 | :test lint | Run golangci-lint and auto-fix issues via LLM |
+| :test unusual | Check that the program survives strange input |
+### What ":test unusual" does
+It picks a few simple functions and checks that they do not crash
+when they receive unexpected data (empty strings, huge numbers,
+binary noise, and so on).
+
+If a function panics, Gogitor shows you the exact message and
+suggests running ":fix" to repair it.
+
+No special tools, no configuration — everything is temporary and
+does not leave files in your project.
 ### Test Output
 | Field | Description |
 |-------|-------------|
 | Passed | Number of passed tests |
 | Failed | Number of failed tests |
 | Coverage | Average coverage percentage |
-| Failures | Detailed failure info (test, function, file, line) |
-### Lint Behavior
-| Step | Description |
-|------|-------------|
-| 1 | Run golangci-lint in sandbox |
-| 2 | Count issues from output |
-| 3 | If issues found → send to LLM for fixing |
-| 4 | Apply fixes and re-validate |
+| Failures | Detailed failure info |
 ### Related Commands
 | Command | Description |
 |---------|-------------|
 | :vet | Run go vet (fast, no LLM) |
-| :mutate [limit] | Mutation testing |
-| :autogen-tests [n] | Auto-generate unit tests |
+| :check | Soft code quality hints |
 ### Examples
 :test
 :test lint
+:test unusual
 ### Help
 :test help — show this help
 :help test — same as above`,
@@ -1243,34 +1290,39 @@ _test.go file, then generates table-driven tests via LLM.
 ### Синтаксис
 :test
 :test lint
+:test unusual
 ### Подкоманды
 | Команда | Описание |
 |---------|----------|
 | :test | Запуск go test -v -cover ./... в песочнице |
 | :test lint | Запуск golangci-lint и автоисправление через LLM |
+| :test unusual | Проверка, что программа не сломается на странных данных |
+### Что делает ":test unusual"
+Берёт несколько простых функций и проверяет, что они не падают,
+когда получают неожиданные данные (пустые строки, огромные числа,
+случайные байты и т.д.).
+
+Если функция паникует — Gogitor покажет точное сообщение и
+предложит выполнить ":fix", чтобы исправить.
+
+Никаких специальных инструментов и настроек — всё временно и не
+оставляет файлов в проекте.
 ### Вывод тестов
 | Поле | Описание |
 |------|----------|
 | Пройдено | Количество пройденных тестов |
 | Упало | Количество упавших тестов |
 | Покрытие | Средний процент покрытия |
-| Падения | Детальная информация (тест, функция, файл, строка) |
-### Поведение lint
-| Шаг | Описание |
-|-----|----------|
-| 1 | Запуск golangci-lint в песочнице |
-| 2 | Подсчёт проблем из вывода |
-| 3 | Если есть проблемы → отправка в LLM для исправления |
-| 4 | Применение исправлений и повторная проверка |
+| Падения | Детальная информация |
 ### Связанные команды
 | Команда | Описание |
 |---------|----------|
 | :vet | Запуск go vet (быстро, без LLM) |
-| :mutate [лимит] | Мутационное тестирование |
-| :autogen-tests [n] | Автогенерация юнит-тестов |
+| :check | Мягкие подсказки по качеству кода |
 ### Примеры
 :test
 :test lint
+:test unusual
 ### Помощь
 :test help — показать эту помощь
 :help test — то же самое`,
