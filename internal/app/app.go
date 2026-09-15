@@ -3495,6 +3495,10 @@ func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) 
 		}
 	}
 
+    s.Runner.DepsLog = func(msg string) {
+    		sendEvent(emit, domain.EventLog, msg)
+    	}
+
 	if err := s.Runner.Build(ctx, sandbox); err != nil {
 		return domain.Result{
 			Success: false,
