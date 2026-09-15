@@ -33,19 +33,19 @@ import (
 )
 
 type Options struct {
-	DryRun              bool
-	NoCommit            bool
-	NoTests             bool
-	NoCompare           bool
-	ProgressItem        int
-	ProgressTotal       int
-	AgentDepth          AgentDepth
-	EditMode            EditMode
-	InterviewAnswers    []prompts.AgentInterviewAnswer
-	AgentResumePlan     *fullPlan
-	AgentResumeFrom     int
-	AgentResumeSource   string
-	AgentProjectContext string
+	DryRun                      bool
+	NoCommit                    bool
+	NoTests                     bool
+	NoCompare                   bool
+	ProgressItem                int
+	ProgressTotal               int
+	AgentDepth                  AgentDepth
+	EditMode                    EditMode
+	InterviewAnswers            []prompts.AgentInterviewAnswer
+	AgentResumePlan             *fullPlan
+	AgentResumeFrom             int
+	AgentResumeSource           string
+	AgentProjectContext         string
 	AgentResumeVerificationOnly bool
 }
 
@@ -324,14 +324,14 @@ func (s *Service) Close() {
 		s.Agents.Close()
 	}
 
-    if s.WS != nil {
-        if err := s.WS.Close(); err != nil && s.Log != nil {
-            s.Log.Warn(
-                "workspace close failed",
-                "err", err,
-            )
-        }
-    }
+	if s.WS != nil {
+		if err := s.WS.Close(); err != nil && s.Log != nil {
+			s.Log.Warn(
+				"workspace close failed",
+				"err", err,
+			)
+		}
+	}
 }
 
 // LLMSnapshot — сводка использования LLM для отображения в TUI.
@@ -901,30 +901,30 @@ func (s *Service) ExecuteAgentReport(
 		}
 	}
 
-    state, stateErr :=
-        loadAgentState(dir)
-    
-    depth := AgentDepthNormal
-    
-    completedSubtasks := 0
-    totalSubtasks := 0
-    
-    if stateErr != nil {
-        sendEvent(
-            emit,
-            domain.EventWarn,
-            fmt.Sprintf(
-                "agent state could not be loaded: %v",
-                stateErr,
-            ),
-        )
-    } else if state != nil {
-        completedSubtasks =
-            state.CompletedSubtasks
-    
-        totalSubtasks =
-            state.TotalSubtasks
-    }
+	state, stateErr :=
+		loadAgentState(dir)
+
+	depth := AgentDepthNormal
+
+	completedSubtasks := 0
+	totalSubtasks := 0
+
+	if stateErr != nil {
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			fmt.Sprintf(
+				"agent state could not be loaded: %v",
+				stateErr,
+			),
+		)
+	} else if state != nil {
+		completedSubtasks =
+			state.CompletedSubtasks
+
+		totalSubtasks =
+			state.TotalSubtasks
+	}
 	report := formatAgentTaskReport(
 		result,
 		depth,
@@ -1023,19 +1023,19 @@ func (s *Service) ExecuteAgentUndo(
 		return result
 	}
 
-    undoHead, headErr := s.Git.HeadHash(ctx)
-    if headErr != nil {
-        result.AddWarning(
-            fmt.Sprintf(
-                "cannot determine post-revert HEAD: %v",
-                headErr,
-            ),
-        )
-        undoHead = ""
-    }
-    
-    state.Status = "undone"
-    state.UndoCommit = undoHead
+	undoHead, headErr := s.Git.HeadHash(ctx)
+	if headErr != nil {
+		result.AddWarning(
+			fmt.Sprintf(
+				"cannot determine post-revert HEAD: %v",
+				headErr,
+			),
+		)
+		undoHead = ""
+	}
+
+	state.Status = "undone"
+	state.UndoCommit = undoHead
 	statePath := filepath.Join(
 		dir,
 		"state.json",
@@ -1508,9 +1508,9 @@ func (s *Service) ExecuteCode(
 		)
 
 	// sendEvent(
-		// emit,
-		// domain.EventLog,
-		// "Execution mode: Agent",
+	// emit,
+	// domain.EventLog,
+	// "Execution mode: Agent",
 	// )
 
 	if agentOpts.AgentDepth == AgentDepthDeep {
@@ -3411,11 +3411,11 @@ func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.
 		return result
 	}
 
-    emitEvent(emit, domain.Event{
-    	Type:      domain.EventLog,
-    	Message:   i18n.Localize("Running tests"),
-    	TaskStage: domain.TaskStageTesting,
-    })
+	emitEvent(emit, domain.Event{
+		Type:      domain.EventLog,
+		Message:   i18n.Localize("Running tests"),
+		TaskStage: domain.TaskStageTesting,
+	})
 
 	tests, err := s.Runner.Test(ctx, sandbox)
 	result.Tests = tests
@@ -3455,13 +3455,12 @@ func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.
 		coverageSuffix(tests),
 	)
 
-    if result.Success && !strings.Contains(result.Response, "unusual") {
-    		result.Response += "\n\n" + i18n.T("Want to check the program with unusual data? Run :test unusual.")
-    }
-    
+	if result.Success && !strings.Contains(result.Response, "unusual") {
+		result.Response += "\n\n" + i18n.T("Want to check the program with unusual data? Run :test unusual.")
+	}
+
 	return result
 }
-
 
 // RunUnusualTests проверяет несколько функций на устойчивость
 // к странным данным. Никаких специальных терминов в интерфейсе.
@@ -3491,9 +3490,9 @@ func (s *Service) RunUnusualTests(ctx context.Context, emit func(domain.Event)) 
 		}
 	}
 
-    s.Runner.DepsLog = func(msg string) {
-    		sendEvent(emit, domain.EventLog, msg)
-    	}
+	s.Runner.DepsLog = func(msg string) {
+		sendEvent(emit, domain.EventLog, msg)
+	}
 
 	if err := s.Runner.Build(ctx, sandbox); err != nil {
 		return domain.Result{
@@ -3760,17 +3759,17 @@ func (s *Service) GitBranch(ctx context.Context, args []string, emit func(domain
 			return result
 		}
 
-        current, currentErr := s.Git.CurrentBranch(ctx)
-        if currentErr != nil && s.Log != nil {
-            s.Log.Debug(
-                "cannot determine current branch",
-                "err", currentErr,
-            )
-        }
-        header := ""
-        if current != "" {
-            header = "Current branch: " + current + "\n\n"
-        }
+		current, currentErr := s.Git.CurrentBranch(ctx)
+		if currentErr != nil && s.Log != nil {
+			s.Log.Debug(
+				"cannot determine current branch",
+				"err", currentErr,
+			)
+		}
+		header := ""
+		if current != "" {
+			header = "Current branch: " + current + "\n\n"
+		}
 		if strings.TrimSpace(out) == "" {
 			out = "No branches found."
 		}
@@ -3932,15 +3931,15 @@ func (s *Service) GitMerge(ctx context.Context, branch string, emit func(domain.
 		result.AddError("usage: :git merge <branch-name>")
 		return result
 	}
-    current, currentErr := s.Git.CurrentBranch(ctx)
-    if currentErr != nil && s.Log != nil {
-        s.Log.Debug(
-            "cannot determine current branch",
-            "err", currentErr,
-        )
-    }
-    sendEvent(emit, domain.EventLog,
-        fmt.Sprintf("Merging '%s' into '%s'...", branch, current))
+	current, currentErr := s.Git.CurrentBranch(ctx)
+	if currentErr != nil && s.Log != nil {
+		s.Log.Debug(
+			"cannot determine current branch",
+			"err", currentErr,
+		)
+	}
+	sendEvent(emit, domain.EventLog,
+		fmt.Sprintf("Merging '%s' into '%s'...", branch, current))
 	out, err := s.Git.Merge(ctx, branch)
 	if err != nil {
 		result.AddError(err.Error())
@@ -5173,17 +5172,17 @@ func (s *Service) GitPush(ctx context.Context, branch string, emit func(domain.E
 		}
 	}
 	// Проверяем, что remote существует.
-    remotes, remotesErr := s.Git.RemoteList(ctx)
-    if remotesErr != nil {
-        result.AddError(fmt.Sprintf(
-            "cannot read git remotes: %v", remotesErr,
-        ))
-        return result
-    }
-    if strings.TrimSpace(remotes) == "" {
-        result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
-        return result
-    }
+	remotes, remotesErr := s.Git.RemoteList(ctx)
+	if remotesErr != nil {
+		result.AddError(fmt.Sprintf(
+			"cannot read git remotes: %v", remotesErr,
+		))
+		return result
+	}
+	if strings.TrimSpace(remotes) == "" {
+		result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
+		return result
+	}
 	sendEvent(emit, domain.EventLog, "Pushing to remote...")
 	if strings.TrimSpace(s.Cfg.GitHubToken) != "" {
 		tokenType := github.TokenType(s.Cfg.GitHubToken)
@@ -5225,17 +5224,17 @@ func (s *Service) GitPull(ctx context.Context, branch string, emit func(domain.E
 			return result
 		}
 	}
-    remotes, remotesErr := s.Git.RemoteList(ctx)
-    if remotesErr != nil {
-        result.AddError(fmt.Sprintf(
-            "cannot read git remotes: %v", remotesErr,
-        ))
-        return result
-    }
-    if strings.TrimSpace(remotes) == "" {
-        result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
-        return result
-    }
+	remotes, remotesErr := s.Git.RemoteList(ctx)
+	if remotesErr != nil {
+		result.AddError(fmt.Sprintf(
+			"cannot read git remotes: %v", remotesErr,
+		))
+		return result
+	}
+	if strings.TrimSpace(remotes) == "" {
+		result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
+		return result
+	}
 	sendEvent(emit, domain.EventLog, "Pulling from remote...")
 
 	out, err := s.Git.WithAuthenticatedRemote(ctx, "origin", s.Cfg.GitHubToken, func() (string, error) {
@@ -5317,19 +5316,19 @@ func (s *Service) GitClone(ctx context.Context, repoURL string, emit func(domain
 	}
 
 	// Убираем токен из remote URL в склонированном репо.
-    if s.Cfg.GitHubToken != "" {
-        cloneGit := git.New(targetDir, s.Log)
-        if _, cleanErr := cloneGit.RemoteSetURL(ctx, "origin", repoURL); cleanErr != nil {
-            sendEvent(
-                emit,
-                domain.EventError,
-                fmt.Sprintf(
-                    "SECURITY: cloned repo %s still contains the GitHub token in remote.origin.url: %v; run 'git remote set-url origin %s' manually",
-                    targetDir, cleanErr, repoURL,
-                ),
-            )
-        }
-    }
+	if s.Cfg.GitHubToken != "" {
+		cloneGit := git.New(targetDir, s.Log)
+		if _, cleanErr := cloneGit.RemoteSetURL(ctx, "origin", repoURL); cleanErr != nil {
+			sendEvent(
+				emit,
+				domain.EventError,
+				fmt.Sprintf(
+					"SECURITY: cloned repo %s still contains the GitHub token in remote.origin.url: %v; run 'git remote set-url origin %s' manually",
+					targetDir, cleanErr, repoURL,
+				),
+			)
+		}
+	}
 	s.switchWorkDir(targetDir)
 	sendEvent(emit, domain.EventLog, fmt.Sprintf("Switched working directory to %s", targetDir))
 
@@ -5341,14 +5340,14 @@ func (s *Service) GitClone(ctx context.Context, repoURL string, emit func(domain
 func (s *Service) switchWorkDir(newDir string) {
 	s.Cfg.WorkDir = newDir
 	s.Git = git.New(newDir, s.Log)
-    if s.WS != nil {
-        if err := s.WS.Close(); err != nil && s.Log != nil {
-            s.Log.Warn(
-                "workspace close failed during switchWorkDir",
-                "err", err,
-            )
-        }
-    }
+	if s.WS != nil {
+		if err := s.WS.Close(); err != nil && s.Log != nil {
+			s.Log.Warn(
+				"workspace close failed during switchWorkDir",
+				"err", err,
+			)
+		}
+	}
 	s.WS = workspace.New(newDir)
 	s.WS.SetDiffMatchingConfig(
 		s.Cfg.DiffMatching,
@@ -5490,21 +5489,21 @@ func (s *Service) GitCreate(ctx context.Context, args []string, emit func(domain
 	}
 	sendEvent(emit, domain.EventLog, fmt.Sprintf("Repository created: %s (%s)", repo.FullName, visibility))
 
-    // Настраиваем remote origin в текущем проекте.
-    if s.Git.IsRepo(ctx) {
-        if remoteErr := s.Git.EnsureRemote(ctx, "origin", repo.CloneURL); remoteErr != nil {
-            sendEvent(
-                emit,
-                domain.EventWarn,
-                fmt.Sprintf(
-                    "Repository created, but could not configure remote 'origin' in the current project: %v; add it manually with ':git remote add origin %s'",
-                    remoteErr, repo.CloneURL,
-                ),
-            )
-        } else {
-            sendEvent(emit, domain.EventLog, "Remote 'origin' set to "+repo.CloneURL)
-        }
-    }
+	// Настраиваем remote origin в текущем проекте.
+	if s.Git.IsRepo(ctx) {
+		if remoteErr := s.Git.EnsureRemote(ctx, "origin", repo.CloneURL); remoteErr != nil {
+			sendEvent(
+				emit,
+				domain.EventWarn,
+				fmt.Sprintf(
+					"Repository created, but could not configure remote 'origin' in the current project: %v; add it manually with ':git remote add origin %s'",
+					remoteErr, repo.CloneURL,
+				),
+			)
+		} else {
+			sendEvent(emit, domain.EventLog, "Remote 'origin' set to "+repo.CloneURL)
+		}
+	}
 
 	result.Success = true
 	result.Response = fmt.Sprintf(
@@ -5893,16 +5892,16 @@ func (s *Service) RunLint(ctx context.Context, emit func(domain.Event)) domain.R
 		TaskStage: domain.TaskStageLint,
 	})
 
-    if err := s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir); err != nil {
-        sendEvent(
-            emit,
-            domain.EventWarn,
-            fmt.Sprintf(
-                "Could not prepare .golangci.yml: %v; lint will use the default configuration",
-                err,
-            ),
-        )
-    }
+	if err := s.Runner.EnsureLintConfig(ctx, s.Cfg.WorkDir); err != nil {
+		sendEvent(
+			emit,
+			domain.EventWarn,
+			fmt.Sprintf(
+				"Could not prepare .golangci.yml: %v; lint will use the default configuration",
+				err,
+			),
+		)
+	}
 	sendEvent(emit, domain.EventLog, "Preparing sandbox")
 	sandbox, err := s.WS.PrepareSandbox(ctx)
 	if err != nil {
@@ -6000,11 +5999,21 @@ func (s *Service) generateCommitMessageForFile(
 	file string,
 	emit func(domain.Event),
 ) string {
-	// Помечаем новые файлы как intent-to-add, чтобы они появились в diff.
-	_ = s.Git.AddIntentToAll(ctx)
-	defer func() {
-		_ = s.Git.ResetAll(ctx)
-	}()
+    // Помечаем новые файлы как intent-to-add, чтобы они появились в diff.
+    if err := s.Git.AddIntentToAll(ctx); err != nil && s.Log != nil {
+        s.Log.Debug(
+            "intent-to-add failed; new files may be missing from the commit message diff",
+            "err", err,
+        )
+    }
+    defer func() {
+        if err := s.Git.ResetAll(ctx); err != nil && s.Log != nil {
+            s.Log.Debug(
+                "reset of intent-to-add failed; working tree may still have intent-to-add entries",
+                "err", err,
+            )
+        }
+    }()
 
 	// Diff конкретного файла.
 	diff, err := s.Git.DiffFile(ctx, file)
