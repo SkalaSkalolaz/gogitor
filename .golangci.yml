@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+timeout: 5m
+tests: true
+linters:
+enable:
+- errcheck
+- govet
+- ineffassign
+- staticcheck
+- unused
+- revive
+- misspell
+- testifylint
+- thelper
+- whitespace
+formatters:
+enable:
+- gofmt
+- goimports
+linters-settings:
+revive:
+rules:
+- name: package-comments
+disabled: true
+testifylint:
+enable-all: true
