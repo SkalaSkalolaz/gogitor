@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"path/filepath"
 
 	"gogitor/internal/domain"
 	"gogitor/internal/i18n"
@@ -81,6 +82,11 @@ func (m *Mutator) GenerateMutations() []Mutation {
 	goFiles := m.ws.GoFiles(100)
 
 	for _, rel := range goFiles {
+       // main.go — точка входа, её поведение
+        // проверяется интеграционно, а не мутационно.
+        if filepath.Base(rel) == "main.go" {
+            continue
+        }
 		if len(mutations) >= m.limit {
 			break
 		}
