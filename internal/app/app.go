@@ -5167,11 +5167,17 @@ func (s *Service) GitPush(ctx context.Context, branch string, emit func(domain.E
 		}
 	}
 	// Проверяем, что remote существует.
-	remotes, _ := s.Git.RemoteList(ctx)
-	if strings.TrimSpace(remotes) == "" {
-		result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
-		return result
-	}
+    remotes, remotesErr := s.Git.RemoteList(ctx)
+    if remotesErr != nil {
+        result.AddError(fmt.Sprintf(
+            "cannot read git remotes: %v", remotesErr,
+        ))
+        return result
+    }
+    if strings.TrimSpace(remotes) == "" {
+        result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
+        return result
+    }
 	sendEvent(emit, domain.EventLog, "Pushing to remote...")
 	if strings.TrimSpace(s.Cfg.GitHubToken) != "" {
 		tokenType := github.TokenType(s.Cfg.GitHubToken)
@@ -5213,11 +5219,17 @@ func (s *Service) GitPull(ctx context.Context, branch string, emit func(domain.E
 			return result
 		}
 	}
-	remotes, _ := s.Git.RemoteList(ctx)
-	if strings.TrimSpace(remotes) == "" {
-		result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
-		return result
-	}
+    remotes, remotesErr := s.Git.RemoteList(ctx)
+    if remotesErr != nil {
+        result.AddError(fmt.Sprintf(
+            "cannot read git remotes: %v", remotesErr,
+        ))
+        return result
+    }
+    if strings.TrimSpace(remotes) == "" {
+        result.AddError("no remote configured. Use ':git remote add <url>' or --github <url>")
+        return result
+    }
 	sendEvent(emit, domain.EventLog, "Pulling from remote...")
 
 	out, err := s.Git.WithAuthenticatedRemote(ctx, "origin", s.Cfg.GitHubToken, func() (string, error) {
@@ -5299,11 +5311,19 @@ func (s *Service) GitClone(ctx context.Context, repoURL string, emit func(domain
 	}
 
 	// Убираем токен из remote URL в склонированном репо.
-	if s.Cfg.GitHubToken != "" {
-		cloneGit := git.New(targetDir, s.Log)
-		_, _ = cloneGit.RemoteSetURL(ctx, "origin", repoURL)
-	}
-
+    if s.Cfg.GitHubToken != "" {
+        cloneGit := git.New(targetDir, s.Log)
+        if _, cleanErr := cloneGit.RemoteSetURL(ctx, "origin", repoURL); cleanErr != nil {
+            sendEvent(
+                emit,
+                domain.EventError,
+                fmt.Sprintf(
+                    "SECURITY: cloned repo %s still contains the GitHub token in remote.origin.url: %v; run 'git remote set-url origin %s' manually",
+                    targetDir, cleanErr, repoURL,
+                ),
+            )
+        }
+    }
 	s.switchWorkDir(targetDir)
 	sendEvent(emit, domain.EventLog, fmt.Sprintf("Switched working directory to %s", targetDir))
 
@@ -5315,11 +5335,14 @@ func (s *Service) GitClone(ctx context.Context, repoURL string, emit func(domain
 func (s *Service) switchWorkDir(newDir string) {
 	s.Cfg.WorkDir = newDir
 	s.Git = git.New(newDir, s.Log)
-
-	if s.WS != nil {
-		_ = s.WS.Close()
-	}
-
+    if s.WS != nil {
+        if err := s.WS.Close(); err != nil && s.Log != nil {
+            s.Log.Warn(
+                "workspace close failed during switchWorkDir",
+                "err", err,
+            )
+        }
+    }
 	s.WS = workspace.New(newDir)
 	s.WS.SetDiffMatchingConfig(
 		s.Cfg.DiffMatching,
