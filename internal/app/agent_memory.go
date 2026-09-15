@@ -70,10 +70,6 @@ func (m *agentMemory) addDecision(s string) {
 	m.Decisions = appendLimited(m.Decisions, s, 80)
 }
 
-func (m *agentMemory) addFailed(s string) {
-	m.FailedApproaches = appendLimited(m.FailedApproaches, s, 80)
-}
-
 func (m *agentMemory) addLesson(s string) {
 	m.Lessons = appendLimited(m.Lessons, s, 30)
 }
@@ -102,16 +98,6 @@ func (m *agentMemory) addDecisionSimple(decision, source string) {
 	m.addDecisionEntry(domain.DecisionEntry{
 		Decision: decision,
 		Source:   source,
-	})
-}
-
-// addTemporaryDecision записывает решение, принятое как временное.
-func (m *agentMemory) addTemporaryDecision(decision, constraint, source string) {
-	m.addDecisionEntry(domain.DecisionEntry{
-		Decision:   decision,
-		Temporary:  true,
-		Constraint: constraint,
-		Source:     source,
 	})
 }
 

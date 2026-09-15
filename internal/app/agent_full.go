@@ -3618,29 +3618,6 @@ RULES:
 	return strings.TrimSpace(b.String())
 }
 
-func agentVerificationSummaryWithLimits(res domain.Result, maxTotal, maxPerFile int) string {
-	var b strings.Builder
-	if len(res.OutputFiles) > 0 {
-		b.WriteString("changed file snippets:\n")
-		total := 0
-		for _, f := range res.OutputFiles {
-			if total >= maxTotal {
-				break
-			}
-			header := "--- File: " + f.Path + " ---\n"
-			content := truncate(f.Content, maxPerFile)
-			b.WriteString(header)
-			b.WriteString(content)
-			b.WriteByte('\n')
-			total += len(header) + len(content) + 1
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func agentVerificationSummary(res domain.Result) string {
-	return agentVerificationSummaryWithLimits(res, 30000, 6000)
-}
 
 // agentChangeSummary формирует сводку изменений для ревьюера.
 // Лимиты передаются извне для масштабирования от размера модели.
@@ -3734,10 +3711,6 @@ func agentChangeSummaryWithLimits(res domain.Result, maxTotal, maxPerFile int) s
 	return strings.TrimSpace(b.String())
 }
 
-// Обратная совместимость: старая сигнатура с дефолтными лимитами
-func agentChangeSummary(res domain.Result) string {
-	return agentChangeSummaryWithLimits(res, 30000, 8000)
-}
 
 func sanitizePlanSubtasks(subtasks []fullPlanSubtask, emit func(domain.Event)) []fullPlanSubtask {
 	var out []fullPlanSubtask

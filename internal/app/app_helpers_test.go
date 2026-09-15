@@ -297,20 +297,6 @@ func TestMergeOutputFiles(t *testing.T) {
 	}
 }
 
-func TestAppendUniqueStrings(t *testing.T) {
-	result := appendUniqueStrings([]string{"a", "b"}, "b", "c", "a", "d")
-	if len(result) != 4 {
-		t.Fatalf("expected 4, got %d", len(result))
-	}
-}
-
-func TestStringSet(t *testing.T) {
-	set := stringSet([]string{"a", "b", "a"})
-	if len(set) != 2 || !set["a"] || !set["b"] {
-		t.Errorf("set = %v", set)
-	}
-}
-
 func TestSortedKeys(t *testing.T) {
 	keys := sortedKeys(map[string]bool{"c": true, "a": true, "b": true})
 	if len(keys) != 3 || keys[0] != "a" || keys[1] != "b" || keys[2] != "c" {

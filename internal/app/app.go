@@ -3364,31 +3364,6 @@ func (s *Service) executeCoderPass(ctx context.Context, query string, opts Optio
 
 }
 
-// formatPatchContent форматирует патчи для передачи в промпт исправления.
-func formatPatchContent(changes []domain.FileChange) string {
-	var b strings.Builder
-	for _, ch := range changes {
-		if len(ch.Patches) == 0 {
-			continue
-		}
-		b.WriteString("--- Patch: " + ch.Path + " ---\n")
-		for _, p := range ch.Patches {
-			if p.Symbol != "" {
-				b.WriteString("--- Symbol: ")
-				b.WriteString(p.Symbol)
-				b.WriteString(" ---\n")
-			}
-
-			b.WriteString("<<<<<<< SEARCH\n")
-			b.WriteString(p.Search)
-			b.WriteString("\n=======\n")
-			b.WriteString(p.Replace)
-			b.WriteString("\n>>>>>>> REPLACE\n")
-		}
-	}
-	return b.String()
-}
-
 func (s *Service) RunTests(ctx context.Context, emit func(domain.Event)) domain.Result {
 	result := domain.Result{
 		Mode: "test",
