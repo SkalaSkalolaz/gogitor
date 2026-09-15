@@ -1480,11 +1480,11 @@ func (s *Service) ExecuteCode(
 			agentOpts.EditMode,
 		)
 
-	sendEvent(
-		emit,
-		domain.EventLog,
-		"Execution mode: Agent",
-	)
+	// sendEvent(
+		// emit,
+		// domain.EventLog,
+		// "Execution mode: Agent",
+	// )
 
 	if agentOpts.AgentDepth == AgentDepthDeep {
 		sendEvent(
