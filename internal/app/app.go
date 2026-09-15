@@ -6172,10 +6172,16 @@ func (s *Service) GitCommitSplit(
 		}
 
 		// Получаем хеш коммита.
-		hash, _ := s.Git.HeadHash(ctx)
-		if len(hash) > 7 {
-			hash = hash[:7]
-		}
+        hash, hashErr := s.Git.HeadHash(ctx)
+        if hashErr != nil {
+            result.AddWarning(fmt.Sprintf(
+                "commit was created but its hash could not be read: %v",
+                hashErr,
+            ))
+            hash = "unknown"
+        } else if len(hash) > 7 {
+            hash = hash[:7]
+        }
 		commits = append(commits, fmt.Sprintf("%s → %s", file, hash))
 		sendEvent(emit, domain.EventLog,
 			fmt.Sprintf("Committed %s (%s)", file, hash))
@@ -6195,10 +6201,16 @@ func (s *Service) GitCommitSplit(
 		} else if err := s.Git.CommitMessage(ctx, generalMsg); err != nil {
 			result.AddWarning(fmt.Sprintf("cannot commit remaining files: %v", err))
 		} else {
-			hash, _ := s.Git.HeadHash(ctx)
-			if len(hash) > 7 {
-				hash = hash[:7]
-			}
+            hash, hashErr := s.Git.HeadHash(ctx)
+            if hashErr != nil {
+                result.AddWarning(fmt.Sprintf(
+                    "commit was created but its hash could not be read: %v",
+                    hashErr,
+                ))
+                hash = "unknown"
+            } else if len(hash) > 7 {
+                hash = hash[:7]
+            }
 			commits = append(commits, fmt.Sprintf("remaining (%d files) → %s",
 				len(remainingFiles), hash))
 			sendEvent(emit, domain.EventLog,
@@ -6230,11 +6242,20 @@ func sanitizeGitHash(hash string) string {
 }
 
 func (s *Service) generateCommitMessage(ctx context.Context, taskContext string, emit func(domain.Event)) string {
-	_ = s.Git.AddIntentToAll(ctx)
-	defer func() {
-		_ = s.Git.ResetAll(ctx)
-	}()
-
+    if err := s.Git.AddIntentToAll(ctx); err != nil && s.Log != nil {
+        s.Log.Debug(
+            "intent-to-add failed; new files may be missing from the commit message diff",
+            "err", err,
+        )
+    }
+    defer func() {
+        if err := s.Git.ResetAll(ctx); err != nil && s.Log != nil {
+            s.Log.Debug(
+                "reset of intent-to-add failed; working tree may still have intent-to-add entries",
+                "err", err,
+            )
+        }
+    }()
 	// Получаем diff рабочих изменений (до git add).
 	diff, err := s.Git.Diff(ctx)
 	if err != nil {
@@ -6365,8 +6386,11 @@ func (s *Service) captureHead(ctx context.Context) string {
 	if !s.Git.IsRepo(ctx) {
 		return ""
 	}
-	head, _ := s.Git.HeadHash(ctx)
-	return head
+    head, headErr := s.Git.HeadHash(ctx)
+    if headErr != nil && s.Log != nil {
+        s.Log.Debug("captureHead failed", "err", headErr)
+    }
+    return head
 }
 
 func (s *Service) captureCumulativeDiff(ctx context.Context, preTaskHead string) string {
@@ -6381,12 +6405,28 @@ func (s *Service) captureCumulativeDiff(ctx context.Context, preTaskHead string)
 			diff = d
 		}
 	}
-	if diff == "" {
-		_ = s.Git.AddIntentToAll(ctx)
-		d, _ := s.Git.Diff(ctx)
-		_ = s.Git.ResetAll(ctx)
-		diff = d
-	}
+    if diff == "" {
+        if err := s.Git.AddIntentToAll(ctx); err != nil && s.Log != nil {
+            s.Log.Debug(
+                "captureCumulativeDiff: intent-to-add failed",
+                "err", err,
+            )
+        }
+        d, diffErr := s.Git.Diff(ctx)
+        if diffErr != nil && s.Log != nil {
+            s.Log.Debug(
+                "captureCumulativeDiff: git diff failed",
+                "err", diffErr,
+            )
+        }
+        if err := s.Git.ResetAll(ctx); err != nil && s.Log != nil {
+            s.Log.Debug(
+                "captureCumulativeDiff: reset of intent-to-add failed",
+                "err", err,
+            )
+        }
+        diff = d
+    }
 
 	if len(diff) > maxDiffLen {
 		diff = textutil.TruncateStringBytes(diff, maxDiffLen) + "\n... (diff truncated)"
