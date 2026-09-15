@@ -4576,8 +4576,10 @@ func helpTextEn() string {
 - **:run [file]** — Run Go project or file directory in sandbox
 - **:test** — Run tests in sandbox
 - **:test lint** — Run golangci-lint and auto-fix issues via LLM
+- **:test unusual** — Check that the program survives strange input
 - **:vet** — Run go vet (fast, no LLM required)
 - **:todo** — List TODO/FIXME/HACK markers in project files
+- **:check** — Soft code quality hints (no LLM)
 - **:task-diff** — Show cumulative diff of the last completed task
 
 ## Articles
@@ -4692,8 +4694,10 @@ func helpTextRu() string {
 - **:run [файл]** — Запуск Go-проекта или файла в песочнице
 - **:test** — Запуск тестов в песочнице
 - **:test lint** — Запуск golangci-lint и автоисправление через LLM
+- **:test unusual** — Проверка, что программа не сломается на странных данных
 - **:vet** — Запуск go vet (быстро, без LLM)
 - **:todo** — Вывод TODO/FIXME/HACK маркеров
+- **:check** — Простые подсказки по качеству кода (без LLM)
 - **:task-diff** — Накопительный diff последней задачи
 
 ## Статьи

@@ -177,6 +177,7 @@ var gitSubcommandSuggestions = []string{
 
 var testSubcommandSuggestions = []string{
 	"lint",
+	"unusual",
 }
 
 var reasoningSubcommandSuggestions = []string{
