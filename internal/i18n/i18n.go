@@ -208,7 +208,7 @@ var messages = map[Lang]map[string]string{
 		"Function %s has %d nested levels": "В функции %s %d уровней вложенности",
 		"When conditions are nested 5 levels deep, it is hard to follow the logic. Try early returns or split the function.": "Когда условия вложены на 5 уровней, тяжело следить за логикой. Попробуй ранние возвраты (early return) или раздели функцию.",
 
-		"Function %s is never called": "Функция %s нигде не вызывается",
+        "Function %s is never called": "Функцию %s нигде не удаётся найти среди вызовов проекта",
 		"It looks like leftover code. If you are sure it is not needed, you can delete it to keep the project clean.": "Похоже, это остаток от старого кода. Если точно не нужна — можно удалить, чтобы проект был чище.",
 
 		"An error in %s is not checked": "В функции %s не проверяется ошибка",
