@@ -1538,8 +1538,8 @@ func (m *model) updateStatus() {
 	}
 	m.status = i18n.T(
 		"%s / %s | Enter send | Alt+Enter newline | Ctrl+A copy | PgUp/PgDn history | F2: select | Ctrl+C quit",
-		m.cfg.Provider,
-		m.cfg.Model,
+		displayProvider(m.cfg),
+		displayModel(m.cfg),
 	)
 }
 
@@ -1609,7 +1609,7 @@ func (m *model) statusLine() (string, lipgloss.Style) {
 	}
 	// В режиме ожидания показываем расширенную информацию.
 	if !m.running {
-		info := fmt.Sprintf("%s/%s", m.cfg.Provider, m.cfg.Model)
+    	info := fmt.Sprintf("%s/%s", displayProvider(m.cfg), displayModel(m.cfg))
 		if m.svc != nil {
 			snap := m.svc.LLMSnapshotData()
 			if snap.Requests > 0 {
@@ -2364,4 +2364,18 @@ func (m *model) showTaskHistory() {
 			logInfo,
 		)
 	}
+}
+
+func displayProvider(cfg *config.Config) string {
+	if cfg.DisplayProvider != "" {
+		return cfg.DisplayProvider
+	}
+	return cfg.Provider
+}
+
+func displayModel(cfg *config.Config) string {
+	if cfg.DisplayModel != "" {
+		return cfg.DisplayModel
+	}
+	return cfg.Model
 }

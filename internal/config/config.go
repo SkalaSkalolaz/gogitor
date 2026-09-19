@@ -92,6 +92,13 @@ type Config struct {
 	AutonomyIntervalSec   int               `json:"autonomy_interval_sec"`
 	AutonomyMutationLimit int               `json:"autonomy_mutation_limit"`
 	PatchPolicies         map[string]string `json:"patch_policies,omitempty"`
+	// llama.cpp provider
+	LlamaBinPath string   `json:"llama_bin_path"`
+	LlamaHost    string   `json:"llama_host"`
+	LlamaPort    int      `json:"llama_port"`
+	LlamaArgs    []string `json:"llama_args,omitempty"`
+	DisplayProvider string `json:"-"`
+	DisplayModel    string `json:"-"`
 }
 
 func Default() *Config {
@@ -118,6 +125,10 @@ func Default() *Config {
 			SearcherSec: 600,   // 10 минут
 			DocsSec:     900,   // 15 минут
 		},
+		LlamaBinPath: "llama-server",
+		LlamaHost:    "127.0.0.1",
+		LlamaPort:    55555,
+		LlamaArgs:    nil,
 		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
 		LLMMaxSessionRequests:        960,
@@ -765,6 +776,15 @@ func (c *Config) Validate() error {
 		)
 	}
 
+	if c.IsLlamaProvider() {
+		if c.LlamaPort <= 0 || c.LlamaPort > 65535 {
+			c.LlamaPort = 55555
+		}
+		if strings.TrimSpace(c.LlamaHost) == "" {
+			c.LlamaHost = "127.0.0.1"
+		}
+	}
+
 	switch strings.ToLower(strings.TrimSpace(c.PatchProtocolMode)) {
 	case "", "auto",
 		"search_replace", "search-replace",
@@ -791,7 +811,7 @@ func (c *Config) IsSupportedProvider() bool {
 	p := strings.ToLower(strings.TrimSpace(c.Provider))
 
 	switch p {
-	case "ollama":
+	case "ollama", "llama":
 		return true
 	}
 
@@ -802,6 +822,11 @@ func (c *Config) IsSupportedProvider() bool {
 
 	u, err := url.Parse(c.Provider)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// IsLlamaProvider сообщает, нужно ли запускать llama-server.
+func (c *Config) IsLlamaProvider() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Provider), "llama")
 }
 
 // Save записывает текущую конфигурацию в ~/.gogitor/config.json.

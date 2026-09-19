@@ -86,6 +86,17 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 
 	outputFile := fs.String("output", cfg.OutputFile, "automatically save the last result to a file")
 	logLevel := fs.String("log-level", cfg.LogLevel, "log level: debug, info, warn, error")
+	llamaBin := fs.String("llama-bin", cfg.LlamaBinPath,
+		"path to llama-server binary (for --provider llama)")
+	llamaHost := fs.String("llama-host", cfg.LlamaHost,
+		"llama-server bind host")
+	llamaPort := fs.Int("llama-port", cfg.LlamaPort,
+		"llama-server bind port")
+
+	var llamaArgs stringSliceFlag
+	llamaArgs = append(llamaArgs, cfg.LlamaArgs...)
+	fs.Var(&llamaArgs, "llama-arg",
+		"additional argument for llama-server (repeatable); for example: --llama-arg=-t --llama-arg=8")
 	saveConfig := fs.Bool("save-config", false, "save the resulting configuration to ~/.gogitor/config.json")
 	version := fs.Bool("version", false, "print Gogitor version and exit")
 	fs.BoolVar(version, "v", false, "alias for --version")
@@ -97,6 +108,14 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "llama-bin":
+			cfg.LlamaBinPath = strings.TrimSpace(*llamaBin)
+		case "llama-host":
+			cfg.LlamaHost = strings.TrimSpace(*llamaHost)
+		case "llama-port":
+			cfg.LlamaPort = *llamaPort
+		case "llama-arg":
+			cfg.LlamaArgs = []string(llamaArgs)
 		case "provider", "p":
 			cfg.Provider = strings.TrimSpace(*provider)
 		case "model", "m":
@@ -228,6 +247,10 @@ Core startup parameters:
       --workdir <path>    alias for --repo
   --github <URL>          GitHub repository URL
   --key-github <token>    GitHub token
+  --llama-bin <path>      llama-server binary (for --provider llama)
+  --llama-host <host>     llama-server bind host (default 127.0.0.1)
+  --llama-port <port>     llama-server bind port (default 55555)
+  --llama-arg <arg>       additional llama-server argument (repeatable)
 
 Interface:
   The interface is fixed to the Zen TUI. There is no TUI-selection flag.
@@ -283,6 +306,8 @@ Misc:
 Examples:
   gogitor --provider ollama --model gpt-oss:20b --repo ~/Code/myapp
   gogitor --provider openai+https://api.openai.com/v1 --model <model> --key <token>
+  gogitor --provider llama --model ~/GGUF/qwen.gguf \
+          --llama-arg=-t --llama-arg=8 --llama-arg=--no-reasoning-preserve
 
 Environment variables and ~/.gogitor/config.json remain supported.
 Command-line flags have the highest precedence for the current launch.
@@ -342,4 +367,16 @@ func ParseBoolArgument(v string) (bool, error) {
 		return false, fmt.Errorf("invalid boolean %q", v)
 	}
 	return b, nil
+}
+
+// stringSliceFlag реализует flag.Value для повторяющихся аргументов.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, " ")
+}
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
