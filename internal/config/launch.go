@@ -228,6 +228,8 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 
 // PrintLaunchUsage prints the full startup contract. It intentionally focuses on
 // TUI startup rather than preserving obsolete CLI subcommands.
+// PrintLaunchUsage prints the full startup contract. It intentionally focuses on
+// TUI startup rather than preserving obsolete CLI subcommands.
 func PrintLaunchUsage(w io.Writer) {
 	if w == nil {
 		w = io.Discard
@@ -238,8 +240,8 @@ Usage:
   gogitor [flags]
 
 Core startup parameters:
-  -p, --provider <name>   ollama, openai+URL, openai-compatible+URL, or HTTP(S) URL
-  -m, --model <name>      model name
+  -p, --provider <name>   ollama, llama, openai+URL, openai-compatible+URL, or HTTP(S) URL
+  -m, --model <name>      model name (or path to .gguf when using --provider llama)
   -k, --key <token>       LLM/API key (prefer environment for secrets)
       --api-key <token>   alias for --key
       --ollama-url <URL>  Ollama base URL
@@ -247,10 +249,19 @@ Core startup parameters:
       --workdir <path>    alias for --repo
   --github <URL>          GitHub repository URL
   --key-github <token>    GitHub token
-  --llama-bin <path>      llama-server binary (for --provider llama)
-  --llama-host <host>     llama-server bind host (default 127.0.0.1)
-  --llama-port <port>     llama-server bind port (default 55555)
-  --llama-arg <arg>       additional llama-server argument (repeatable)
+
+llama.cpp provider (--provider llama):
+  --llama-bin <path>      llama-server binary (default: search in PATH)
+  --llama-host <host>     bind host (default 127.0.0.1)
+  --llama-port <port>     bind port (default 55555)
+  --llama-arg <arg>       additional llama-server flag (repeatable)
+
+  Gogitor launches llama-server with these defaults:
+    -c 16384 -b 2048 -ub 1024 -np 1
+    --cache-type-k q8_0 --cache-type-v q8_0
+
+  If you pass --llama-arg=-c N, Gogitor automatically uses N as
+  its own context limit, so you do not need to set --max-context.
 
 Interface:
   The interface is fixed to the Zen TUI. There is no TUI-selection flag.
@@ -303,11 +314,87 @@ Misc:
   --version               print version
   --help                  show this help
 
-Examples:
-  gogitor --provider ollama --model gpt-oss:20b --repo ~/Code/myapp
-  gogitor --provider openai+https://api.openai.com/v1 --model <model> --key <token>
-  gogitor --provider llama --model ~/GGUF/qwen.gguf \
-          --llama-arg=-t --llama-arg=8 --llama-arg=--no-reasoning-preserve
+── llama-server arguments ────────────────────────────────────────────
+
+  --llama-arg passes a single flag to llama-server. Repeat it for each
+  flag, including separate values:
+
+      --llama-arg=-t --llama-arg=8
+      --llama-arg=-c --llama-arg=65536
+
+  Do NOT use space-separated form (--llama-arg "-t 8"). Each flag
+  and each value must be its own --llama-arg.
+
+  Useful flags by purpose:
+
+    Speed / performance
+      -t N                     CPU threads (default: auto-detected)
+      -fa, --flash-attn        Flash Attention (may save VRAM)
+      --no-reasoning-preserve  disable Qwen thinking cache (faster)
+      --speculative mtp        Multi-Token Prediction (Qwen3.8-27B+)
+
+    Memory / context
+      -c N                     context size in tokens (default 16384)
+      -np N                    parallel slots (default 1)
+      --cache-type-k <type>    KV K cache: q8_0, q4_0, f16
+      --cache-type-v <type>    KV V cache: q8_0, q4_0, f16
+
+    MoE models (Qwen3.8-Flash-Next 176B, gpt-oss 120B, etc.)
+      --cpu-moe                keep ALL expert layers on CPU (safe)
+      --n-cpu-moe N            keep first N expert layers on CPU
+
+  Examples:
+
+    Small dense model that fits in VRAM (7B–32B):
+      --provider llama --model ~/GGUF/qwen27b.gguf
+      --llama-arg=-ngl --llama-arg=99
+
+    Large MoE model that does NOT fit in VRAM (100B+):
+      --provider llama --model ~/GGUF/qwen176b.gguf
+      --llama-arg=--cpu-moe
+      --llama-arg=-c --llama-arg=65536
+      --llama-arg=--no-reasoning-preserve
+
+    Qwen3.8 for fast chat:
+      --llama-arg=--no-reasoning-preserve
+      --llama-arg=-fa
+
+  WARNINGS:
+
+    - Do NOT pass -ngl for MoE models on a GPU with limited VRAM.
+      Manual -ngl overrides llama.cpp auto-fit and causes CUDA OOM
+      on the first expert tensor. Let llama.cpp decide.
+
+    - For MoE, use --cpu-moe (all experts on CPU) or --n-cpu-moe N
+      (partial offload). The --n-cpu-moe value is the number of
+      expert layers kept on CPU; increase it if you get OOM.
+
+    - Flags are passed literally to llama-server. For the complete,
+      version-specific list run:
+          llama-server --help
+
+── Examples ──────────────────────────────────────────────────────────
+
+  Local Ollama:
+    gogitor --provider ollama --model gpt-oss:20b --repo ~/Code/myapp
+
+  Remote OpenAI-compatible endpoint:
+    gogitor --provider openai+https://api.openai.com/v1 \
+            --model <model> --key <token>
+
+  Local GGUF via llama.cpp (dense model):
+    gogitor --provider llama \
+            --model ~/GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf \
+            --repo ~/Code/myapp \
+            --llama-arg=-ngl --llama-arg=99
+
+  Local GGUF via llama.cpp (176B MoE on a small GPU):
+    gogitor --provider llama \
+            --model ~/GGUF/Qwen3.8-Flash-Next-UD-Q4_K_XL-merged.gguf \
+            --repo ~/Code/myapp \
+            --llama-arg=--cpu-moe \
+            --llama-arg=-c --llama-arg=65536 \
+            --llama-arg=--no-reasoning-preserve
 
 Environment variables and ~/.gogitor/config.json remain supported.
 Command-line flags have the highest precedence for the current launch.
