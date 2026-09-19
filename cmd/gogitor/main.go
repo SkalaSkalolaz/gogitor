@@ -94,6 +94,7 @@ func main() {
 
 		cfg.Provider = "openai-compatible+" + llamaMgr.BaseURL()
 		cfg.Model = llama.Alias
+    	cfg.LlamaManaged = true 
 		if cfg.APIKey == "" {
 			cfg.APIKey = "no-key-required"
 		}
@@ -123,6 +124,8 @@ func main() {
 
 	if options.SaveConfig {
 		saved := *cfg
+		saved.LlamaManaged = false
+
 		if llamaMgr != nil {
 			saved.Provider = "llama"
 		}

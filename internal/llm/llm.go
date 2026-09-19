@@ -238,7 +238,10 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 		"stream":     false,
 		"max_tokens": maxTokens,
 	}
-	if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+
+	if c.cfg.LlamaManaged {
+		c.applyChatTemplateThinking(ctx, payload)
+	} else if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
 		effort := c.cfg.ReasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -263,9 +266,30 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 
 	if status != http.StatusOK {
 		snippet := errorSnippet(body)
-		if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
-			c.log.Warn("reasoning not supported by model, retrying without",
-				"model", c.cfg.Model)
+
+		// Fallback 1: старый llama.cpp не знает chat_template_kwargs.
+		if c.cfg.LlamaManaged && strings.Contains(snippet, "chat_template") {
+			if c.log != nil {
+				c.log.Warn(
+					"llama.cpp rejected chat_template_kwargs; retrying without reasoning control",
+					"err", snippet,
+				)
+			}
+			delete(payload, "chat_template_kwargs")
+			body, status, err = c.postJSON(ctx, endpoint, payload, headers)
+			if err != nil {
+				return "", err
+			}
+			if status != http.StatusOK {
+				return "", fmt.Errorf("openai-compatible HTTP %d: %s",
+					status, errorSnippet(body))
+			}
+		} else if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) && isThinkingUnsupported(snippet) {
+			// Fallback 2: backend не понимает reasoning_effort.
+			if c.log != nil {
+				c.log.Warn("reasoning not supported by model, retrying without",
+					"model", c.cfg.Model)
+			}
 			delete(payload, "reasoning_effort")
 			delete(payload, "max_completion_tokens")
 			body, status, err = c.postJSON(ctx, endpoint, payload, headers)
@@ -542,6 +566,22 @@ func (c *Client) streamOpenAICompatible(
 		"max_tokens": maxTokens,
 	}
 
+	// Reasoning управляется так же, как в sendOpenAICompatible.
+	// Без этого блока стриминг игнорировал бы :reasoning on/off.
+	if c.cfg.LlamaManaged {
+		c.applyChatTemplateThinking(ctx, payload)
+	} else if c.cfg.ReasoningEnabled && !reasoningDisabled(ctx) {
+		effort := c.cfg.ReasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		payload["reasoning_effort"] = effort
+
+		if c.cfg.ReasoningBudget > 0 {
+			payload["max_completion_tokens"] = maxTokens + c.cfg.ReasoningBudget
+		}
+	}
+
 	headers := map[string]string{}
 	if key := strings.TrimSpace(c.cfg.APIKey); key != "" {
 		headers["Authorization"] = "Bearer " + key
@@ -571,7 +611,45 @@ func (c *Client) streamOpenAICompatible(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return "", fmt.Errorf("openai-compatible stream HTTP %d: %s", resp.StatusCode, errorSnippet(body))
+		resp.Body.Close()
+		snippet := errorSnippet(body)
+
+		// Fallback: старый llama.cpp не знает chat_template_kwargs.
+		if c.cfg.LlamaManaged && strings.Contains(snippet, "chat_template") {
+			if c.log != nil {
+				c.log.Warn(
+					"llama.cpp rejected chat_template_kwargs in stream; retrying without reasoning control",
+					"err", snippet,
+				)
+			}
+			delete(payload, "chat_template_kwargs")
+			data, err = json.Marshal(payload)
+			if err != nil {
+				return "", err
+			}
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+			if err != nil {
+				return "", err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "text/event-stream")
+			for k, v := range headers {
+				req.Header.Set(k, v)
+			}
+			resp, err = c.streamHTTP().Do(req)
+			if err != nil {
+				return "", err
+			}
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				resp.Body.Close()
+				return "", fmt.Errorf("openai-compatible stream HTTP %d: %s",
+					resp.StatusCode, errorSnippet(body))
+			}
+		} else {
+			return "", fmt.Errorf("openai-compatible stream HTTP %d: %s",
+				resp.StatusCode, snippet)
+		}
 	}
 
 	var full strings.Builder
@@ -925,4 +1003,25 @@ func isThinkingUnsupported(errText string) bool {
 		strings.Contains(lower, "reasoning_effort") ||
 		strings.Contains(lower, "reasoning is not supported") ||
 		strings.Contains(lower, "not supported") && strings.Contains(lower, "reason")
+}
+
+// applyChatTemplateThinking добавляет chat_template_kwargs в payload.
+func (c *Client) applyChatTemplateThinking(
+	ctx context.Context,
+	payload map[string]any,
+) {
+	if !c.cfg.LlamaManaged {
+		return
+	}
+
+	key := strings.TrimSpace(c.cfg.LlamaThinkingKey)
+	if key == "" {
+		key = "enable_thinking"
+	}
+
+	thinking := c.cfg.ReasoningEnabled && !reasoningDisabled(ctx)
+
+	payload["chat_template_kwargs"] = map[string]any{
+		key: thinking,
+	}
 }

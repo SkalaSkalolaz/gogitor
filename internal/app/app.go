@@ -620,19 +620,60 @@ func (s *Service) handleCommand(ctx context.Context, query string, emit func(dom
 							Response: i18n.T("Router reasoning disabled.")}
 					}
 				}
-				rStatus := "off"
-				if s.Cfg.ReasoningRouter {
-					rStatus = "on"
-				}
-				return domain.Result{Success: true, Mode: "command",
-					Response: i18n.T("Router reasoning: %s", rStatus)}
+        		status := "off"
+        		if s.Cfg.ReasoningEnabled {
+        			status = "on"
+        		}
+        
+        		rStatus := "off"
+        		if s.Cfg.ReasoningRouter {
+        			rStatus = "on"
+        		}
+        
+        		extra := ""
+        		if s.Cfg.LlamaManaged {
+        			key := strings.TrimSpace(s.Cfg.LlamaThinkingKey)
+        			if key == "" {
+        				key = "enable_thinking"
+        			}
+        			if s.Cfg.ReasoningEnabled {
+        				extra = fmt.Sprintf(
+        					" — llama.cpp: %s=true (модель генерирует reasoning, медленнее)",
+        					key,
+        				)
+        			} else {
+        				extra = fmt.Sprintf(
+        					" — llama.cpp: %s=false (ответ без reasoning, быстрее)",
+        					key,
+        				)
+        			}
+        		}
+        
+        		return domain.Result{
+        			Success: true,
+        			Mode:    "command",
+        			Response: i18n.T(
+        				"Reasoning: %s (effort: %s, router: %s)%s",
+        				status, s.Cfg.ReasoningEffort, rStatus, extra,
+        			),
+        		}
+
 			}
+
 			switch strings.ToLower(args[0]) {
 			case "on", "true", "1":
+				if !s.Cfg.ReasoningEnabled && s.Cfg.LlamaManaged {
+					sendEvent(emit, domain.EventLog,
+						"Reasoning enabled. Note: first request after toggling re-processes the full context.")
+				}
 				s.Cfg.ReasoningEnabled = true
 				return domain.Result{Success: true, Mode: "command",
 					Response: i18n.T("Reasoning mode enabled.")}
 			case "off", "false", "0":
+				if !s.Cfg.ReasoningEnabled && s.Cfg.LlamaManaged {
+					sendEvent(emit, domain.EventLog,
+						"Reasoning disabled. Note: first request after toggling re-processes the full context.")
+				}
 				s.Cfg.ReasoningEnabled = false
 				return domain.Result{Success: true, Mode: "command",
 					Response: i18n.T("Reasoning mode disabled.")}

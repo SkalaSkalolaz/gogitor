@@ -685,7 +685,15 @@ var messages = map[Lang]map[string]string{
 		"Router reasoning enabled.":              "Размышления для роутера включены.",
 		"Router reasoning disabled.":             "Размышления для роутера выключены.",
 		"Router reasoning: %s":                   "Размышления роутера: %s",
-		"Reasoning: %s (effort: %s, router: %s)": "Размышление: %s (глубина: %s, роутер: %s)",
+		"Reasoning: %s (effort: %s, router: %s)": "Размышление: %s (глубина: %s, router: %s)",
+
+		// Runtime-переключатель reasoning (llama.cpp).
+		"Reasoning enabled. Note: first request after toggling re-processes the full context.": "Размышления включены. Первый запрос после переключения полностью переобработает контекст — это может занять время.",
+		"Reasoning disabled. Responses will be generated without thinking.":                   "Размышления выключены. Ответы будут генерироваться без блока рассуждений.",
+
+		// Диагностика состояния reasoning для llama.cpp.
+		" — llama.cpp: %s=true (модель генерирует reasoning, медленнее)":  " — llama.cpp: %s=true (модель генерирует reasoning, медленнее)",
+		" — llama.cpp: %s=false (ответ без reasoning, быстрее)":           " — llama.cpp: %s=false (ответ без reasoning, быстрее)",
 		// ─── Autonomy Mode ────────────────────────────────────────────
 		"Autonomy monitor started.":                  "Монитор автономии запущен.",
 		"Autonomy monitor stopped.":                  "Монитор автономии остановлен.",

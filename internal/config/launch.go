@@ -90,6 +90,9 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 		"path to llama-server binary (for --provider llama)")
 	llamaHost := fs.String("llama-host", cfg.LlamaHost,
 		"llama-server bind host")
+	llamaThinkingKey := fs.String("llama-thinking-key", cfg.LlamaThinkingKey,
+		"chat template key that controls reasoning in llama.cpp; "+
+			"default \"enable_thinking\" for Qwen; ignored for non-llama providers")
 	llamaPort := fs.Int("llama-port", cfg.LlamaPort,
 		"llama-server bind port")
 
@@ -108,6 +111,8 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "llama-thinking-key":
+			cfg.LlamaThinkingKey = strings.TrimSpace(*llamaThinkingKey)
 		case "llama-bin":
 			cfg.LlamaBinPath = strings.TrimSpace(*llamaBin)
 		case "llama-host":
@@ -255,6 +260,10 @@ llama.cpp provider (--provider llama):
   --llama-host <host>     bind host (default 127.0.0.1)
   --llama-port <port>     bind port (default 55555)
   --llama-arg <arg>       additional llama-server flag (repeatable)
+  --llama-thinking-key <key>
+                          chat template key for reasoning control
+                          (default: enable_thinking; use "thinking" for
+                          DeepSeek R1, "reasoning" for some vLLM builds)
 
   Gogitor launches llama-server with these defaults:
     -c 16384 -b 2048 -ub 1024 -np 1
@@ -372,6 +381,8 @@ Misc:
     - Flags are passed literally to llama-server. For the complete,
       version-specific list run:
           llama-server --help
+    - When Gogitor owns llama-server, :reasoning on/off is translated into
+      chat_template_kwargs on each request, so no restart is needed.
 
 ── Examples ──────────────────────────────────────────────────────────
 

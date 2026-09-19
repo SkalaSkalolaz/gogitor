@@ -97,8 +97,12 @@ type Config struct {
 	LlamaHost    string   `json:"llama_host"`
 	LlamaPort    int      `json:"llama_port"`
 	LlamaArgs    []string `json:"llama_args,omitempty"`
+	LlamaThinkingKey string `json:"llama_thinking_key,omitempty"`
+
+	// Runtime-only поля. json:"-" — чтобы не попадали в config.json.
 	DisplayProvider string `json:"-"`
 	DisplayModel    string `json:"-"`
+	LlamaManaged    bool   `json:"-"`
 }
 
 func Default() *Config {
@@ -129,6 +133,7 @@ func Default() *Config {
 		LlamaHost:    "127.0.0.1",
 		LlamaPort:    55555,
 		LlamaArgs:    nil,
+        LlamaThinkingKey: "enable_thinking",
 		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
 		LLMMaxSessionRequests:        960,

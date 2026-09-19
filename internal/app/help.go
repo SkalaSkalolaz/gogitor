@@ -1193,17 +1193,27 @@ _test.go file, then generates table-driven tests via LLM.
 | :reasoning off | Disable reasoning mode |
 | :reasoning router on | Enable reasoning for intent router |
 | :reasoning router off | Disable reasoning for intent router |
-### Supported Models
-| Provider | Mechanism |
-|----------|-----------|
+### Backend behavior
+| Backend | How reasoning is controlled |
+|---------|-----------------------------|
 | Ollama | "think": true parameter |
-| OpenAI-compatible | "reasoning_effort" parameter |
-### Environment Variables
-| Variable | Description |
-|----------|-------------|
-| GOGITOR_REASONING=true | Enable reasoning |
-| GOGITOR_REASONING_EFFORT=low\|medium\|high | Reasoning depth |
-| GOGITOR_REASONING_BUDGET=<tokens> | Max reasoning tokens |
+| OpenAI / vLLM / OpenRouter | "reasoning_effort" parameter |
+| llama.cpp (Gogitor-managed) | chat_template_kwargs on each request |
+### llama.cpp specifics
+When Gogitor launched llama-server (--provider llama), :reasoning on/off
+is translated into per-request chat_template_kwargs. The exact key
+depends on the model:
+| Model family | Key |
+|--------------|-----|
+| Qwen3 / Qwen3.8 | enable_thinking |
+| DeepSeek R1 | thinking |
+| Some vLLM builds | reasoning |
+Override with:
+  --llama-thinking-key <key>
+### Important
+Toggling :reasoning changes the chat template, which invalidates the
+KV cache. The next request re-processes the entire context. On very
+large models (100B+) this can take 10–30 seconds.
 ### Examples
 :reasoning
 :reasoning on
@@ -1223,17 +1233,27 @@ _test.go file, then generates table-driven tests via LLM.
 | :reasoning off | Выключить режим размышления |
 | :reasoning router on | Включить размышления для роутера |
 | :reasoning router off | Выключить размышления для роутера |
-### Поддерживаемые модели
-| Провайдер | Механизм |
-|-----------|----------|
+### Поведение по backend
+| Backend | Как управляется reasoning |
+|---------|---------------------------|
 | Ollama | Параметр "think": true |
-| OpenAI-compatible | Параметр "reasoning_effort" |
-### Переменные окружения
-| Переменная | Описание |
-|------------|----------|
-| GOGITOR_REASONING=true | Включить размышление |
-| GOGITOR_REASONING_EFFORT=low\|medium\|high | Глубина размышления |
-| GOGITOR_REASONING_BUDGET=<токены> | Макс. токенов размышления |
+| OpenAI / vLLM / OpenRouter | Параметр "reasoning_effort" |
+| llama.cpp (запущен Gogitor) | chat_template_kwargs на каждый запрос |
+### Особенности llama.cpp
+Когда llama-server запущен самим Gogitor (--provider llama),
+:reasoning on/off транслируется в per-request chat_template_kwargs.
+Имя ключа зависит от модели:
+| Семейство модели | Ключ |
+|------------------|------|
+| Qwen3 / Qwen3.8 | enable_thinking |
+| DeepSeek R1 | thinking |
+| Некоторые сборки vLLM | reasoning |
+Переопределяется флагом:
+  --llama-thinking-key <key>
+### Важно
+Переключение :reasoning меняет chat template, что инвалидирует
+KV-кэш. Следующий запрос переобрабатывает весь контекст. На очень
+больших моделях (100B+) это может занять 10–30 секунд.
 ### Примеры
 :reasoning
 :reasoning on
