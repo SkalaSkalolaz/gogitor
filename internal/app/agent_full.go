@@ -15,6 +15,7 @@ import (
 
 	"gogitor/internal/agent"
 	"gogitor/internal/domain"
+    "gogitor/internal/llm"
 	"gogitor/internal/prompts"
 	"gogitor/internal/runner"
 	"gogitor/internal/security"
@@ -2865,6 +2866,8 @@ func (s *Service) planFullOrFallback(
 	prompt = s.appendProjectInstructions(prompt)
 
 	var plan fullPlan
+
+	ctx = llm.WithSystemPrompt(ctx, prompts.SystemPlanner)
 	err := s.sendAgentJSON(
 		ctx,
 		agent.RolePlanner,

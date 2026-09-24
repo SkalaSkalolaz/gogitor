@@ -46,6 +46,73 @@ func reasoningDisabled(ctx context.Context) bool {
 	return v
 }
 
+// systemPromptCtxKey — ключ для system prompt, передаваемого отдельно
+// от user-сообщения. Это даёт модели «настоящий» system-блок, а не
+// склеенную строку в user, и заметно улучшает следование инструкциям.
+type systemPromptCtxKey struct{}
+
+// WithSystemPrompt добавляет system prompt в контекст запроса.
+// Если строка пустая, контекст возвращается без изменений.
+func WithSystemPrompt(ctx context.Context, system string) context.Context {
+	if strings.TrimSpace(system) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, systemPromptCtxKey{}, system)
+}
+
+// systemPromptFromContext достаёт system prompt из контекста.
+func systemPromptFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(systemPromptCtxKey{}).(string)
+	return strings.TrimSpace(v)
+}
+
+// SystemPromptFromContext возвращает system prompt из контекста,
+// если он был установлен через WithSystemPrompt.
+func SystemPromptFromContext(ctx context.Context) string {
+	return systemPromptFromContext(ctx)
+}
+
+// buildChatMessages формирует messages-массив для OpenAI-совместимого API.
+// Если в контексте есть system prompt, он добавляется первым сообщением.
+func buildChatMessages(ctx context.Context, prompt string) []map[string]string {
+	msgs := make([]map[string]string, 0, 2)
+	if sys := systemPromptFromContext(ctx); sys != "" {
+		msgs = append(msgs, map[string]string{
+			"role":    "system",
+			"content": sys,
+		})
+	}
+	msgs = append(msgs, map[string]string{
+		"role":    "user",
+		"content": prompt,
+	})
+	return msgs
+}
+
+// applySampling добавляет sampling-параметры в payload запроса.
+//
+// temperature и top_p — стандартные параметры OpenAI API,
+// поэтому отправляются всегда.
+//
+// top_k, repeat_penalty, min_p — это расширения llama.cpp / vLLM.
+// Они отправляются только когда Gogitor сам управляет llama-server,
+// чтобы не сломать строгие OpenAI-эндпоинты.
+func applySampling(cfg *config.Config, payload map[string]any) {
+	payload["temperature"] = cfg.LlamaTemperature
+	payload["top_p"] = cfg.LlamaTopP
+
+	if cfg.LlamaManaged {
+		payload["top_k"] = cfg.LlamaTopK
+		payload["repeat_penalty"] = cfg.LlamaRepeatPenalty
+		if cfg.LlamaMinP > 0 {
+			payload["min_p"] = cfg.LlamaMinP
+		}
+	}
+}
+
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	timeout := time.Duration(cfg.LLMTimeout) * time.Second
 	if timeout <= 0 {
@@ -228,16 +295,12 @@ func (c *Client) sendOpenAICompatible(ctx context.Context, baseURL, prompt strin
 	}
 
 	payload := map[string]any{
-		"model": c.cfg.Model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
+		"model":      c.cfg.Model,
+		"messages":   buildChatMessages(ctx, prompt),
 		"stream":     false,
 		"max_tokens": maxTokens,
 	}
+	applySampling(c.cfg, payload)
 
 	if c.cfg.LlamaManaged {
 		c.applyChatTemplateThinking(ctx, payload)
@@ -553,18 +616,13 @@ func (c *Client) streamOpenAICompatible(
 	if c.cfg.EffectiveContextTokens() > 131072 {
 		maxTokens = 32768
 	}
-
 	payload := map[string]any{
-		"model": c.cfg.Model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
+		"model":      c.cfg.Model,
+		"messages":   buildChatMessages(ctx, prompt),
 		"stream":     true,
 		"max_tokens": maxTokens,
 	}
+	applySampling(c.cfg, payload)
 
 	// Reasoning управляется так же, как в sendOpenAICompatible.
 	// Без этого блока стриминг игнорировал бы :reasoning on/off.

@@ -93,6 +93,26 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 	llamaThinkingKey := fs.String("llama-thinking-key", cfg.LlamaThinkingKey,
 		"chat template key that controls reasoning in llama.cpp; "+
 			"default \"enable_thinking\" for Qwen; ignored for non-llama providers")
+	llamaTemp := fs.Float64(
+		"llama-temp", cfg.LlamaTemperature,
+		"sampling temperature for llama.cpp (default 0.2; 0 = greedy)",
+	)
+	llamaTopP := fs.Float64(
+		"llama-top-p", cfg.LlamaTopP,
+		"top-p sampling for llama.cpp (default 0.9)",
+	)
+	llamaTopK := fs.Int(
+		"llama-top-k", cfg.LlamaTopK,
+		"top-k sampling for llama.cpp (default 20)",
+	)
+	llamaRepeatPenalty := fs.Float64(
+		"llama-repeat-penalty", cfg.LlamaRepeatPenalty,
+		"repeat penalty for llama.cpp (default 1.05)",
+	)
+	llamaMinP := fs.Float64(
+		"llama-min-p", cfg.LlamaMinP,
+		"min-p sampling for llama.cpp (0 = disabled)",
+	)
 	llamaPort := fs.Int("llama-port", cfg.LlamaPort,
 		"llama-server bind port")
 
@@ -113,6 +133,16 @@ func ParseLaunchArgs(cfg *Config, args []string, out, errOut io.Writer) (LaunchO
 		switch f.Name {
 		case "llama-thinking-key":
 			cfg.LlamaThinkingKey = strings.TrimSpace(*llamaThinkingKey)
+		case "llama-temp":
+			cfg.LlamaTemperature = *llamaTemp
+		case "llama-top-p":
+			cfg.LlamaTopP = *llamaTopP
+		case "llama-top-k":
+			cfg.LlamaTopK = *llamaTopK
+		case "llama-repeat-penalty":
+			cfg.LlamaRepeatPenalty = *llamaRepeatPenalty
+		case "llama-min-p":
+			cfg.LlamaMinP = *llamaMinP
 		case "llama-bin":
 			cfg.LlamaBinPath = strings.TrimSpace(*llamaBin)
 		case "llama-host":

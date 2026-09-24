@@ -99,6 +99,12 @@ type Config struct {
 	LlamaArgs    []string `json:"llama_args,omitempty"`
 	LlamaThinkingKey string `json:"llama_thinking_key,omitempty"`
 
+	// Sampling для llama.cpp / OpenAI-compatible бэкендов.
+	LlamaTemperature   float64 `json:"llama_temperature"`
+	LlamaTopP          float64 `json:"llama_top_p"`
+	LlamaTopK          int     `json:"llama_top_k"`
+	LlamaRepeatPenalty float64 `json:"llama_repeat_penalty"`
+	LlamaMinP          float64 `json:"llama_min_p"`
 	// Runtime-only поля. json:"-" — чтобы не попадали в config.json.
 	DisplayProvider string `json:"-"`
 	DisplayModel    string `json:"-"`
@@ -134,6 +140,12 @@ func Default() *Config {
 		LlamaPort:    55555,
 		LlamaArgs:    nil,
         LlamaThinkingKey: "enable_thinking",
+
+    	LlamaTemperature:   0.2,
+		LlamaTopP:          0.9,
+		LlamaTopK:          20,
+		LlamaRepeatPenalty: 1.05,
+		LlamaMinP:          0.0, // 0 = отключен
 		RunnerTimeout:                600, // 10 минут
 		MaxIterations:                5,
 		LLMMaxSessionRequests:        960,

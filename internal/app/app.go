@@ -1255,6 +1255,7 @@ func (s *Service) GitDiffTask(ctx context.Context, emit func(domain.Event)) doma
 
 func (s *Service) Chat(ctx context.Context, query string, emit func(domain.Event)) domain.Result {
 	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
+	ctx = llm.WithSystemPrompt(ctx, prompts.SystemChat)
 
 	emitEvent(emit, domain.Event{
 		Type:      domain.EventAgent,
@@ -1295,6 +1296,8 @@ func (s *Service) Chat(ctx context.Context, query string, emit func(domain.Event
 
 func (s *Service) Analyze(ctx context.Context, query string, emit func(domain.Event)) domain.Result {
 	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
+
+    ctx = llm.WithSystemPrompt(ctx, prompts.SystemAnalyze)
 
 	emitEvent(emit, domain.Event{
 		Type:      domain.EventAgent,
@@ -1340,6 +1343,8 @@ func (s *Service) Analyze(ctx context.Context, query string, emit func(domain.Ev
 // AnalyzeWithImages анализирует изображение с текстовым запросом.
 func (s *Service) AnalyzeWithImages(ctx context.Context, query string, images [][]byte, emit func(domain.Event)) domain.Result {
 	ctx = agent.WithStatusFunc(ctx, s.agentStatusEmitter(emit))
+    ctx = llm.WithSystemPrompt(ctx, prompts.SystemAnalyze)
+
 	emitEvent(emit, domain.Event{
 		Type:      domain.EventAgent,
 		Message:   i18n.Localize("current stage: image analysis"),
@@ -1501,6 +1506,11 @@ func (s *Service) ExecuteCode(
 		s.agentStatusEmitter(emit),
 	)
 
+
+	// NEW: system prompt для кодинга, но не затираем уже установленный.
+	if llm.SystemPromptFromContext(ctx) == "" {
+		ctx = llm.WithSystemPrompt(ctx, prompts.SystemCoder)
+	}
 	stopDiffTrace := s.installDiffTrace(emit)
 	defer stopDiffTrace()
 
